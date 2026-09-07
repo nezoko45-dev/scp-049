@@ -1,79 +1,23 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SCP-049: Containment Breach</title>
-<style>
-*{box-sizing:border-box}html,body{margin:0;height:100%;background:#080a0d;color:#eee;font-family:Arial,sans-serif;overflow:hidden}#wrap{height:100%;display:flex;align-items:center;justify-content:center}canvas{background:#11161a;border:2px solid #333;image-rendering:auto;max-width:100vw;max-height:100vh}#hint{position:fixed;left:12px;bottom:10px;color:#aaa;font-size:13px;pointer-events:none}
-</style>
-</head>
-<body>
-<div id="wrap"><canvas id="game" width="1100" height="700"></canvas></div>
-<div id="hint">WASD / Arrow Keys: move &nbsp; • &nbsp; Space / Left Click: sword</div>
-<script>
-'use strict';
-const c=document.getElementById('game'),ctx=c.getContext('2d');
-const W=c.width,H=c.height, keys={};
-addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase()))e.preventDefault();if(e.key==='Enter'&&gameOver)reset()});
-addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false); addEventListener('mousedown',()=>keys.mouse=true); addEventListener('mouseup',()=>keys.mouse=false);
-const rnd=(a,b)=>a+Math.random()*(b-a), dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-let player,scp,survivors,zombies,particles,gameOver,breachTimer,attackFlash,shake,lastTime;
-const rooms=[{x:35,y:35,w:245,h:190},{x:310,y:35,w:300,h:190},{x:640,y:35,w:425,h:190},{x:35,y:255,w:300,h:195},{x:365,y:255,w:300,h:195},{x:695,y:255,w:370,h:195},{x:35,y:480,w:250,h:185},{x:315,y:480,w:300,h:185},{x:630,y:480,w:435,h:185}];
-function reset(){
- player={x:120,y:350,r:13,hp:100,speed:190,lastHit:-99,attack:0,dir:0};
- scp={x:850,y:125,r:19,hp:15000,max:15000,speed:83,lastDamage:-99,target:null,dead:false};
- survivors=[]; zombies=[]; particles=[]; gameOver=false; breachTimer=0;attackFlash=0;shake=0;lastTime=performance.now();
- for(let i=0;i<8;i++){let r=rooms[(i+1)%rooms.length];survivors.push({x:r.x+rnd(35,r.w-35),y:r.y+rnd(35,r.h-35),r:10,hp:100,dead:false,targeted:false});}
-}
-function wallMove(o,nx,ny){
- nx=clamp(nx,o.r,W-o.r);ny=clamp(ny,o.r,H-o.r);
- let inside=false; for(const r of rooms) if(nx>r.x+o.r&&nx<r.x+r.w-o.r&&ny>r.y+o.r&&ny<r.y+r.h-o.r)inside=true;
- if(inside){o.x=nx;o.y=ny;}
-}
-function nearestLivingSurvivor(){let best=null,bd=1e9;for(const s of survivors)if(!s.dead){let d=dist(s,scp);if(d<bd){bd=d;best=s}}return best}
-function spawnZombie(s){zombies.push({x:s.x,y:s.y,r:14,hp:100,speed:rnd(58,75),lastDamage:-99,phase:Math.random()*9});for(let i=0;i<15;i++)particles.push({x:s.x,y:s.y,vx:rnd(-40,40),vy:rnd(-40,40),life:.7});}
-function damagePlayer(now,source){if(now-player.lastHit<3)return;player.hp-=25;player.lastHit=now;shake=8;for(let i=0;i<8;i++)particles.push({x:player.x,y:player.y,vx:rnd(-60,60),vy:rnd(-60,60),life:.4});if(player.hp<=0){player.hp=0;gameOver=true;}}
-function attack(now){if(player.attack>0)return;player.attack=.28;attackFlash=.28;let hitX=player.x+Math.cos(player.dir)*42,hitY=player.y+Math.sin(player.dir)*42;
- if(!scp.dead&&Math.hypot(hitX-scp.x,hitY-scp.y)<52){scp.hp=Math.max(0,scp.hp-45);for(let i=0;i<10;i++)particles.push({x:scp.x,y:scp.y,vx:rnd(-100,100),vy:rnd(-100,100),life:.5});if(scp.hp===0){scp.dead=true;gameOver=true;}}
- for(const z of zombies)if(Math.hypot(hitX-z.x,hitY-z.y)<46)z.hp-=45;
-}
-function update(dt,now){
- if(gameOver)return; breachTimer+=dt; player.attack=Math.max(0,player.attack-dt);attackFlash=Math.max(0,attackFlash-dt);
- let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0),dy=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);let len=Math.hypot(dx,dy)||1;if(dx||dy){player.dir=Math.atan2(dy,dx);wallMove(player,player.x+dx/len*player.speed*dt,player.y+dy/len*player.speed*dt)}
- if(keys[' ']||keys.mouse)attack(now);
- // SCP targets nearest living survivor until it can reach them, otherwise player.
- if(!scp.dead){let target=nearestLivingSurvivor();if(target&&dist(target,scp)<1200)scp.target=target;else scp.target=player;let t=scp.target;let d=dist(scp,t);if(d>42){let a=Math.atan2(t.y-scp.y,t.x-scp.x);wallMove(scp,scp.x+Math.cos(a)*scp.speed*dt,scp.y+Math.sin(a)*scp.speed*dt)}
-  if(t!==player&&d<38){t.dead=true;t.targeted=true;spawnZombie(t);scp.target=player;}
-  if(dist(scp,player)<40)damagePlayer(now,'scp');
- }
- for(const z of zombies){if(z.hp<=0)continue;let a=Math.atan2(player.y-z.y,player.x-z.x);wallMove(z,z.x+Math.cos(a)*z.speed*dt,z.y+Math.sin(a)*z.speed*dt);if(dist(z,player)<35)damagePlayer(now,'zombie');}
- zombies=zombies.filter(z=>z.hp>0);
- for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt}particles=particles.filter(p=>p.life>0);shake=Math.max(0,shake-dt*20);
-}
-function draw(now){ctx.save();let sx=rnd(-shake,shake),sy=rnd(-shake,shake);ctx.translate(sx,sy);ctx.clearRect(-20,-20,W+40,H+40);
- ctx.fillStyle='#0b0e11';ctx.fillRect(0,0,W,H);for(const r of rooms){ctx.fillStyle='#171c20';ctx.fillRect(r.x,r.y,r.w,r.h);ctx.strokeStyle='#30383e';ctx.lineWidth=3;ctx.strokeRect(r.x,r.y,r.w,r.h);}
- // doors/gaps
- ctx.fillStyle='#252c31';[[280,105,30,38],[610,105,30,38],[335,320,30,38],[665,320,30,38],[285,535,30,38],[615,535,30,38]].forEach(d=>ctx.fillRect(...d));
- // survivors
- for(const s of survivors){if(s.dead)continue;ctx.fillStyle='#6db6e8';ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#b9e4ff';ctx.font='11px Arial';ctx.fillText('SURVIVOR',s.x-28,s.y-16)}
- // zombies
- for(const z of zombies){ctx.fillStyle='#5b8750';ctx.beginPath();ctx.arc(z.x,z.y,z.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#182316';ctx.beginPath();ctx.arc(z.x-5,z.y-3,2,0,7);ctx.arc(z.x+5,z.y-3,2,0,7);ctx.fill();}
- // SCP-049
- if(!scp.dead){ctx.fillStyle='#15171a';ctx.beginPath();ctx.arc(scp.x,scp.y,scp.r+4,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ddd8cb';ctx.beginPath();ctx.arc(scp.x,scp.y,scp.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#101214';ctx.beginPath();ctx.arc(scp.x,scp.y-3,scp.r*.65,0,Math.PI*2);ctx.fill();ctx.fillStyle='#eee';ctx.font='bold 10px Arial';ctx.fillText('049',scp.x-10,scp.y+4);}
- // player
- ctx.save();ctx.translate(player.x,player.y);ctx.rotate(player.dir);ctx.fillStyle='#d8d8d8';ctx.beginPath();ctx.arc(0,0,player.r,0,7);ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(9,0);ctx.lineTo(38,0);ctx.stroke();if(attackFlash){ctx.strokeStyle='#fff';ctx.lineWidth=8;ctx.beginPath();ctx.arc(0,0,43,-.8,.8);ctx.stroke()}ctx.restore();
- for(const p of particles){ctx.globalAlpha=Math.max(0,p.life*1.8);ctx.fillStyle='#c9c9c9';ctx.fillRect(p.x-2,p.y-2,4,4);ctx.globalAlpha=1}
- ctx.restore();
- // UI
- ctx.fillStyle='rgba(0,0,0,.72)';ctx.fillRect(0,0,W,72);ctx.fillStyle='#eee';ctx.font='bold 20px Arial';ctx.fillText('SCP-049: CONTAINMENT BREACH',20,28);ctx.font='14px Arial';ctx.fillStyle='#bbb';ctx.fillText(breachTimer<4?'CONTAINMENT BREACH — FACILITY EVACUATION':scp.dead?'SCP-049 NEUTRALIZED':'SCP-049 IS HUNTING',20,51);
- bar(300,18,190,18,player.hp/100,'#5fcf69');ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.fillText('PLAYER '+Math.ceil(player.hp)+'/100',306,31);
- bar(520,18,300,18,scp.hp/scp.max,'#b84b4b');ctx.fillStyle='#fff';ctx.fillText('SCP-049 '+Math.ceil(scp.hp)+' / 15000',526,31);
- ctx.fillStyle='#aaa';ctx.fillText('ZOMBIES: '+zombies.length,850,31);ctx.fillText('SURVIVORS: '+survivors.filter(s=>!s.dead).length,850,50);
- if(gameOver){ctx.fillStyle='rgba(0,0,0,.75)';ctx.fillRect(0,0,W,H);ctx.textAlign='center';ctx.fillStyle=scp.dead?'#9cff9c':'#ff8585';ctx.font='bold 44px Arial';ctx.fillText(scp.dead?'SCP-049 NEUTRALIZED':'YOU DIED',W/2,H/2-20);ctx.fillStyle='#fff';ctx.font='18px Arial';ctx.fillText('Press ENTER to restart',W/2,H/2+25);ctx.textAlign='left'}
-}
-function bar(x,y,w,h,p,col){ctx.fillStyle='#333';ctx.fillRect(x,y,w,h);ctx.fillStyle=col;ctx.fillRect(x,y,w*clamp(p,0,1),h);ctx.strokeStyle='#777';ctx.strokeRect(x,y,w,h)}
-function loop(t){let dt=Math.min(.033,(t-lastTime)/1000);lastTime=t;update(dt,t/1000);draw(t/1000);requestAnimationFrame(loop)}
-reset();requestAnimationFrame(loop);
-</script>
-</body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SCP-049: Containment Breach</title><style>*{box-sizing:border-box}html,body{margin:0;height:100%;background:#07090b;color:#eee;font-family:Arial;overflow:hidden}#wrap{height:100%;display:flex;align-items:center;justify-content:center}canvas{width:min(1100px,100vw);height:auto;background:#101418;border:2px solid #333}#hint{position:fixed;bottom:8px;left:10px;color:#aaa;font-size:13px}</style></head><body><div id="wrap"><canvas id="game" width="1100" height="700"></canvas></div><div id="hint">WASD / Arrow Keys: move • Space / Left Click: sword</div><script>
+'use strict';const c=document.getElementById('game'),ctx=c.getContext('2d'),W=1100,H=700,CELL=25,COLS=44,ROWS=28,keys={};addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=1;if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase()))e.preventDefault();if(e.key==='Enter'&&gameOver)reset()});addEventListener('keyup',e=>keys[e.key.toLowerCase()]=0);addEventListener('mousedown',()=>keys.mouse=1);addEventListener('mouseup',()=>keys.mouse=0);const rnd=(a,b)=>a+Math.random()*(b-a),D=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+let player,scp,survivors,zombies,particles,gameOver,breachTimer,flash,shake,last,scpPath,scpPathAt;
+// Nine rooms plus real connecting corridors. Corridors are deliberately walkable.
+const rooms=[{x:25,y:25,w:250,h:190},{x:300,y:25,w:275,h:190},{x:600,y:25,w:475,h:190},{x:25,y:255,w:310,h:190},{x:365,y:255,w:300,h:190},{x:695,y:255,w:380,h:190},{x:25,y:485,w:260,h:190},{x:315,y:485,w:300,h:190},{x:645,y:485,w:430,h:190}];
+const corridors=[{x:275,y:95,w:25,h:50},{x:575,y:95,w:25,h:50},{x:335,y:320,w:30,h:50},{x:665,y:320,w:30,h:50},{x:285,y:545,w:30,h:50},{x:615,y:545,w:30,h:50},{x:125,y:215,w:50,h:40},{x:445,y:215,w:50,h:40},{x:825,y:215,w:50,h:40},{x:125,y:445,w:50,h:40},{x:445,y:445,w:50,h:40},{x:825,y:445,w:50,h:40}];
+function walkable(x,y,r=0){if(x<r||x>W-r||y<r||y>H-r)return false;for(const a of rooms)if(x>=a.x+r&&x<=a.x+a.w-r&&y>=a.y+r&&y<=a.y+a.h-r)return true;for(const a of corridors)if(x>=a.x+r&&x<=a.x+a.w-r&&y>=a.y+r&&y<=a.y+a.h-r)return true;return false}
+function move(o,nx,ny){if(walkable(nx,ny,o.r)){o.x=nx;o.y=ny;return}if(walkable(nx,o.y,o.r))o.x=nx;if(walkable(o.x,ny,o.r))o.y=ny}
+function reset(){player={x:75,y:350,r:12,hp:100,speed:190,lastHit:-99,attack:0,dir:0};scp={x:900,y:115,r:18,hp:15000,max:15000,speed:88,lastDamage:-99,target:null,dead:false};survivors=[];zombies=[];particles=[];gameOver=false;breachTimer=0;flash=0;shake=0;scpPath=[];scpPathAt=0;last=performance.now();for(let i=0;i<8;i++){let r=rooms[(i+1)%rooms.length];survivors.push({x:r.x+rnd(35,r.w-35),y:r.y+rnd(35,r.h-35),r:10,dead:false})}}
+function nearestSurvivor(){let b=null,bd=Infinity;for(const s of survivors)if(!s.dead){let d=D(s,scp);if(d<bd){bd=d;b=s}}return b}
+function spawnZombie(s){zombies.push({x:s.x,y:s.y,r:13,hp:100,speed:rnd(62,78),lastHit:-99});for(let i=0;i<15;i++)particles.push({x:s.x,y:s.y,vx:rnd(-50,50),vy:rnd(-50,50),life:.7})}
+function hurt(now){if(now-player.lastHit<3)return;player.lastHit=now;player.hp=Math.max(0,player.hp-25);shake=7;if(player.hp===0)gameOver=true}
+function attack(){if(player.attack>0)return;player.attack=.27;flash=.27;let hx=player.x+Math.cos(player.dir)*42,hy=player.y+Math.sin(player.dir)*42;if(!scp.dead&&Math.hypot(hx-scp.x,hy-scp.y)<50){scp.hp=Math.max(0,scp.hp-45);if(scp.hp===0){scp.dead=true;gameOver=true}}for(const z of zombies)if(Math.hypot(hx-z.x,hy-z.y)<45)z.hp-=45}
+// A* over a 25px grid. Only actual room/corridor floor cells are traversable.
+function cell(p){return [clamp(Math.floor(p.x/CELL),0,COLS-1),clamp(Math.floor(p.y/CELL),0,ROWS-1)]}function key(x,y){return x+','+y}function pass(x,y){return walkable(x*CELL+CELL/2,y*CELL+CELL/2,5)}
+function astar(start,end){let [sx,sy]=cell(start),[gx,gy]=cell(end),open=[{x:sx,y:sy,g:0,f:Math.hypot(gx-sx,gy-sy),p:null}],best=new Map([[key(sx,sy),0]]),closed=new Set();while(open.length){open.sort((a,b)=>a.f-b.f);let n=open.shift(),k=key(n.x,n.y);if(closed.has(k))continue;if(n.x===gx&&n.y===gy){let out=[];while(n){out.push({x:n.x*CELL+CELL/2,y:n.y*CELL+CELL/2});n=n.p}return out.reverse()}closed.add(k);for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){let x=n.x+dx,y=n.y+dy;if(x<0||x>=COLS||y<0||y>=ROWS||!pass(x,y))continue;let nk=key(x,y),g=n.g+1;if(closed.has(nk)||(best.has(nk)&&best.get(nk)<=g))continue;best.set(nk,g);let f=g+Math.abs(gx-x)+Math.abs(gy-y);open.push({x,y,g,f,p:n})}}return[]}
+function updateSCP(dt,now){if(scp.dead)return;let surv=nearestSurvivor();scp.target=surv||player;if(surv&&D(scp,surv)<35){surv.dead=true;spawnZombie(surv);scp.target=player;scpPath=[]}let target=scp.target||player;if(now-scpPathAt>.35||!scpPath.length){scpPath=astar(scp,target);scpPathAt=now}let wp=scpPath[1]||scpPath[0]||target;if(wp){let a=Math.atan2(wp.y-scp.y,wp.x-scp.x);move(scp,scp.x+Math.cos(a)*scp.speed*dt,scp.y+Math.sin(a)*scp.speed*dt)}if(D(scp,player)<38)hurt(now)}
+function update(dt,now){if(gameOver)return;breachTimer+=dt;player.attack=Math.max(0,player.attack-dt);flash=Math.max(0,flash-dt);let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0),dy=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);if(dx||dy){let l=Math.hypot(dx,dy);dx/=l;dy/=l;player.dir=Math.atan2(dy,dx);move(player,player.x+dx*player.speed*dt,player.y+dy*player.speed*dt)}if(keys[' ']||keys.mouse)attack();updateSCP(dt,now);for(const z of zombies){if(z.hp<=0)continue;let a=Math.atan2(player.y-z.y,player.x-z.x);move(z,z.x+Math.cos(a)*z.speed*dt,z.y+Math.sin(a)*z.speed*dt);if(D(z,player)<34)hurt(now)}zombies=zombies.filter(z=>z.hp>0);for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt}particles=particles.filter(p=>p.life>0);shake=Math.max(0,shake-dt*18)}
+function bar(x,y,w,h,p){ctx.fillStyle='#333';ctx.fillRect(x,y,w,h);ctx.fillStyle='#c84d4d';ctx.fillRect(x,y,w*clamp(p,0,1),h);ctx.strokeStyle='#888';ctx.strokeRect(x,y,w,h)}
+function draw(){ctx.save();ctx.translate(rnd(-shake,shake),rnd(-shake,shake));ctx.fillStyle='#090c0f';ctx.fillRect(0,0,W,H);for(const r of rooms){ctx.fillStyle='#171c20';ctx.fillRect(r.x,r.y,r.w,r.h);ctx.strokeStyle='#30383d';ctx.lineWidth=3;ctx.strokeRect(r.x,r.y,r.w,r.h)}for(const a of corridors){ctx.fillStyle='#171c20';ctx.fillRect(a.x,a.y,a.w,a.h)}ctx.fillStyle='#252b30';for(const a of corridors)ctx.fillRect(a.x+(a.w<40?a.w-4:0),a.y+(a.h<40?a.h-4:0),a.w<40?4:a.w,a.h<40?4:a.h);
+for(const s of survivors)if(!s.dead){ctx.fillStyle='#69b9ee';ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,7);ctx.fill()}for(const z of zombies){ctx.fillStyle='#5b8c4f';ctx.beginPath();ctx.arc(z.x,z.y,z.r,0,7);ctx.fill();ctx.fillStyle='#172016';ctx.fillRect(z.x-6,z.y-3,3,3);ctx.fillRect(z.x+3,z.y-3,3,3)}if(!scp.dead){ctx.fillStyle='#0b0d0f';ctx.beginPath();ctx.arc(scp.x,scp.y,scp.r+5,0,7);ctx.fill();ctx.fillStyle='#d9d4c9';ctx.beginPath();ctx.arc(scp.x,scp.y,scp.r,0,7);ctx.fill();ctx.fillStyle='#111';ctx.beginPath();ctx.arc(scp.x,scp.y-2,12,0,7);ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 9px Arial';ctx.fillText('049',scp.x-8,scp.y+3)}ctx.save();ctx.translate(player.x,player.y);ctx.rotate(player.dir);ctx.fillStyle='#ddd';ctx.beginPath();ctx.arc(0,0,player.r,0,7);ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(8,0);ctx.lineTo(38,0);ctx.stroke();if(flash){ctx.lineWidth=8;ctx.beginPath();ctx.arc(0,0,43,-.8,.8);ctx.stroke()}ctx.restore();for(const p of particles){ctx.globalAlpha=p.life*1.5;ctx.fillStyle='#ccc';ctx.fillRect(p.x-2,p.y-2,4,4);ctx.globalAlpha=1}ctx.restore();ctx.fillStyle='rgba(0,0,0,.75)';ctx.fillRect(0,0,W,70);ctx.fillStyle='#eee';ctx.font='bold 19px Arial';ctx.fillText('SCP-049: CONTAINMENT BREACH',18,27);ctx.font='13px Arial';ctx.fillStyle='#aaa';ctx.fillText(breachTimer<4?'CONTAINMENT BREACH — EVACUATE':scp.dead?'SCP-049 NEUTRALIZED':'SCP-049 — A* HUNTING',18,49);ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.fillText('PLAYER '+player.hp+'/100',300,30);bar(390,18,170,16,player.hp/100);ctx.fillText('SCP-049 '+scp.hp+'/15000',585,30);bar(690,18,260,16,scp.hp/scp.max);ctx.fillStyle='#aaa';ctx.fillText('ZOMBIES '+zombies.length,970,30);if(gameOver){ctx.fillStyle='rgba(0,0,0,.76)';ctx.fillRect(0,0,W,H);ctx.textAlign='center';ctx.fillStyle=scp.dead?'#9cff9c':'#ff7777';ctx.font='bold 44px Arial';ctx.fillText(scp.dead?'SCP-049 NEUTRALIZED':'YOU DIED',W/2,H/2);ctx.fillStyle='#fff';ctx.font='18px Arial';ctx.fillText('Press ENTER to restart',W/2,H/2+40);ctx.textAlign='left'}}
+function loop(t){let dt=Math.min(.033,(t-last)/1000);last=t;update(dt,t/1000);draw();requestAnimationFrame(loop)}reset();requestAnimationFrame(loop);
+</script></body></html>
