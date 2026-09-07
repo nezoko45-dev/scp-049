@@ -6,11 +6,13 @@ const corridors=[{x:275,y:95,w:25,h:50},{x:575,y:95,w:25,h:50},{x:335,y:320,w:30
 const doorDefs=[{x:275,y:112,w:25,h:16},{x:575,y:112,w:25,h:16},{x:337,y:320,w:26,h:16},{x:667,y:320,w:26,h:16},{x:287,y:545,w:26,h:16},{x:617,y:545,w:26,h:16},{x:142,y:215,w:16,h:25},{x:462,y:215,w:16,h:25},{x:842,y:215,w:16,h:25},{x:142,y:445,w:16,h:25},{x:462,y:445,w:16,h:25},{x:842,y:445,w:16,h:25}];
 function reset(){player={x:75,y:350,r:12,hp:100,speed:190,lastHit:-99,attack:0,dir:0};scp={x:900,y:115,r:18,hp:15000,max:15000,speed:88,lastDamage:-99,target:null,dead:false};survivors=[];zombies=[];particles=[];gameOver=false;breachTimer=0;flash=0;shake=0;scpPath=[];scpPathAt=0;doors=doorDefs.map(d=>({...d,open:false}));last=performance.now();for(let i=0;i<8;i++){let r=rooms[(i+1)%rooms.length];survivors.push({x:r.x+rnd(35,r.w-35),y:r.y+rnd(35,r.h-35),r:10,dead:false})}}
 function doorBlocks(x,y,r=0){for(const d of doors)if(!d.open&&x+r>d.x&&x-r<d.x+d.w&&y+r>d.y&&y-r<d.y+d.h)return true;return false}
-function walkable(x,y,r=0){if(x<r||x>W-r||y<r||y>H-r)return false;for(const a of rooms)if(x>=a.x+r&&x<=a.x+a.w-r&&y>=a.y+r&&y<=a.y+a.h-r)return !doorBlocks(x,y,r);for(const a of corridors)if(x>=a.x+r&&x<=a.x+a.w-r&&y>=a.y+r&&y<=a.y+a.h-r)return !doorBlocks(x,y,r);return false}
+// Hallways are only 25–30 px wide, so applying the actor radius to their bounds made the
+// effective walkable width almost zero. Treat the hallway centerline as walkable and let
+// doors provide the actual barrier. Room edges still use actor radius for wall collision.
+function walkable(x,y,r=0){if(x<r||x>W-r||y<r||y>H-r)return false;for(const a of rooms)if(x>=a.x+r&&x<=a.x+a.w-r&&y>=a.y+r&&y<=a.y+a.h-r)return !doorBlocks(x,y,r);for(const a of corridors)if(x>=a.x&&x<=a.x+a.w&&y>=a.y&&y<=a.y+a.h)return !doorBlocks(x,y,0);return false}
 function move(o,nx,ny){if(walkable(nx,ny,o.r)){o.x=nx;o.y=ny;return true}if(walkable(nx,o.y,o.r))o.x=nx;if(walkable(o.x,ny,o.r))o.y=ny;return false}
 function openDoor(d){if(d.open)return;d.open=true;let cx=d.x+d.w/2,cy=d.y+d.h/2;for(let i=0;i<10;i++)particles.push({x:cx+rnd(-8,8),y:cy+rnd(-8,8),vx:rnd(-25,25),vy:rnd(-25,25),life:.5});scpPath=[];scpPathAt=0;flash=.12}
 function openNearbyDoors(){if(gameOver)return;for(const d of doors)if(!d.open&&Math.hypot(player.x-(d.x+d.w/2),player.y-(d.y+d.h/2))<100)openDoor(d)}
-// Automatically open a door when an actor reaches its entrance. This prevents AI and player trapping at narrow corridor mouths.
 function autoOpenDoor(o,range=48){for(const d of doors)if(!d.open&&Math.hypot(o.x-(d.x+d.w/2),o.y-(d.y+d.h/2))<range){openDoor(d);return true}return false}
 function nearestSurvivor(){let b=null,bd=Infinity;for(const s of survivors)if(!s.dead){let d=D(s,scp);if(d<bd){bd=d;b=s}}return b}
 function spawnZombie(s){zombies.push({x:s.x,y:s.y,r:13,hp:100,speed:rnd(62,78),lastHit:-99});for(let i=0;i<15;i++)particles.push({x:s.x,y:s.y,vx:rnd(-50,50),vy:rnd(-50,50),life:.7})}
