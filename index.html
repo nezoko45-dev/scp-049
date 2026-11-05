@@ -1,21 +1,7 @@
 <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SCP-049: LAST SHIFT</title><style>body{margin:0;background:#05080b;color:#eee;font:14px system-ui;overflow:hidden}canvas{display:block}#hud{position:fixed;inset:0;pointer-events:none;text-shadow:0 2px 5px #000}#head{padding:18px;font-weight:bold;letter-spacing:.12em}#stats{position:absolute;right:20px;top:20px;text-align:right;line-height:1.7}#cross{position:absolute;left:50%;top:50%;width:8px;height:8px;border:1px solid white;border-radius:50%}#msg{position:absolute;bottom:15%;width:100%;text-align:center;color:#ffcf9e;font-size:18px}#menu{position:fixed;inset:0;z-index:5;background:#030609ed;display:grid;place-items:center;text-align:center}#card{max-width:550px;padding:35px;background:#111820;border:1px solid #47515b;border-radius:10px}button{padding:14px 28px;font-weight:bold;background:#c69b6b;border:0;cursor:pointer}</style><div id="menu"><div id="card"><small>CONTAINMENT BREACH // NIGHT SHIFT</small><h1>SCP-049: LAST SHIFT</h1><p>Containment has failed. Stay alive until extraction. SCP-049 hunts by sight and sound. Sprint to escape—but running makes noise.</p><p>WASD · Mouse · SHIFT sprint · F flashlight</p><button id="start">START SHIFT</button></div></div><div id="hud"><div id="head">LAST SHIFT / SCP-049</div><div id="stats"></div><div id="cross"></div><div id="msg"></div></div><script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/":"https://cdn.jsdelivr.net/npm/three@0.160.0/"}}</script><script>
-/* Independent boot fallback: keep menu/button/map visible if the 3D module fails. */
-(function(){
- const start=document.getElementById('start'),menu=document.getElementById('menu');
- if(start) start.addEventListener('click',function(){menu.style.display='none';document.getElementById('msg').textContent='Game loading…';});
- setTimeout(function(){
-  if(document.querySelector('canvas'))return;
-  const cv=document.createElement('canvas');cv.id='fallback-map';cv.style.cssText='position:fixed;inset:0;width:100%;height:100%;z-index:0;background:#080d12';
-  document.body.insertBefore(cv,document.body.firstChild);
-  const ctx=cv.getContext('2d');
-  function draw(){cv.width=innerWidth;cv.height=innerHeight;ctx.fillStyle='#080d12';ctx.fillRect(0,0,cv.width,cv.height);
-   const sx=cv.width/100,sy=cv.height/140;ctx.save();ctx.translate(cv.width/2,cv.height/2);ctx.scale(sx,sy);
-   ctx.fillStyle='#252e35';ctx.fillRect(-39,-60,78,120);ctx.strokeStyle='#66737c';ctx.lineWidth=1.5;ctx.strokeRect(-39,-60,78,120);
-   ctx.fillStyle='#101820';for(let z=-48;z<50;z+=20){ctx.fillRect(-20,z,1,15);ctx.fillRect(20,z,1,15);ctx.fillRect(-39,z-8,18,1);ctx.fillRect(21,z-8,18,1);}
-   ctx.fillStyle='#c59b6b';ctx.beginPath();ctx.arc(0,40,2,0,7);ctx.fill();ctx.fillStyle='#b22';ctx.beginPath();ctx.arc(0,-5,2.5,0,7);ctx.fill();ctx.restore();
-  }draw();onresize=draw;
- },1800);
-})();
+/* Never substitute a fake 2D map for the actual Three.js game. Show module errors clearly. */
+window.addEventListener('error',e=>{const m=document.querySelector('#msg');if(m)m.textContent='3D ERROR: '+(e.message||'unknown')});
+window.addEventListener('unhandledrejection',e=>{const m=document.querySelector('#msg');if(m)m.textContent='3D LOAD ERROR: '+(e.reason?.message||e.reason||'unknown')});
 </script><script type="module">
 import * as T from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';import{GLTFLoader}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';import{PointerLockControls}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
 
