@@ -79,7 +79,7 @@ function frame(now){
   bad.rotation.y=Math.atan2(ex,ez);
   if(mixer){mixer.update(dt);let action=navPath.length&&navPathAt<navPath.length?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.6)gameover('SCP-049 CAUGHT YOU');
-  document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>BOSS '+Math.ceil(bossHP/bossMax*100)+'%<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
+  document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
   document.querySelector('#msg').textContent=dist<12?'Footsteps nearby…':bossHP<=0?'BOSS DEFEATED':'';
  }
  renderer.render(scene,cam)
