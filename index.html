@@ -44,7 +44,8 @@ function frame(now){
  let dt=Math.min(.05,(now-last)/1000);last=now;
  if(active&&!dead){
   time-=dt;
-  allies.forEach(a=>{
+  allies.forEach(a=>{if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;return;}
+   let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
    a.rotation.y=Math.atan2(dx,dz);
    if(navReady){
@@ -52,7 +53,7 @@ function frame(now){
     let t=a.userData.path[a.userData.pathIndex];
     if(t){let vx=t.x-a.position.x,vz=t.z-a.position.z,vl=Math.hypot(vx,vz);if(vl<.5){a.userData.pathIndex++;t=a.userData.path[a.userData.pathIndex];if(t){vx=t.x-a.position.x;vz=t.z-a.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(5.5*dt,vl);a.position.x+=vx/vl*step;a.position.z+=vz/vl*step}}
    }
-   if(now-lastVolley>900){if(d<2.3&&bossHP>0)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
+   if(now-lastVolley>900){if(d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
@@ -73,13 +74,13 @@ function frame(now){
   if(f||side){if(!hit(p.x+dx,p.z+dz)){p.x+=dx;p.z+=dz}else{if(!hit(p.x+dx,p.z))p.x+=dx;if(!hit(p.x,p.z+dz))p.z+=dz}noise=sprint?1:.15}else noise*=.95;
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   if(navReady&&(dist<80||noise>.7)){
-   if(!navPath.length||now-lastPathAt>2200){lastPathAt=now;if(!scpTarget||now>=scpTargetUntil){let candidates=[{kind:'player',obj:ctl.getObject(),pos:p} ,...allies.map((a,i)=>({kind:'survivor',obj:a,pos:a.position,index:i}))];let live=candidates.filter(t=>t.kind==='player'||t.obj.userData.hp>0);let chosen=live[Math.floor(Math.random()*live.length)]||{pos:p};scpTarget={kind:chosen.kind||'player',obj:chosen.obj,index:chosen.index,x:chosen.pos.x,z:chosen.pos.z};scpTargetUntil=now+11000;}else{let liveObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(liveObj){scpTarget.x=liveObj.position.x;scpTarget.z=liveObj.position.z;}}navPath=findNavPath(bad.position.x,bad.position.z,scpTarget.x,scpTarget.z);navPathAt=navPath.length>1?1:0}
+   if(!navPath.length||now-lastPathAt>2200){lastPathAt=now;if(!scpTarget||now>=scpTargetUntil){let candidates=[{kind:'player',obj:ctl.getObject(),pos:p} ,...allies.map((a,i)=>({kind:'survivor',obj:a,pos:a.position,index:i}))];let live=candidates.filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let chosen=live[Math.floor(Math.random()*live.length)]||{pos:p};scpTarget={kind:chosen.kind||'player',obj:chosen.obj,index:chosen.index,x:chosen.pos.x,z:chosen.pos.z};scpTargetUntil=now+11000;}else{let liveObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(liveObj&&liveObj.userData.hp>0){scpTarget.x=liveObj.position.x;scpTarget.z=liveObj.position.z;}else{scpTarget=null;scpTargetUntil=0;}}navPath=findNavPath(bad.position.x,bad.position.z,scpTarget.x,scpTarget.z);navPathAt=navPath.length>1?1:0}
    let t=navPath[navPathAt];if(t){let vx=t.x-bad.position.x,vz=t.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl<.45){navPathAt++;t=navPath[navPathAt];if(t){vx=t.x-bad.position.x;vz=t.z-bad.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(3.2*dt,vl);bad.position.x+=vx/vl*step;bad.position.z+=vz/vl*step}}
   }else{navPath=[];navPathAt=0}
   if(scpTarget){let aimObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(aimObj){scpTarget.x=aimObj.position.x;scpTarget.z=aimObj.position.z;}}bad.rotation.y=Math.atan2((scpTarget?.x??p.x)-bad.position.x,(scpTarget?.z??p.z)-bad.position.z);
   if(mixer){mixer.update(dt);let action=navPath.length&&navPathAt<navPath.length?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.6)gameover('SCP-049 CAUGHT YOU');
-  document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
+  document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
   document.querySelector('#msg').textContent=dist<12?'Footsteps nearby…':bossHP<=0?'BOSS DEFEATED':'';
  }
  renderer.render(scene,cam)
