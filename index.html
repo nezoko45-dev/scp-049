@@ -19,20 +19,20 @@ buildNavigation();
 // Boss encounter: four procedural survivor allies defend the facility.
 let bossHP=1000,bossMax=1000,lastVolley=0,zombies=[],playerHP=100,playerMaxHP=100;
 const allies=[];
-function makeHumanoid({skin=0xb58f72,uniform=0x536b55,height=1.85}={}){
- const root=new T.Group(),torsoMat=new T.MeshStandardMaterial({color:uniform}),skinMat=new T.MeshStandardMaterial({color:skin}),bootMat=new T.MeshStandardMaterial({color:0x202326});
- const torso=new T.Mesh(new T.BoxGeometry(.48,.62,.26),torsoMat);torso.position.y=height*.59;root.add(torso);
- const head=new T.Mesh(new T.SphereGeometry(.17,12,10),skinMat);head.position.y=height*.86;root.add(head);
- const neck=new T.Mesh(new T.CylinderGeometry(.07,.08,.12,8),skinMat);neck.position.y=height*.78;root.add(neck);
- const limb=(w,h,d,mat,x,y,z)=>{let m=new T.Mesh(new T.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);root.add(m);return m};
- const upperL=limb(.14,.34,.15,torsoMat,-.34,height*.62,0),upperR=limb(.14,.34,.15,torsoMat,.34,height*.62,0);
- const lowerL=limb(.12,.32,.13,skinMat,-.34,height*.43,0),lowerR=limb(.12,.32,.13,skinMat,.34,height*.43,0);
- const thighL=limb(.17,.38,.18,torsoMat,-.13,height*.31,0),thighR=limb(.17,.38,.18,torsoMat,.13,height*.31,0);
- const shinL=limb(.14,.34,.15,uniform===0x536b55?torsoMat:skinMat,-.13,height*.12,0),shinR=limb(.14,.34,.15,torsoMat,.13,height*.12,0);
- const footL=limb(.16,.1,.28,bootMat,-.13,.05,.06),footR=limb(.16,.1,.28,bootMat,.13,.05,.06);
- return {root,arms:[upperL,upperR,lowerL,lowerR],legs:[thighL,thighR,shinL,shinR],torso,head};
+function createSurvivor(){
+ const g=new T.Group(),clothes=new T.MeshStandardMaterial({color:0x536b55}),skin=new T.MeshStandardMaterial({color:0xb58f72}),boots=new T.MeshStandardMaterial({color:0x202326});
+ function part(w,h,d,mat,x,y,z){const m=new T.Mesh(new T.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);g.add(m);return m}
+ part(.48,.62,.26,clothes,0,1.08,0);
+ part(.25,.25,.24,skin,0,1.65,0);
+ part(.12,.12,.12,skin,0,1.47,0);
+ part(.14,.38,.15,clothes,-.34,1.12,0);part(.14,.38,.15,clothes,.34,1.12,0);
+ part(.12,.3,.13,skin,-.34,.78,0);part(.12,.3,.13,skin,.34,.78,0);
+ part(.17,.42,.18,clothes,-.13,.55,0);part(.17,.42,.18,clothes,.13,.55,0);
+ part(.14,.36,.15,clothes,-.13,.18,0);part(.14,.36,.15,clothes,.13,.18,0);
+ part(.17,.1,.28,boots,-.13,.05,.06);part(.17,.1,.28,boots,.13,.05,.06);
+ g.userData.hp=150;g.userData.path=[];g.userData.pathIndex=0;g.userData.pathAt=0;return g;
 }
-for(let i=0;i<4;i++){let h=makeHumanoid();let g=h.root;g.position.set([-8,8,-8,8][i],0,[12,12,-12,-12][i]);g.userData.parts=h;g.userData.pathAt=0;g.userData.path=[];g.userData.pathIndex=0;g.userData.hp=150;scene.add(g);allies.push(g)}
+for(let i=0;i<4;i++){let g=createSurvivor();g.position.set([-8,8,-8,8][i],0,[12,12,-12,-12][i]);scene.add(g);allies.push(g)}
 function spawnZombie(){let g=new T.Group(),mat=new T.MeshStandardMaterial({color:0x64734a});let b=new T.Mesh(new T.CapsuleGeometry(.38,1,4,8),mat);b.position.y=1;let h=new T.Mesh(new T.SphereGeometry(.25,8,8),mat);h.position.y=1.7;g.add(b,h);g.position.set(bad.position.x+(Math.random()-.5)*10,0,bad.position.z+(Math.random()-.5)*10);g.userData.hp=100;g.userData.path=[];g.userData.pathIndex=0;g.userData.pathAt=0;scene.add(g);zombies.push(g)}
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);if(Math.random()<.03)spawnZombie();if(bossHP===0){gameover('SCP-049 DEFEATED!');document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>The survivors secured the facility.</p><button onclick="location.reload()">PLAY AGAIN</button>';document.querySelector('#menu').style.display='grid'}}
 
