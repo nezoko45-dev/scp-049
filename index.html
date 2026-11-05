@@ -38,8 +38,9 @@ function makeFacilityChunk(cx,cz){
   else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
  }
  // Lamps and props.
- let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify({walls:chunkWalls})}).catch(()=>{});
+ let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({walls:chunkWalls})}).catch(()=>{});
 }
+let backendGridSyncAt=0;async function syncGridBackend(now){if(now-backendGridSyncAt<1200)return;backendGridSyncAt=now;try{let r=await fetch('http://127.0.0.1:8766/grid');if(r.ok){let g=await r.json();if(g.grid&&g.width&&g.height){navData=g;navReady=true;navPath=[];allies.forEach(a=>a.userData.path=[])}}}catch(_){}}
 function streamFacility(now){
  if(!navReady)return;
  const p=ctl.getObject().position,chunkX=Math.floor(p.x/40)*40,chunkZ=Math.floor(p.z/40)*40;makeFacilityChunk(chunkX,chunkZ);
@@ -84,7 +85,7 @@ function frame(now){
  requestAnimationFrame(frame);
  let dt=Math.min(.05,(now-last)/1000);last=now;
  if(active&&!dead){
-  time-=dt;streamFacility(now);
+  time-=dt;streamFacility(now);syncGridBackend(now);
   allies.forEach(a=>{if(a.userData.hp<=0){if(!a.userData.respawnAt)a.userData.respawnAt=now+6000;if(now>=a.userData.respawnAt){a.userData.hp=150;a.userData.dead=false;a.visible=true;a.position.set((Math.random()-.5)*18,0,12+Math.random()*12);a.userData.path=[];a.userData.respawnAt=0;}else{a.userData.dead=true;a.visible=false;return;}}
    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
    a.rotation.y=Math.atan2(dx,dz);
