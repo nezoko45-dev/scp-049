@@ -55,9 +55,6 @@ function frame(now){
    if(now-lastVolley>900){if(d<2.3&&bossHP>0)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
   if(now-lastVolley>900)lastVolley=now;
-  zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});
-   });
-  }
   zombies.forEach(z=>{
    let p=ctl.getObject().position,dx=p.x-z.position.x,dz=p.z-z.position.z,d=Math.hypot(dx,dz);
    if(navReady){
