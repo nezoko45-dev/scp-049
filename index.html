@@ -17,19 +17,44 @@ function findNavPath(sx,sz,tx,tz){const s=nearestOpen(sx,sz),t=nearestOpen(tx,tz
 while(open.length){open.sort((a,b)=>a.f-b.f);const n=open.shift(),nk=key(n.x,n.z);if(closed.has(nk))continue;if(n.x===t.x&&n.z===t.z){let out=[n];let k=nk;while(came.has(k)){const p=came.get(k);out.push(p);k=key(p.x,p.z)}out.reverse();return out.map(p=>({x:navData.origin.x+p.x+.5,z:navData.origin.z+p.z+.5}))}closed.add(nk);for(const [dx,dz]of dirs){let x=n.x+dx,z=n.z+dz;if(x<0||z<0||x>=navData.width||z>=navData.height||!navData.grid[z][x])continue;if(dx&&dz&&(!navData.grid[n.z][x]||!navData.grid[z][n.x]))continue;let k=key(x,z),g=n.g+(dx&&dz?1.414:1);if(g>=(cost.get(k)??Infinity))continue;cost.set(k,g);came.set(k,{x:n.x,z:n.z});open.push({x,z,g,f:g+Math.hypot(t.x-x,t.z-z)})}}return []}
 buildNavigation();
 // Infinite facility streaming: add 40m corridor chunks ahead and extend the A* grid.
-const facilityChunks=new Set();let streamedNorth=-95;
+const facilityChunks=new Set();let streamedNorth=-95,streamedSouth=25,streamedWest=-39,streamedEast=39;
+function growNav(dir){
+ if(dir==='N'){navData.grid.unshift(...Array.from({length:40},()=>Array(navData.width).fill(1)));navData.origin.z-=40;navData.height+=40}
+ if(dir==='S'){navData.grid.push(...Array.from({length:40},()=>Array(navData.width).fill(1)));navData.height+=40}
+ if(dir==='W'){navData.grid.forEach(row=>row.unshift(...Array(40).fill(1)));navData.origin.x-=40;navData.width+=40}
+ if(dir==='E'){navData.grid.forEach(row=>row.push(...Array(40).fill(1)));navData.width+=40}
+}
+function makeFacilityChunk(cx,cz){
+ const key=cx+','+cz;if(facilityChunks.has(key))return;facilityChunks.add(key);
+ const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);
+ // Boundary walls; leave openings for connected hallways on each side.
+ const openN=Math.random()<.72,openS=Math.random()<.72,openW=Math.random()<.72,openE=Math.random()<.72;
+ const wall=(x,z,w,d)=>B(x,2,z,w,4,d);
+ if(!openN)wall(cx+20,cz,40,1);if(!openS)wall(cx+20,cz+40,40,1);
+ if(!openW)wall(cx,cz+20,1,40);if(!openE)wall(cx+40,cz+20,1,40);
+ // Interior hallway partitions, always with a doorway gap.
+ for(let n=0;n<3;n++){
+  if(Math.random()<.5){let z=cz+8+Math.random()*24,gap=cx+8+Math.random()*24;wall(cx+(gap-cx-4)/2,z,gap-cx-4,1);wall(gap+4+(cx+40-gap-4)/2,z,cx+40-gap-4,1)}
+  else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
+ }
+ // Lamps and props.
+ let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);
+}
 function streamFacility(){
  if(!navReady)return;
- while(ctl.getObject().position.z<streamedNorth+55){
-  const cz=streamedNorth-20,key=Math.round(cz);if(facilityChunks.has(key))break;facilityChunks.add(key);
-  const floor=new T.Mesh(new T.BoxGeometry(78,.4,40),mats[0]);floor.position.set(0,-.2,cz);scene.add(floor);
-  B(-39,2,cz,1,4,40);B(39,2,cz,1,4,40);
-  // Randomized side alcoves/cover, with corresponding blocked navigation cells.
-  const rows=Array.from({length:40},()=>Array(78).fill(1));for(let x=0;x<78;x++){rows[0][x]=0;rows[77][x]=0}
-  for(let n=0;n<5;n++){let side=Math.random()<.5?-1:1,x=side*(25+Math.random()*8),z=cz-18+Math.random()*36,w=3+Math.random()*4;B(x,1.5,z,w,3,2,2);let ix=Math.floor(x+39),iz=Math.floor(z-(navData.origin.z-40));for(let zz=iz-1;zz<=iz+1;zz++)for(let xx=ix-1;xx<=ix+1;xx++)if(rows[zz]&&xx>=0&&xx<78)rows[zz][xx]=0}
-  navData.grid.unshift(...rows);navData.origin.z-=40;navData.height+=40;streamedNorth-=40;
- }
+ const p=ctl.getObject().position,chunkX=Math.floor(p.x/40)*40,chunkZ=Math.floor(p.z/40)*40;
+ // Grow A* data as the player crosses the current grid borders.
+ while(p.z<navData.origin.z+20){growNav('N');streamedNorth-=40}
+ while(p.z>navData.origin.z+navData.height-20){growNav('S');streamedSouth+=40}
+ while(p.x<navData.origin.x+20){growNav('W');streamedWest-=40}
+ while(p.x>navData.origin.x+navData.width-20){growNav('E');streamedEast+=40}
+ // Build connected rooms and hallways in every direction around the player.
+ for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)makeFacilityChunk(chunkX+dx*40,chunkZ+dz*40);
+ // Keep current paths fresh against the expanded navigation grid.
+ if(navPath.length&&now-lastPathAt>900){navPath=[];lastPathAt=0}
+ allies.forEach(a=>{if(a.userData.hp>0&&a.userData.pathAt&&now-a.userData.pathAt>1400)a.userData.path=[]});
 }
+
 
 // Boss encounter: four procedural survivor allies defend the facility.
 let bossHP=15000,bossMax=15000,lastVolley=0,zombies=[],playerHP=100,playerMaxHP=100;
