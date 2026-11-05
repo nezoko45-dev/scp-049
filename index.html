@@ -31,18 +31,18 @@ function frame(now){
  let dt=Math.min(.05,(now-last)/1000);last=now;
  if(active&&!dead){
   time-=dt;
-  if(now-lastVolley>900){
-   lastVolley=now;
-   allies.forEach(a=>{
-    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
-    a.rotation.y=Math.atan2(dx,dz);
-    if(navReady){
-     if(!a.userData.path.length||now-a.userData.pathAt>1800){a.userData.path=findNavPath(a.position.x,a.position.z,bad.position.x,bad.position.z);a.userData.pathAt=now;a.userData.pathIndex=a.userData.path.length>1?1:0}
-     let t=a.userData.path[a.userData.pathIndex];
-     if(t){let vx=t.x-a.position.x,vz=t.z-a.position.z,vl=Math.hypot(vx,vz);if(vl<.5){a.userData.pathIndex++;t=a.userData.path[a.userData.pathIndex];if(t){vx=t.x-a.position.x;vz=t.z-a.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(2.2*dt,vl);a.position.x+=vx/vl*step;a.position.z+=vz/vl*step}}
-    }
-    if(d<2.3&&bossHP>0)bossDamage(8);
-    zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});
+  allies.forEach(a=>{
+   let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
+   a.rotation.y=Math.atan2(dx,dz);
+   if(navReady){
+    if(!a.userData.path.length||now-a.userData.pathAt>1800){a.userData.path=findNavPath(a.position.x,a.position.z,bad.position.x,bad.position.z);a.userData.pathAt=now;a.userData.pathIndex=a.userData.path.length>1?1:0}
+    let t=a.userData.path[a.userData.pathIndex];
+    if(t){let vx=t.x-a.position.x,vz=t.z-a.position.z,vl=Math.hypot(vx,vz);if(vl<.5){a.userData.pathIndex++;t=a.userData.path[a.userData.pathIndex];if(t){vx=t.x-a.position.x;vz=t.z-a.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(2.2*dt,vl);a.position.x+=vx/vl*step;a.position.z+=vz/vl*step}}
+   }
+   if(now-lastVolley>900){if(d<2.3&&bossHP>0)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
+  });
+  if(now-lastVolley>900)lastVolley=now;
+  zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});
    });
   }
   zombies.forEach(z=>{
