@@ -51,12 +51,11 @@ function hit(x,z,r=.5){return Math.abs(x)>37||z>22||z<-92||solid.some(o=>Math.ab
 function frame(now){requestAnimationFrame(frame);let dt=Math.min(.05,(now-last)/1000);last=now;if(active&&!dead){time-=dt;if(time<=0)gameover('EXTRACTION ARRIVED');let f=+!!keys.KeyW-+!!keys.KeyS,s=+!!keys.KeyD-+!!keys.KeyA,sprint=(keys.ShiftLeft||keys.ShiftRight)&&stam>0&&f>0;stam=Math.max(0,Math.min(100,stam+(sprint?-30:20)*dt));let d=new T.Vector3();cam.getWorldDirection(d);d.y=0;d.normalize();let r=new T.Vector3(d.z,0,-d.x),v=sprint?7:4,dx=(d.x*f+r.x*s)*v*dt,dz=(d.z*f+r.z*s)*v*dt,p=ctl.getObject().position;if(f||s){if(!hit(p.x+dx,p.z+dz)){p.x+=dx;p.z+=dz}else{if(!hit(p.x+dx,p.z))p.x+=dx;if(!hit(p.x,p.z+dz))p.z+=dz}noise=sprint?1:.15}else noise*=.95;
 let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);if(navReady&&(dist<35||noise>.7)){
  if(now-lastPathAt>450){lastPathAt=now;
-  const route=navQuery.computePath(
-   {x:bad.position.x,y:0.1,z:bad.position.z},
-   {x:p.x,y:0.1,z:p.z},
-   {halfExtents:{x:5,y:4,z:5},maxPathPolys:512,maxStraightPathPoints:128}
-  );
+  const s0=navQuery.findClosestPoint({x:bad.position.x,y:0.1,z:bad.position.z},{halfExtents:{x:8,y:5,z:8}});
+  const e0=navQuery.findClosestPoint({x:p.x,y:0.1,z:p.z},{halfExtents:{x:8,y:5,z:8}});
+  const route=s0.success&&e0.success?navQuery.computePath(s0.point,e0.point,{halfExtents:{x:8,y:5,z:8},maxPathPolys:512,maxStraightPathPoints:128}):{success:false,path:[]};
   navPath=route.success?route.path:[];navPathAt=navPath.length>1?1:0;
+  if(!route.success)console.warn('SCP Recast route failed',route.error,s0,e0);
  }
  let target=navPath[navPathAt];
  if(target){
