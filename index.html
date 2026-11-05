@@ -9,7 +9,7 @@ const scene=new T.Scene();scene.background=new T.Color(0x070a0d);scene.fog=new T
 const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({color})),solid=[],navMeshes=[];function B(x,y,z,w,h,d,m=1,coll=true){let a=new T.Mesh(new T.BoxGeometry(w,h,d),mats[m]);a.position.set(x,y,z);scene.add(a);if(coll){solid.push({x,z,w,d});navMeshes.push(a)}}
 const floorMesh=new T.Mesh(new T.BoxGeometry(78,.4,120),mats[0]);floorMesh.position.set(0,-.2,-35);scene.add(floorMesh);navMeshes.push(floorMesh);B(-39,2,-35,1,4,120);B(39,2,-35,1,4,120);B(0,2,-95,78,4,1);B(0,2,25,78,4,1);for(let z=12;z>-90;z-=20){B(-20,2,z,1,4,15);B(20,2,z,1,4,15);B(-30,2,z-8,18,4,1);B(30,2,z-8,18,4,1);B(-31,1,z,5,2,5,2);B(31,1,z,5,2,5,2);let l=new T.PointLight(0x8cb8d2,3,18);l.position.set(0,3,z);scene.add(l)}B(0,2,-82,22,4,1);B(-11,2,-72,1,4,20);B(11,2,-72,1,4,20);B(0,2,-62,22,4,1);
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
-let navData=null,navReady=false,navPath=[],navPathAt=0,lastPathAt=0;
+let navData=null,navReady=false,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
 async function buildNavigation(){try{const res=await fetch('./facility-navdata.json');if(!res.ok)throw Error('HTTP '+res.status);navData=await res.json();if(navData.version!==1||!navData.grid)throw Error('Invalid baked nav data');navReady=true;console.info('Baked facility navigation loaded',navData.width,navData.height)}catch(e){navReady=false;console.error('Baked nav data load failed',e);document.querySelector('#msg').textContent='Navigation data failed to load'}}
 function cellOf(x,z){return {x:Math.floor(x-navData.origin.x),z:Math.floor(z-navData.origin.z)}}
 function nearestOpen(x,z){let c=cellOf(x,z);for(let r=0;r<12;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;let ix=c.x+dx,iz=c.z+dz;if(ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height&&navData.grid[iz][ix])return {x:ix,z:iz}}return null}
@@ -17,7 +17,7 @@ function findNavPath(sx,sz,tx,tz){const s=nearestOpen(sx,sz),t=nearestOpen(tx,tz
 while(open.length){open.sort((a,b)=>a.f-b.f);const n=open.shift(),nk=key(n.x,n.z);if(closed.has(nk))continue;if(n.x===t.x&&n.z===t.z){let out=[n];let k=nk;while(came.has(k)){const p=came.get(k);out.push(p);k=key(p.x,p.z)}out.reverse();return out.map(p=>({x:navData.origin.x+p.x+.5,z:navData.origin.z+p.z+.5}))}closed.add(nk);for(const [dx,dz]of dirs){let x=n.x+dx,z=n.z+dz;if(x<0||z<0||x>=navData.width||z>=navData.height||!navData.grid[z][x])continue;if(dx&&dz&&(!navData.grid[n.z][x]||!navData.grid[z][n.x]))continue;let k=key(x,z),g=n.g+(dx&&dz?1.414:1);if(g>=(cost.get(k)??Infinity))continue;cost.set(k,g);came.set(k,{x:n.x,z:n.z});open.push({x,z,g,f:g+Math.hypot(t.x-x,t.z-z)})}}return []}
 buildNavigation();
 // Boss encounter: four procedural survivor allies defend the facility.
-let bossHP=1000,bossMax=1000,lastVolley=0,zombies=[],playerHP=100,playerMaxHP=100;
+let bossHP=15000,bossMax=15000,lastVolley=0,zombies=[],playerHP=100,playerMaxHP=100;
 const allies=[];
 function createSurvivor(){
  const g=new T.Group(),clothes=new T.MeshStandardMaterial({color:0x536b55}),skin=new T.MeshStandardMaterial({color:0xb58f72}),boots=new T.MeshStandardMaterial({color:0x202326});
@@ -73,7 +73,7 @@ function frame(now){
   if(f||side){if(!hit(p.x+dx,p.z+dz)){p.x+=dx;p.z+=dz}else{if(!hit(p.x+dx,p.z))p.x+=dx;if(!hit(p.x,p.z+dz))p.z+=dz}noise=sprint?1:.15}else noise*=.95;
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   if(navReady&&(dist<80||noise>.7)){
-   if(!navPath.length||now-lastPathAt>2200){lastPathAt=now;navPath=findNavPath(bad.position.x,bad.position.z,p.x,p.z);navPathAt=navPath.length>1?1:0}
+   if(!navPath.length||now-lastPathAt>2200){lastPathAt=now;if(!scpTarget||now>=scpTargetUntil){scpTarget=p.clone();scpTargetUntil=now+11000;}else if(noise>.7&&now>=scpTargetUntil-11000){scpTarget=p.clone();scpTargetUntil=now+11000;}navPath=findNavPath(bad.position.x,bad.position.z,scpTarget.x,scpTarget.z);navPathAt=navPath.length>1?1:0}
    let t=navPath[navPathAt];if(t){let vx=t.x-bad.position.x,vz=t.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl<.45){navPathAt++;t=navPath[navPathAt];if(t){vx=t.x-bad.position.x;vz=t.z-bad.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(3.2*dt,vl);bad.position.x+=vx/vl*step;bad.position.z+=vz/vl*step}}
   }else{navPath=[];navPathAt=0}
   bad.rotation.y=Math.atan2(ex,ez);
