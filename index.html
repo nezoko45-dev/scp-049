@@ -46,7 +46,6 @@ function frame(now){
   time-=dt;
   allies.forEach(a=>{if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;return;}
    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
-   let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
    a.rotation.y=Math.atan2(dx,dz);
    if(navReady){
     if(!a.userData.path.length||now-a.userData.pathAt>1800){let i=allies.indexOf(a),ang=i*Math.PI/2,goalX=bad.position.x+Math.cos(ang)*5,goalZ=bad.position.z+Math.sin(ang)*5;a.userData.path=findNavPath(a.position.x,a.position.z,goalX,goalZ);a.userData.pathAt=now;a.userData.pathIndex=a.userData.path.length>1?1:0}
