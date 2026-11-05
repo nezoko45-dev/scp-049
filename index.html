@@ -54,8 +54,12 @@ let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);if(navRea
   const s0=navQuery.findClosestPoint({x:bad.position.x,y:0.1,z:bad.position.z},{halfExtents:{x:8,y:5,z:8}});
   const e0=navQuery.findClosestPoint({x:p.x,y:0.1,z:p.z},{halfExtents:{x:8,y:5,z:8}});
   const route=s0.success&&e0.success?navQuery.computePath(s0.point,e0.point,{halfExtents:{x:8,y:5,z:8},maxPathPolys:512,maxStraightPathPoints:128}):{success:false,path:[]};
-  navPath=route.success?route.path:[];navPathAt=navPath.length>1?1:0;
-  if(!route.success)console.warn('SCP Recast route failed',route.error,s0,e0);
+  navPath=route.success?(route.path||route.straightPath||[]):[];
+  // Recast vector points may be arrays [x,y,z] or objects {x,y,z}.
+  navPath=navPath.map(v=>Array.isArray(v)?{x:v[0],y:v[1],z:v[2]}:v).filter(v=>v&&Number.isFinite(v.x)&&Number.isFinite(v.z));
+  navPathAt=navPath.length>1?1:0;
+  console.debug('SCP nav route', {success:route.success,waypoints:navPath.length,start:s0.success,end:e0.success});
+  if(!route.success)console.warn('SCP Recast route failed',route,s0,e0);
  }
  let target=navPath[navPathAt];
  if(target){
