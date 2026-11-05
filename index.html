@@ -21,7 +21,7 @@ let bossHP=1000,bossMax=1000,lastVolley=0,zombies=[],playerHP=100,playerMaxHP=10
 const allies=[];
 function makeHumanoid({skin=0xb58f72,uniform=0x536b55,height=1.85}={}){
  const root=new T.Group(),torsoMat=new T.MeshStandardMaterial({color:uniform}),skinMat=new T.MeshStandardMaterial({color:skin}),bootMat=new T.MeshStandardMaterial({color:0x202326});
- const torso=new T.Mesh(new T.BoxGeometry(.48,.62,.26),torsoMat);torso.position.y=height*.59;root.add(torso;
+ const torso=new T.Mesh(new T.BoxGeometry(.48,.62,.26),torsoMat);torso.position.y=height*.59;root.add(torso);
  const head=new T.Mesh(new T.SphereGeometry(.17,12,10),skinMat);head.position.y=height*.86;root.add(head);
  const neck=new T.Mesh(new T.CylinderGeometry(.07,.08,.12,8),skinMat);neck.position.y=height*.78;root.add(neck);
  const limb=(w,h,d,mat,x,y,z)=>{let m=new T.Mesh(new T.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);root.add(m);return m};
@@ -50,7 +50,7 @@ function frame(now){
    if(navReady){
     if(!a.userData.path.length||now-a.userData.pathAt>1800){a.userData.path=findNavPath(a.position.x,a.position.z,bad.position.x,bad.position.z);a.userData.pathAt=now;a.userData.pathIndex=a.userData.path.length>1?1:0}
     let t=a.userData.path[a.userData.pathIndex];
-    if(t){let vx=t.x-a.position.x,vz=t.z-a.position.z,vl=Math.hypot(vx,vz);if(vl<.5){a.userData.pathIndex++;t=a.userData.path[a.userData.pathIndex];if(t){vx=t.x-a.position.x;vz=t.z-a.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(2.2*dt,vl);a.position.x+=vx/vl*step;a.position.z+=vz/vl*step}}
+    if(t){let vx=t.x-a.position.x,vz=t.z-a.position.z,vl=Math.hypot(vx,vz);if(vl<.5){a.userData.pathIndex++;t=a.userData.path[a.userData.pathIndex];if(t){vx=t.x-a.position.x;vz=t.z-a.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(5.5*dt,vl);a.position.x+=vx/vl*step;a.position.z+=vz/vl*step}}
    }
    if(now-lastVolley>900){if(d<2.3&&bossHP>0)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
