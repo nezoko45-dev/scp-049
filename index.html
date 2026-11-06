@@ -108,8 +108,27 @@ function moveAIOnExeGrid(obj,dx,dz,r=.4){let moved=false,nx=obj.position.x+dx,nz
 // AI obstruction recovery: select a nearby open coordinate from facility-navdata.json.
 function relocateAIToJSONCell(obj,x=obj.position.x,z=obj.position.z){const q=nearestOpen(x,z);if(!q)return false;const cs=navData.cellSize||1;obj.position.x=navData.origin.x+(q.x+.5)*cs;obj.position.z=navData.origin.z+(q.z+.5)*cs;return true}
 async function refreshLiveGrid(){try{const r=await fetch('http://127.0.0.1:8766/map.json?ai='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error('map fetch');const g=await r.json();if(!g.grid||!g.width||!g.height||!g.origin||!g.cellSize)throw Error('bad map');navData=g;navReady=true;backendGridOnline=true;return true}catch(e){backendGridOnline=false;return false}}
-function liveGridAvoidStep(obj,tx,tz,speed){if(!backendGridOnline||!navData?.grid)return false;const x=obj.position.x,z=obj.position.z,dx=tx-x,dz=tz-z,d=Math.hypot(dx,dz);if(d<.05)return false;const cs=navData.cellSize||1,step=Math.min(speed*dt,d),ux=dx/d,uz=dz/d;const samples=Math.max(1,Math.ceil(step/(cs*.18)));let clear=true;for(let i=1;i<=samples;i++)if(!liveGridCellOpen(x+ux*step*i/samples,z+uz*step*i/samples)){clear=false;break}if(clear&&!hit(x+ux*step,z+uz*step,.35)){obj.position.x+=ux*step;obj.position.z+=uz*step;return true}
-const c=cellOf(x+ux*step,z+uz*step);let candidates=[];for(let ring=1;ring<=10;ring++)for(let oz=-ring;oz<=ring;oz++)for(let ox=-ring;ox<=ring;ox++){if(Math.max(Math.abs(ox),Math.abs(oz))!==ring)continue;let ix=c.x+ox,iz=c.z+oz;if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;let wx=navData.origin.x+(ix+.5)*cs,wz=navData.origin.z+(iz+.5)*cs;if(hit(wx,wz,.35))continue;let score=Math.hypot(wx-tx,wz-tz)+Math.hypot(wx-x,wz-z)*.15;candidates.push({x:wx,z:wz,score})}candidates.sort((a,b)=>a.score-b.score);const q=candidates[0];if(!q)return false;let qx=q.x-x,qz=q.z-z,qd=Math.hypot(qx,qz),ss=Math.min(speed*dt,qd);if(qd>.01&&!hit(x+qx/qd*ss,z+qz/qd*ss,.35)){obj.position.x+=qx/qd*ss;obj.position.z+=qz/qd*ss;return true}return false}
+// Cell-snapped AI: agents travel between cell centers; JSON 1=open, 0=blocked.
+function liveGridAvoidStep(obj,tx,tz,speed){
+ if(!navReady||!navData?.grid)return false;
+ const cs=navData.cellSize||1,cell=cellOf(obj.position.x,obj.position.z);
+ const center=(ix,iz)=>({x:navData.origin.x+(ix+.5)*cs,z:navData.origin.z+(iz+.5)*cs});
+ const here=center(cell.x,cell.z),x=obj.position.x,z=obj.position.z;
+ // Snap gently onto the current cell center before selecting a neighbor.
+ let vx=here.x-x,vz=here.z-z,d=Math.hypot(vx,vz),step=speed*dt;
+ if(d>.06){let n=Math.min(step,d);obj.position.x+=vx/d*n;obj.position.z+=vz/d*n;return true}
+ const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+ let best=null,score=Infinity;
+ for(const [ox,oz] of dirs){let ix=cell.x+ox,iz=cell.z+oz;
+  if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;
+  if(ox&&oz&&(!navData.grid[cell.z]?.[ix]||!navData.grid[iz]?.[cell.x]))continue;
+  const q=center(ix,iz);if(hit(q.x,q.z,.3))continue;
+  const sc=Math.hypot(q.x-tx,q.z-tz);if(sc<score){score=sc;best=q}
+ }
+ if(!best)return false;
+ vx=best.x-x;vz=best.z-z;d=Math.hypot(vx,vz);if(d<.01)return false;
+ step=Math.min(step,d);obj.position.x+=vx/d*step;obj.position.z+=vz/d*step;return true
+}
 function liveGridCellOpen(x,z){if(!backendGridOnline||!navData?.grid)return false;const c=cellOf(x,z);return c.x>=0&&c.z>=0&&c.x<navData.width&&c.z<navData.height&&!!navData.grid[c.z]?.[c.x]}
 function nearestLiveOpen(x,z,around=7){if(!backendGridOnline||!navData?.grid)return null;const c=cellOf(x,z);let best=null,score=Infinity;for(let dz=-around;dz<=around;dz++)for(let dx=-around;dx<=around;dx++){const ix=c.x+dx,iz=c.z+dz;if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;const d=dx*dx+dz*dz;if(d<score){score=d;best={x:navData.origin.x+(ix+.5)*navData.cellSize,z:navData.origin.z+(iz+.5)*navData.cellSize}}}return best}
 function moveByLiveGrid(obj,dx,dz,r=.35){const x=obj.position.x,z=obj.position.z,len=Math.hypot(dx,dz);if(len<1e-5)return false;if(!backendGridOnline||!navData?.grid)return false;const cs=navData.cellSize||1,n=Math.max(1,Math.ceil(len/(cs*.2)));let clear=true;for(let i=1;i<=n;i++){let t=i/n;if(!liveGridCellOpen(x+dx*t,z+dz*t)){clear=false;break}}if(clear&&!hit(x+dx,z+dz,r)){obj.position.x=x+dx;obj.position.z=z+dz;return true}const target=nearestLiveOpen(x+dx,z+dz,9);if(!target)return false;const vx=target.x-x,vz=target.z-z,d=Math.hypot(vx,vz),step=Math.min(len,d);if(d>1e-4&&!hit(x+vx/d*step,z+vz/d*step,r)){obj.position.x=x+vx/d*step;obj.position.z=z+vz/d*step;return true}return false}
