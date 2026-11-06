@@ -39,7 +39,7 @@ function makeFacilityChunk(cx,cz){
   else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
  }
  // Lamps and props.
- let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({walls:chunkWalls})}).catch(()=>{});
+ let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk:{x:cx,z:cz,size:40},walls:chunkWalls})}).catch(()=>{});
 }
 let backendGridSyncAt=0,backendGridOnline=false;async function syncGridBackend(now){if(now-backendGridSyncAt<1200)return;backendGridSyncAt=now;try{let r=await fetch('http://127.0.0.1:8766/grid',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let g=await r.json();if(!g.grid||!g.width||!g.height)throw Error('Invalid grid');navData=g;navReady=true;backendGridOnline=true;navPath=[];allies.forEach(a=>a.userData.path=[]);document.querySelector('#head').textContent='LAST SHIFT / GRID EXE ONLINE · AI USING LIVE GRID';}catch(e){backendGridOnline=false;document.querySelector('#head').textContent='LAST SHIFT / GRID EXE OFFLINE · AI USING FALLBACK';}}
 function streamFacility(now){
