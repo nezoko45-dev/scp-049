@@ -30,7 +30,7 @@ function makeFacilityChunk(cx,cz){
  const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);
  // Boundary walls; leave openings for connected hallways on each side.
  const openN=Math.random()<.72,openS=Math.random()<.72,openW=Math.random()<.72,openE=Math.random()<.72;
- const chunkWalls=[];const wall=(x,z,w,d)=>{B(x,2,z,w,4,d);chunkWalls.push({x,z,w,d})};
+ const chunkWalls=[];const wall=(x,z,w,d)=>{B(x,2,z,w,4,d);chunkWalls.push({x,z,w,d});if(navData?.grid){const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,x0=Math.floor((x-w/2-ox)/cs)-1,x1=Math.ceil((x+w/2-ox)/cs)+1,z0=Math.floor((z-d/2-oz)/cs)-1,z1=Math.ceil((z+d/2-oz)/cs)+1;for(let iz=z0;iz<z1;iz++)for(let ix=x0;ix<x1;ix++)if(ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height)navData.grid[iz][ix]=0}};
  if(!openN)wall(cx+20,cz,40,1);if(!openS)wall(cx+20,cz+40,40,1);
  if(!openW)wall(cx,cz+20,1,40);if(!openE)wall(cx+40,cz+20,1,40);
  // Interior hallway partitions, always with a doorway gap.
@@ -122,7 +122,7 @@ function frame(now){
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   if(navReady&&(dist<80||noise>.7)){
    if((!navPath.length||now-lastPathAt>3200)&&!bad.userData.pathPending){lastPathAt=now;bad.userData.pathPending=true;if(!scpTarget||now>=scpTargetUntil){let candidates=[{kind:'player',obj:ctl.getObject(),pos:p},...allies.map((a,i)=>({kind:'survivor',obj:a,pos:a.position,index:i}))];let live=candidates.filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let chosen=live[Math.floor(Math.random()*live.length)]||{pos:p};scpTarget={kind:chosen.kind||'player',obj:chosen.obj,index:chosen.index,x:chosen.pos.x,z:chosen.pos.z};scpTargetUntil=now+11000;}else{let liveObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(liveObj&&(scpTarget.kind==='player'||liveObj.userData.hp>0)){scpTarget.x=liveObj.position.x;scpTarget.z=liveObj.position.z;}else{scpTarget=null;scpTargetUntil=0;}}Promise.resolve(findNavPath(bad.position.x,bad.position.z,scpTarget.x,scpTarget.z)).then(path=>{if(path?.length>1){navPath=path;navPathAt=1}}).catch(()=>{}).finally(()=>bad.userData.pathPending=false)}
-   let t=navPath[navPathAt];if(t){let vx=t.x-bad.position.x,vz=t.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl<.45){navPathAt++;t=navPath[navPathAt];if(t){vx=t.x-bad.position.x;vz=t.z-bad.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(3.2*dt,vl);if(!moveColliding(bad,vx/vl*step,vz/vl*step,.65)){navPath=[];lastPathAt=0}}}
+   let t=navPath[navPathAt];if(t){let vx=t.x-bad.position.x,vz=t.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl<.45){navPathAt++;t=navPath[navPathAt];if(t){vx=t.x-bad.position.x;vz=t.z-bad.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(3.2*dt,vl);if(!moveAIOnExeGrid(bad,vx/vl*step,vz/vl*step,.55)){navPath=[];lastPathAt=0}}}
   }else{navPath=[];navPathAt=0}
   if(scpTarget){let aimObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(aimObj){scpTarget.x=aimObj.position.x;scpTarget.z=aimObj.position.z;}}const desiredYaw=Math.atan2((scpTarget?.x??p.x)-bad.position.x,(scpTarget?.z??p.z)-bad.position.z);let yawDelta=Math.atan2(Math.sin(desiredYaw-bad.rotation.y),Math.cos(desiredYaw-bad.rotation.y));bad.rotation.y+=yawDelta*Math.min(1,dt*7);
   if(mixer){mixer.update(dt);let action=navPath.length&&navPathAt<navPath.length?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
