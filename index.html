@@ -107,7 +107,7 @@ function exeGridClear(x,z,r=.4){if(!navReady||!navData?.grid)return false;for(co
 function moveAIOnExeGrid(obj,dx,dz,r=.4){let moved=false,nx=obj.position.x+dx,nz=obj.position.z+dz;if(exeGridClear(nx,obj.position.z,r)&&!hit(nx,obj.position.z,r)){obj.position.x=nx;moved=true}if(exeGridClear(obj.position.x,nz,r)&&!hit(obj.position.x,nz,r)){obj.position.z=nz;moved=true}return moved}
 // AI obstruction recovery: select a nearby open coordinate from facility-navdata.json.
 function relocateAIToJSONCell(obj,x=obj.position.x,z=obj.position.z){const q=nearestOpen(x,z);if(!q)return false;const cs=navData.cellSize||1;obj.position.x=navData.origin.x+(q.x+.5)*cs;obj.position.z=navData.origin.z+(q.z+.5)*cs;return true}
-function moveAIByJSON(obj,dx,dz){const nx=obj.position.x+dx,nz=obj.position.z+dz;if(exeGridClear(nx,nz,.25)){obj.position.x=nx;obj.position.z=nz;return true}return relocateAIToJSONCell(obj,nx,nz)}
+function moveAIByJSON(obj,dx,dz){const nx=obj.position.x+dx,nz=obj.position.z+dz;if(jsonRayClear(obj.position.x,obj.position.z,dx,dz,.25)&&!hit(nx,nz,.25)){obj.position.x=nx;obj.position.z=nz;return true}return jsonSteerMove(obj,dx,dz,.3)||relocateAIToJSONCell(obj,nx,nz)}
 // JSON-grid raycast: sample every cell along SCP's proposed step and steer toward a clear direction.
 function jsonRayClear(x,z,dx,dz,r=.4){if(!navReady||!navData?.grid)return false;const cs=navData.cellSize||1,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.2)));for(let i=0;i<=steps;i++){const t=i/steps,c=cellOf(x+dx*t,z+dz*t);for(const [ox,oz] of [[-r,-r],[r,-r],[-r,r],[r,r],[0,0]]){const q=cellOf(x+dx*t+ox,z+dz*t+oz);if(q.x<0||q.z<0||q.x>=navData.width||q.z>=navData.height||!navData.grid[q.z]?.[q.x])return false}}return true}
 function followJSONPath(obj,speed,now){let ud=obj.userData;if(!ud.path?.length||now-(ud.pathAt||0)>2500)return false;let i=ud.pathIndex||0;while(i<ud.path.length&&Math.hypot(ud.path[i].x-obj.position.x,ud.path[i].z-obj.position.z)<.5)i++;ud.pathIndex=i;if(i>=ud.path.length)return false;const p=ud.path[i],dx=p.x-obj.position.x,dz=p.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;const step=Math.min(speed*dt,d);obj.position.x+=dx/d*step;obj.position.z+=dz/d*step;return true}
@@ -123,7 +123,7 @@ function frame(now){
    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
    a.rotation.y=Math.atan2(dx,dz);
    // Survivors roam continuously; grid A* is advisory, never a movement prerequisite.
-   if(now-(a.userData.pathAt||0)>2200||!a.userData.path?.length||a.userData.pathIndex>=a.userData.path.length){a.userData.pathAt=now;let gx=bad.position.x+(Math.random()-.5)*24,gz=bad.position.z+(Math.random()-.5)*24;{let path=findNavPath(a.position.x,a.position.z,gx,gz);a.userData.path=path;a.userData.pathIndex=1}}followJSONPath(a,a.userData.speed,now);
+   if(now-(a.userData.roamAt||0)>3000){a.userData.roamAt=now;a.userData.roamX=a.position.x+(Math.random()-.5)*12;a.userData.roamZ=a.position.z+(Math.random()-.5)*12}let ax=a.userData.roamX-a.position.x,az=a.userData.roamZ-a.position.z,ad=Math.hypot(ax,az);if(ad>.5){let st=Math.min(a.userData.speed*dt,ad);moveAIByJSON(a,ax/ad*st,az/ad*st)};
    if(now-lastVolley>900){if(d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
   if(now-lastVolley>900)lastVolley=now;
