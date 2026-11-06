@@ -110,8 +110,8 @@ function relocateAIToJSONCell(obj,x=obj.position.x,z=obj.position.z){const q=nea
 function moveAIByJSON(obj,dx,dz){const nx=obj.position.x+dx,nz=obj.position.z+dz;if(exeGridClear(nx,nz,.25)){obj.position.x=nx;obj.position.z=nz;return true}return relocateAIToJSONCell(obj,nx,nz)}
 // JSON-grid raycast: sample every cell along SCP's proposed step and steer toward a clear direction.
 function jsonRayClear(x,z,dx,dz,r=.4){if(!navReady||!navData?.grid)return false;const cs=navData.cellSize||1,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.2)));for(let i=0;i<=steps;i++){const t=i/steps,c=cellOf(x+dx*t,z+dz*t);for(const [ox,oz] of [[-r,-r],[r,-r],[-r,r],[r,r],[0,0]]){const q=cellOf(x+dx*t+ox,z+dz*t+oz);if(q.x<0||q.z<0||q.x>=navData.width||q.z>=navData.height||!navData.grid[q.z]?.[q.x])return false}}return true}
-function moveSCPWithJSONRay(obj,dx,dz,r=.55){const x=obj.position.x,z=obj.position.z,len=Math.hypot(dx,dz);if(len<1e-5)return false;const angle=Math.atan2(dz,dx),offsets=[0,Math.PI/8,-Math.PI/8,Math.PI/4,-Math.PI/4,Math.PI/2,-Math.PI/2,Math.PI,3*Math.PI/4,-3*Math.PI/4];for(const off of offsets){const a=angle+off,mx=Math.cos(a)*len,mz=Math.sin(a)*len;if(jsonRayClear(x,z,mx,mz,r)){obj.position.x=x+mx;obj.position.z=z+mz;return true}}// If every ray is blocked, pick a nearby open JSON cell rather than push into a wall.
-return relocateAIToJSONCell(obj,x+dx,z+dz)}function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Survived '+Math.floor(360-time)+' seconds</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
+function moveSCPWithJSONRay(obj,dx,dz,r=.55){const x=obj.position.x,z=obj.position.z,len=Math.hypot(dx,dz);if(len<1e-5)return false;if(!navReady||!navData?.grid)return false;const angle=Math.atan2(dz,dx),offsets=[0,Math.PI/12,-Math.PI/12,Math.PI/6,-Math.PI/6,Math.PI/3,-Math.PI/3,Math.PI/2,-Math.PI/2,Math.PI];for(const off of offsets){const a=angle+off,mx=Math.cos(a)*len,mz=Math.sin(a)*len;if(jsonRayClear(x,z,mx,mz,r)){obj.position.x=x+mx;obj.position.z=z+mz;return true}}// No clear JSON ray: stop this frame and let the next raycast choose again.
+return false}function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Survived '+Math.floor(360-time)+' seconds</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
  requestAnimationFrame(frame);
  let dt=Math.min(.05,(now-last)/1000);last=now;
@@ -123,7 +123,7 @@ function frame(now){
    // Survivors roam continuously; grid A* is advisory, never a movement prerequisite.
    if(now-a.userData.roamAt>2400||!a.userData.roamAt){a.userData.roamAt=now;a.userData.roamAngle+=((Math.random()-.5)*2.4);a.userData.roamRadius=5+Math.random()*14;a.userData.roamX=(Math.random()-.5)*10;a.userData.roamZ=(Math.random()-.5)*10}
    let gx=bad.position.x+Math.cos(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamX,gz=bad.position.z+Math.sin(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamZ,vx=gx-a.position.x,vz=gz-a.position.z,vl=Math.hypot(vx,vz);
-   if(vl>.6){let step=Math.min(a.userData.speed*dt,vl);if(!moveAIByJSON(a,vx/vl*step,vz/vl*step)){a.userData.roamAt=0;a.userData.roamAngle+=Math.PI*(.5+Math.random())}}
+   if(vl>.6){let step=Math.min(a.userData.speed*dt,vl),mx=vx/vl*step,mz=vz/vl*step;if(jsonRayClear(a.position.x,a.position.z,mx,mz,.38)){a.position.x+=mx;a.position.z+=mz}else{a.userData.roamAt=0;a.userData.roamAngle+=Math.PI*(.5+Math.random())}}
    if(now-lastVolley>900){if(d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
   if(now-lastVolley>900)lastVolley=now;
@@ -133,7 +133,7 @@ function frame(now){
     // SCP movement is explicitly driven by EXE grid A*: refresh blocked/empty routes promptly.
     if(!z.userData.path.length||now-z.userData.pathAt>900){z.userData.pathAt=now;Promise.resolve(findNavPath(z.position.x,z.position.z,p.x,p.z)).then(path=>{z.userData.path=path;z.userData.pathIndex=path.length>1?1:0})}
     let t=z.userData.path[z.userData.pathIndex];if(!t&&d>1){let q=nearestOpen(p.x,p.z);if(q)t={x:navData.origin.x+q.x+.5,z:navData.origin.z+q.z+.5};}
-    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl);if(!moveAIByJSON(z,vx/vl*step,vz/vl*step)){z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0}}}
+    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl),mx=vx/vl*step,mz=vz/vl*step;if(jsonRayClear(z.position.x,z.position.z,mx,mz,.4)){z.position.x+=mx;z.position.z+=mz}else{z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0}}}
    }else if(d>1){z.position.x+=dx/d*1.1*dt;z.position.z+=dz/d*1.1*dt}
    if(d<=1){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}
   });
