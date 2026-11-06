@@ -136,7 +136,20 @@ function frame(now){
   let f=+!!keys.KeyW-+!!keys.KeyS,side=+!!keys.KeyD-+!!keys.KeyA,sprint=(keys.ShiftLeft||keys.ShiftRight)&&stam>0&&f>0;
   stam=Math.max(0,Math.min(100,stam+(sprint?-30:20)*dt));
   let dir=new T.Vector3();cam.getWorldDirection(dir);dir.y=0;dir.normalize();let right=new T.Vector3(dir.z,0,-dir.x),v=sprint?7:4,dx=(dir.x*f+right.x*side)*v*dt,dz=(dir.z*f+right.z*side)*v*dt,p=ctl.getObject().position;
-  if(f||side){if(!hit(p.x+dx,p.z,.35))p.x+=dx;if(!hit(p.x,p.z+dz,.35))p.z+=dz;noise=sprint?1:.15}else noise*=.95;
+  if(f||side){
+   // Player movement follows the same JSON-grid ray checks as AI, with wall sliding.
+   const beforeX=p.x,beforeZ=p.z;
+   if(dx&&!hit(p.x+dx,p.z,.35)&&exeGridClear(p.x+dx,p.z,.35))p.x+=dx;
+   if(dz&&!hit(p.x,p.z+dz,.35)&&exeGridClear(p.x,p.z+dz,.35))p.z+=dz;
+   // If the baked grid and generated colliders disagree and trap the player,
+   // recover to the closest open JSON cell instead of leaving them stuck.
+   if(Math.abs(p.x-beforeX)+Math.abs(p.z-beforeZ)<1e-5){
+     const open=nearestOpen(beforeX,beforeZ);
+     if(open){const rx=navData.origin.x+(open.x+.5)*(navData.cellSize||1),rz=navData.origin.z+(open.z+.5)*(navData.cellSize||1);
+       if(!hit(rx,rz,.35)){p.x=rx;p.z=rz}}
+   }
+   noise=sprint?1:.15
+  }else noise*=.95;
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   // SCP always chases its current target directly; collision-aware sliding keeps it moving without A*.
   if(!scpTarget||now>=scpTargetUntil){let pool=[{kind:'player',obj:ctl.getObject(),index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject(),index:-1};scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
