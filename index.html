@@ -137,28 +137,17 @@ function frame(now){
   stam=Math.max(0,Math.min(100,stam+(sprint?-30:20)*dt));
   let dir=new T.Vector3();cam.getWorldDirection(dir);dir.y=0;dir.normalize();let right=new T.Vector3(dir.z,0,-dir.x),v=sprint?7:4,dx=(dir.x*f+right.x*side)*v*dt,dz=(dir.z*f+right.z*side)*v*dt,p=ctl.getObject().position;
   if(f||side){
-   // Player movement follows the same JSON-grid ray checks as AI, with wall sliding.
-   const beforeX=p.x,beforeZ=p.z;
-   if(dx&&!hit(p.x+dx,p.z,.35)&&exeGridClear(p.x+dx,p.z,.35))p.x+=dx;
-   if(dz&&!hit(p.x,p.z+dz,.35)&&exeGridClear(p.x,p.z+dz,.35))p.z+=dz;
-   // If the baked grid and generated colliders disagree and trap the player,
-   // recover to the closest open JSON cell instead of leaving them stuck.
-   if(Math.abs(p.x-beforeX)+Math.abs(p.z-beforeZ)<1e-5){
-     const open=nearestOpen(beforeX,beforeZ);
-     if(open){const rx=navData.origin.x+(open.x+.5)*(navData.cellSize||1),rz=navData.origin.z+(open.z+.5)*(navData.cellSize||1);
-       if(!hit(rx,rz,.35)){p.x=rx;p.z=rz}}
-   }
+   // Player has no collision/grid restrictions: move freely through the facility.
+   p.x+=dx;p.z+=dz;
    noise=sprint?1:.15
   }else noise*=.95;
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
-  // SCP always chases its current target directly; collision-aware sliding keeps it moving without A*.
+  // SCP chases its current target freely; track movement to drive walk animation.
+  let scpMoved=false;
   if(!scpTarget||now>=scpTargetUntil){let pool=[{kind:'player',obj:ctl.getObject(),index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject(),index:-1};scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
-  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{let vx=targetObj.position.x-bad.position.x,vz=targetObj.position.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl>1.7){let step=Math.min(3.2*dt,vl-1.5);if(!moveWithGridRay(bad,vx/vl*step,vz/vl*step,.55)){// slide along either axis before choosing a new route
-      if(!hit(bad.position.x+vx/vl*step,bad.position.z,.55))bad.position.x+=vx/vl*step;
-      if(!hit(bad.position.x,bad.position.z+vz/vl*step,.55))bad.position.z+=vz/vl*step;
-    }}}
+  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{let vx=targetObj.position.x-bad.position.x,vz=targetObj.position.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl>1.7){let step=Math.min(3.2*dt,vl-1.5);bad.position.x+=vx/vl*step;bad.position.z+=vz/vl*step;scpMoved=step>0}}}
   if(scpTarget){let aimObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(aimObj){scpTarget.x=aimObj.position.x;scpTarget.z=aimObj.position.z;}}const desiredYaw=Math.atan2((scpTarget?.x??p.x)-bad.position.x,(scpTarget?.z??p.z)-bad.position.z);let yawDelta=Math.atan2(Math.sin(desiredYaw-bad.rotation.y),Math.cos(desiredYaw-bad.rotation.y));bad.rotation.y+=yawDelta*Math.min(1,dt*7);
-  if(mixer){mixer.update(dt);let action=navPath.length&&navPathAt<navPath.length?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
+  if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
   document.querySelector('#msg').textContent=dist<12?'Footsteps nearby…':bossHP<=0?'BOSS DEFEATED':'';
