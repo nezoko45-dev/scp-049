@@ -92,7 +92,7 @@ function frame(now){
    if(navReady){
     if(!a.userData.path.length||now-a.userData.pathAt>1400+Math.random()*1800){a.userData.roamAngle+=((Math.random()-.5)*1.8);a.userData.roamRadius=4+Math.random()*12;let goalX=bad.position.x+Math.cos(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamX,goalZ=bad.position.z+Math.sin(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamZ;a.userData.path=findNavPath(a.position.x,a.position.z,goalX,goalZ);a.userData.pathAt=now;a.userData.pathIndex=a.userData.path.length>1?1:0}
     let t=a.userData.path[a.userData.pathIndex];
-    if(t){let vx=t.x-a.position.x,vz=t.z-a.position.z,vl=Math.hypot(vx,vz);if(vl<.5){a.userData.pathIndex++;t=a.userData.path[a.userData.pathIndex];if(t){vx=t.x-a.position.x;vz=t.z-a.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(a.userData.speed*dt,vl);if(!moveColliding(a,vx/vl*step,vz/vl*step,.38)){a.userData.path=[];a.userData.pathAt=0}}}
+    if(t){let vx=t.x-a.position.x,vz=t.z-a.position.z,vl=Math.hypot(vx,vz);if(vl<.5){a.userData.pathIndex++;t=a.userData.path[a.userData.pathIndex];if(t){vx=t.x-a.position.x;vz=t.z-a.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(a.userData.speed*dt,vl);if(!moveColliding(a,vx/vl*step,vz/vl*step,.38)){a.userData.path=[];a.userData.pathIndex=0;a.userData.pathAt=0;a.userData.roamAngle+=Math.PI*(.5+Math.random())}}}
    }
    if(now-lastVolley>900){if(d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
@@ -102,7 +102,7 @@ function frame(now){
    if(navReady){
     if(!z.userData.path.length||now-z.userData.pathAt>1800){z.userData.path=findNavPath(z.position.x,z.position.z,p.x,p.z);z.userData.pathAt=now;z.userData.pathIndex=z.userData.path.length>1?1:0}
     let t=z.userData.path[z.userData.pathIndex];
-    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl);if(!moveColliding(z,vx/vl*step,vz/vl*step,.4)){z.userData.path=[];z.userData.pathAt=0}}}
+    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl);if(!moveColliding(z,vx/vl*step,vz/vl*step,.4)){z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0}}}
    }else if(d>1){z.position.x+=dx/d*1.1*dt;z.position.z+=dz/d*1.1*dt}
    if(d<=1){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}
   });
