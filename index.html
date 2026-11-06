@@ -116,7 +116,7 @@ function frame(now){
    // Survivors roam continuously; grid A* is advisory, never a movement prerequisite.
    if(now-a.userData.roamAt>2400||!a.userData.roamAt){a.userData.roamAt=now;a.userData.roamAngle+=((Math.random()-.5)*2.4);a.userData.roamRadius=5+Math.random()*14;a.userData.roamX=(Math.random()-.5)*10;a.userData.roamZ=(Math.random()-.5)*10}
    let gx=bad.position.x+Math.cos(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamX,gz=bad.position.z+Math.sin(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamZ,vx=gx-a.position.x,vz=gz-a.position.z,vl=Math.hypot(vx,vz);
-   if(vl>.6){let step=Math.min(a.userData.speed*dt,vl);if(!moveWithGridRay(a,vx/vl*step,vz/vl*step,.38)){a.userData.roamAt=0;a.userData.roamAngle+=Math.PI*(.5+Math.random())}}
+   if(vl>.6){let step=Math.min(a.userData.speed*dt,vl),mx=vx/vl*step,mz=vz/vl*step,ax=a.position.x,az=a.position.z,moved=false;/* Survivors roam with physical wall sliding; grid ray checks were pinning them in place. */if(!hit(ax+mx,az,.38)){a.position.x=ax+mx;moved=true}else if(!hit(ax+mx*.65,az,.38)){a.position.x=ax+mx*.65;moved=true}if(!hit(a.position.x,az+mz,.38)){a.position.z=az+mz;moved=true}else if(!hit(a.position.x,az+mz*.65,.38)){a.position.z=az+mz*.65;moved=true}if(!moved){a.userData.roamAt=0;a.userData.roamAngle+=Math.PI*(.5+Math.random())}}
    if(now-lastVolley>900){if(d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
   if(now-lastVolley>900)lastVolley=now;
