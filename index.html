@@ -83,6 +83,25 @@ let mixer,acts={},idle,walk,loaded=false;function fallback(){let a=new T.Mesh(ne
 let keys={},active=false,dead=false,time=360,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 function hit(x,z,r=.5){return solid.some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
 function moveColliding(obj,dx,dz,r=.4){let x=obj.position.x,z=obj.position.z,moved=false;if(!hit(x+dx,z,r)){obj.position.x=x+dx;moved=true}if(!hit(obj.position.x,z+dz,r)){obj.position.z=z+dz;moved=true}return moved}
+/* JSON-grid ray steering: sample the baked/live facility grid along the intended move.
+   When a ray hits a blocked cell, fan out alternate angles and pick the clearest route. */
+function gridRayClear(x,z,dx,dz,r=.4){
+ if(!navReady||!navData?.grid)return !hit(x+dx,z+dz,r);
+ const cs=navData.cellSize||1,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.35)));
+ for(let i=0;i<=steps;i++){const t=i/steps,px=x+dx*t,pz=z+dz*t;
+  if(hit(px,pz,r))return false;
+  for(const [ox,oz] of [[-r,-r],[r,-r],[-r,r],[r,r],[0,0]]){const c=cellOf(px+ox,pz+oz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}
+ }
+ return true;
+}
+function moveWithGridRay(obj,dx,dz,r=.4){
+ const x=obj.position.x,z=obj.position.z,len=Math.hypot(dx,dz);if(len<1e-5)return false;
+ const ang=Math.atan2(dz,dx),candidates=[0,Math.PI/6,-Math.PI/6,Math.PI/3,-Math.PI/3,Math.PI/2,-Math.PI/2,Math.PI,2*Math.PI/3,-2*Math.PI/3];
+ for(const a of candidates){const q=ang+a,mx=Math.cos(q)*len,mz=Math.sin(q)*len;
+  if(gridRayClear(x,z,mx,mz,r)){obj.position.x=x+mx;obj.position.z=z+mz;return true}
+ }
+ return false;
+}
 // AI occupancy checks use the EXE-authored grid AND the rendered wall colliders.
 function exeGridClear(x,z,r=.4){if(!navReady||!navData?.grid)return false;for(const [px,pz] of [[x-r,z-r],[x+r,z-r],[x-r,z+r],[x+r,z+r],[x,z]]){const c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}return true}
 function moveAIOnExeGrid(obj,dx,dz,r=.4){let moved=false,nx=obj.position.x+dx,nz=obj.position.z+dz;if(exeGridClear(nx,obj.position.z,r)&&!hit(nx,obj.position.z,r)){obj.position.x=nx;moved=true}if(exeGridClear(obj.position.x,nz,r)&&!hit(obj.position.x,nz,r)){obj.position.z=nz;moved=true}return moved}function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Survived '+Math.floor(360-time)+' seconds</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
@@ -97,7 +116,7 @@ function frame(now){
    // Survivors roam continuously; grid A* is advisory, never a movement prerequisite.
    if(now-a.userData.roamAt>2400||!a.userData.roamAt){a.userData.roamAt=now;a.userData.roamAngle+=((Math.random()-.5)*2.4);a.userData.roamRadius=5+Math.random()*14;a.userData.roamX=(Math.random()-.5)*10;a.userData.roamZ=(Math.random()-.5)*10}
    let gx=bad.position.x+Math.cos(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamX,gz=bad.position.z+Math.sin(a.userData.roamAngle)*a.userData.roamRadius+a.userData.roamZ,vx=gx-a.position.x,vz=gz-a.position.z,vl=Math.hypot(vx,vz);
-   if(vl>.6){let step=Math.min(a.userData.speed*dt,vl);if(!moveColliding(a,vx/vl*step,vz/vl*step,.38)){a.userData.roamAt=0;a.userData.roamAngle+=Math.PI*(.5+Math.random())}}
+   if(vl>.6){let step=Math.min(a.userData.speed*dt,vl);if(!moveWithGridRay(a,vx/vl*step,vz/vl*step,.38)){a.userData.roamAt=0;a.userData.roamAngle+=Math.PI*(.5+Math.random())}}
    if(now-lastVolley>900){if(d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
   });
   if(now-lastVolley>900)lastVolley=now;
@@ -121,7 +140,7 @@ function frame(now){
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   // SCP always chases its current target directly; collision-aware sliding keeps it moving without A*.
   if(!scpTarget||now>=scpTargetUntil){let pool=[{kind:'player',obj:ctl.getObject(),index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject(),index:-1};scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
-  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{let vx=targetObj.position.x-bad.position.x,vz=targetObj.position.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl>1.7){let step=Math.min(3.2*dt,vl-1.5);if(!moveColliding(bad,vx/vl*step,vz/vl*step,.55)){// slide along either axis before choosing a new route
+  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{let vx=targetObj.position.x-bad.position.x,vz=targetObj.position.z-bad.position.z,vl=Math.hypot(vx,vz);if(vl>1.7){let step=Math.min(3.2*dt,vl-1.5);if(!moveWithGridRay(bad,vx/vl*step,vz/vl*step,.55)){// slide along either axis before choosing a new route
       if(!hit(bad.position.x+vx/vl*step,bad.position.z,.55))bad.position.x+=vx/vl*step;
       if(!hit(bad.position.x,bad.position.z+vz/vl*step,.55))bad.position.z+=vz/vl*step;
     }}}
