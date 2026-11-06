@@ -19,7 +19,7 @@ class GridBackend{
    if(c.Request.Url!.AbsolutePath=="/health"){await Send(c,"ready");continue;}
    if(c.Request.Url.AbsolutePath=="/grid"||c.Request.Url.AbsolutePath=="/map.json"){lock(gate){c.Response.ContentType="application/json";Send(c,File.ReadAllText(gridPath)).GetAwaiter().GetResult();}continue;}
    if(c.Request.Url.AbsolutePath=="/chunk"&&c.Request.HttpMethod=="POST"){using var sr=new StreamReader(c.Request.InputStream);var chunk=JsonNode.Parse(await sr.ReadToEndAsync())!;lock(gate){UpdateGrid(chunk);}await Send(c,"{\"ok\":true}");continue;}
-   if(c.Request.Url.AbsolutePath=="/path"&&c.Request.HttpMethod=="POST"){using var sr=new StreamReader(c.Request.InputStream);var req=JsonNode.Parse(await sr.ReadToEndAsync())!;JsonNode result;lock(gate){result=PathRequest(req);}c.Response.ContentType="application/json";await Send(c,result.ToJsonString());continue;}
+
    c.Response.StatusCode=404;await Send(c,"not found");
   }catch(Exception ex){c.Response.StatusCode=500;await Send(c,ex.Message);}}});
   Application.Run(form);
