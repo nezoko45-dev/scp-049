@@ -17,7 +17,7 @@ class GridBackend{
   var listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:8766/");listener.Start();
   Task.Run(async()=>{while(listener.IsListening){HttpListenerContext c;try{c=await listener.GetContextAsync();}catch{break;}c.Response.Headers.Add("Access-Control-Allow-Origin","*");c.Response.Headers.Add("Access-Control-Allow-Methods","GET,POST,OPTIONS");c.Response.Headers.Add("Access-Control-Allow-Headers","Content-Type");if(c.Request.HttpMethod=="OPTIONS"){c.Response.StatusCode=204;c.Response.Close();continue;}try{
    if(c.Request.Url!.AbsolutePath=="/health"){await Send(c,"ready");continue;}
-   if(c.Request.Url.AbsolutePath=="/grid"){lock(gate){c.Response.ContentType="application/json";Send(c,File.ReadAllText(gridPath)).GetAwaiter().GetResult();}continue;}
+   if(c.Request.Url.AbsolutePath=="/grid"||c.Request.Url.AbsolutePath=="/map.json"){lock(gate){c.Response.ContentType="application/json";Send(c,File.ReadAllText(gridPath)).GetAwaiter().GetResult();}continue;}
    if(c.Request.Url.AbsolutePath=="/chunk"&&c.Request.HttpMethod=="POST"){using var sr=new StreamReader(c.Request.InputStream);var chunk=JsonNode.Parse(await sr.ReadToEndAsync())!;lock(gate){UpdateGrid(chunk);}await Send(c,"{\"ok\":true}");continue;}
    if(c.Request.Url.AbsolutePath=="/path"&&c.Request.HttpMethod=="POST"){using var sr=new StreamReader(c.Request.InputStream);var req=JsonNode.Parse(await sr.ReadToEndAsync())!;JsonNode result;lock(gate){result=PathRequest(req);}c.Response.ContentType="application/json";await Send(c,result.ToJsonString());continue;}
    c.Response.StatusCode=404;await Send(c,"not found");
