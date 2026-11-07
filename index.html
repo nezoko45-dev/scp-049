@@ -290,9 +290,34 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
    if(rayClear(px,pz,tx,tz)){route={x:px,z:pz};break}
   }
  }
- // Persistent full-length BFS route: follow every JSON cell in sequence,
- // rather than selecting a tiny ray probe and stopping there.
+ // Visibility-based grid steering: raycast to every nearby walkable cell.
+ // If a cell ray is blocked, score other reachable cells and steer to the best.
  if(navReady&&navData?.grid){
+  const W=navData.width,H=navData.height,cs2=navData.cellSize||1,ud=obj.userData||(obj.userData={});
+  let visible=[],blocked=[];
+  const radius=24;
+  const cx=cellOf(x,z);
+  for(let iz=Math.max(0,cx.z-radius);iz<Math.min(H,cx.z+radius+1);iz++){
+   for(let ix=Math.max(0,cx.x-radius);ix<Math.min(W,cx.x+radius+1);ix++){
+    if(!navData.grid[iz]?.[ix])continue;
+    const px=navData.origin.x+(ix+.5)*cs2,pz=navData.origin.z+(iz+.5)*cs2;
+    if(Math.hypot(px-x,pz-z)<.35)continue;
+    const cell={x:ix,z:iz},p={x:px,z:pz},clear=rayClear(x,z,px,pz);
+    (clear?visible:blocked).push({cell,p,clear,toTarget:Math.hypot(px-tx,pz-tz),fromSelf:Math.hypot(px-x,pz-z)});
+   }
+  }
+  // Reachable cell selection favors target progress and distance, not merely nearest cell.
+  visible.sort((a,b)=>(a.toTarget+a.fromSelf*.12)-(b.toTarget+b.fromSelf*.12));
+  let chosen=visible.find(q=>q.fromSelf>cs2*.65&&q.toTarget<dist-cs2*.3);
+  if(!chosen)chosen=visible.find(q=>q.fromSelf>cs2*.65);
+  if(chosen)route=chosen.p;
+  else{
+   // No clear cell ray: BFS finds an alternate open cell, then next frame raycasts again.
+   const start=nearestOpen(x,z),goal=nearestOpen(tx,tz);
+   if(start&&goal){const path=gridRoute(start,goal);if(path[1])route={x:navData.origin.x+(path[1].x+.5)*cs2,z:navData.origin.z+(path[1].z+.5)*cs2}}
+  }
+ }
+ /*
   const ud=obj.userData||(obj.userData={}),from=cellOf(x,z),to=cellOf(tx,tz);
   const routeKey=from.x+","+from.z+">"+to.x+","+to.z;
   if(ud.scpGridGoal!==to.x+","+to.z||!ud.scpGridPath?.length||ud.scpGridPathAt===undefined){
