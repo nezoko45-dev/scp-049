@@ -42,15 +42,16 @@ function scanGeneratedMap(cx,cz,size=40){
   }
  }
 }
-async let recastRebuildTimer=0,recastGeometryCount=-1;
+let recastRebuildTimer=0,recastGeometryCount=-1;
 function scheduleRecastRebuild(){
+
  clearTimeout(recastRebuildTimer);
  recastRebuildTimer=setTimeout(()=>{
   if(navMeshes.length===recastGeometryCount)return;
   rebuildRecastNav();
  },450);
 }
-function rebuildRecastNav(){
+async function rebuildRecastNav(){
  if(recastBuilding||!navMeshes.length)return;recastBuilding=true;
  try{
   const positions=[],indices=[];let base=0;
