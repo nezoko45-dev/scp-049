@@ -127,18 +127,21 @@ function liveGridAvoidStep(obj,tx,tz,speed){
  const cs=navData.cellSize||1,center=(ix,iz)=>({x:navData.origin.x+(ix+.5)*cs,z:navData.origin.z+(iz+.5)*cs});
  const open=(ix,iz)=>ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height&&!!navData.grid[iz]?.[ix];
  let c=cellOf(obj.position.x,obj.position.z),target=cellOf(tx,tz),ud=obj.userData||(obj.userData={});
- if(!open(c.x,c.z)){let q=nearestOpen(obj.position.x,obj.position.z);if(!q)return false;c={x:q.x,z:q.z}}
+ // Ensure spawned AI starts physically inside a walkable cell.
+ if(!open(c.x,c.z)){let q=nearestOpen(obj.position.x,obj.position.z);if(!q)return false;const p=center(q.x,q.z);obj.position.x=p.x;obj.position.z=p.z;c=q;ud.gridRouteKey=''}
  if(!open(target.x,target.z)){let q=nearestOpen(tx,tz);if(!q)return false;target=q}
  const stamp=c.x+','+c.z+'>'+target.x+','+target.z;
- if(ud.gridRouteKey!==stamp||!ud.gridRoute?.length||performance.now()-(ud.gridRouteAt||0)>650){
+ if(ud.gridRouteKey!==stamp||!ud.gridRoute?.length||performance.now()-(ud.gridRouteAt||0)>450){
   ud.gridRoute=gridRoute(c,target);ud.gridRouteKey=stamp;ud.gridRouteAt=performance.now();ud.gridRouteIndex=1
  }
  let path=ud.gridRoute,index=ud.gridRouteIndex||1;
- while(index<path.length){let p=center(path[index].x,path[index].z);if(Math.hypot(p.x-obj.position.x,p.z-obj.position.z)>.18)break;index++}
- ud.gridRouteIndex=index;if(index>=path.length)return false;
+ // If target shares our cell, don't freeze: select a neighboring open cell as a temporary waypoint.
+ if(path.length<=1){let best=null,score=Infinity;for(const [dx,dz]of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]){let ix=c.x+dx,iz=c.z+dz;if(!open(ix,iz)||(dx&&dz&&(!open(c.x+dx,c.z)||!open(c.x,c.z+dz))))continue;let p=center(ix,iz),d=Math.hypot(tx-p.x,tz-p.z);if(d<score){score=d;best=p}}if(best){let vx=best.x-obj.position.x,vz=best.z-obj.position.z,d=Math.hypot(vx,vz),n=Math.min(speed*frameDelta,d);if(d>.01&&!hit(obj.position.x+vx/d*n,obj.position.z+vz/d*n,.2)){obj.position.x+=vx/d*n;obj.position.z+=vz/d*n;return true}}return false}
+ while(index<path.length){let p=center(path[index].x,path[index].z);if(Math.hypot(p.x-obj.position.x,p.z-obj.position.z)>.12)break;index++}
+ ud.gridRouteIndex=index;if(index>=path.length){ud.gridRouteKey='';return false}
  const p=center(path[index].x,path[index].z),x=obj.position.x,z=obj.position.z,vx=p.x-x,vz=p.z-z,d=Math.hypot(vx,vz);
  if(d<.01)return false;const n=Math.min(speed*frameDelta,d),nx=x+vx/d*n,nz=z+vz/d*n;
- if(hit(nx,nz,.22)){ud.gridRouteAt=0;return false}
+ if(hit(nx,nz,.18)){ud.gridRouteKey='';return false}
  obj.position.x=nx;obj.position.z=nz;return true
 }
 function liveGridCellOpen(x,z){if(!backendGridOnline||!navData?.grid)return false;const c=cellOf(x,z);return c.x>=0&&c.z>=0&&c.x<navData.width&&c.z<navData.height&&!!navData.grid[c.z]?.[c.x]}
