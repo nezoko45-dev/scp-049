@@ -3,11 +3,11 @@
 window.addEventListener('error',e=>{const m=document.querySelector('#msg');if(m)m.textContent='3D ERROR: '+(e.message||'unknown')});
 window.addEventListener('unhandledrejection',e=>{const m=document.querySelector('#msg');if(m)m.textContent='3D LOAD ERROR: '+(e.reason?.message||e.reason||'unknown')});
 </script><script type="module">
-import * as T from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';import {init as initRecast,NavMeshQuery} from '@recast-navigation/core';import {generateSoloNavMesh,soloNavMeshGeneratorConfigDefaults} from '@recast-navigation/generators';import{GLTFLoader}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';import{PointerLockControls}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
+import * as T from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';import {init as initRecast,NavMeshQuery} from '@recast-navigation/core';import {generateTiledNavMesh,tiledNavMeshGeneratorConfigDefaults} from '@recast-navigation/generators';import{GLTFLoader}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';import{PointerLockControls}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
 
 await initRecast();console.info('Recast Navigation WASM initialized');
 const scene=new T.Scene();scene.background=new T.Color(0x070a0d);scene.fog=new T.Fog(0x070a0d,.025);const cam=new T.PerspectiveCamera(75,innerWidth/innerHeight,.1,180);const renderer=new T.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));document.body.appendChild(renderer.domElement);const ctl=new PointerLockControls(cam,renderer.domElement);scene.add(ctl.getObject());ctl.getObject().position.set(0,1.7,16);scene.add(new T.HemisphereLight(0x9aaabb,0x17191b,1.2));const flash=new T.SpotLight(0xdceaff,90,36,Math.PI/7,.4,1);cam.add(flash);let ft=new T.Object3D();ft.position.z=-1;cam.add(ft);flash.target=ft;
-const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({color})),solid=[],navMeshes=[];function B(x,y,z,w,h,d,m=1,coll=true){let a=new T.Mesh(new T.BoxGeometry(w,h,d),mats[m]);a.position.set(x,y,z);scene.add(a);if(coll){solid.push({x,z,w,d});navMeshes.push(a)}}
+const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({color})),solid=[],navMeshes=[];let recastNavMesh=null,recastQuery=null,recastBuilding=false,recastBuildAt=0;function B(x,y,z,w,h,d,m=1,coll=true){let a=new T.Mesh(new T.BoxGeometry(w,h,d),mats[m]);a.position.set(x,y,z);scene.add(a);if(coll){solid.push({x,z,w,d});navMeshes.push(a)}}
 // The fixed starter map is removed; the entire facility is generated from streamed chunks.
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
@@ -42,9 +42,31 @@ function scanGeneratedMap(cx,cz,size=40){
   }
  }
 }
+async function rebuildRecastNav(){
+ if(recastBuilding||!navMeshes.length)return;recastBuilding=true;
+ try{
+  const positions=[],indices=[];let base=0;
+  for(const mesh of navMeshes){const g=mesh.geometry;if(!g?.attributes?.position)continue;mesh.updateMatrixWorld(true);const a=g.attributes.position;
+   for(let i=0;i<a.count;i++){const v=new T.Vector3().fromBufferAttribute(a,i).applyMatrix4(mesh.matrixWorld);positions.push(v.x,v.y,v.z)}
+   const ix=g.index;if(ix){for(let i=0;i<ix.count;i++)indices.push(base+ix.getX(i))}else for(let i=0;i<a.count;i++)indices.push(base+i);
+   base+=a.count;
+  }
+  const cfg={...tiledNavMeshGeneratorConfigDefaults,tileSize:32,cs:.25,ch:.1,walkableHeight:1.8,walkableRadius:.35,walkableClimb:.4,walkableSlopeAngle:45};
+  const result=generateTiledNavMesh(positions,indices,cfg);
+  if(!result.success||!result.navMesh)throw Error('Recast tile generation failed');
+  recastQuery?.destroy();recastNavMesh=result.navMesh;recastQuery=new NavMeshQuery(recastNavMesh);recastBuildAt=performance.now();
+  console.info('Recast tiled facility mesh ready',navMeshes.length,'geometry pieces');
+ }catch(e){console.error('Recast build failed',e);document.querySelector('#msg').textContent='RECAST BUILD: '+e.message}
+ finally{recastBuilding=false}
+}
+function recastPath(from,to){
+ if(!recastQuery)return [];
+ const r=recastQuery.computePath({x:from.x,y:0,z:from.z},{x:to.x,y:0,z:to.z},{halfExtents:{x:8,y:5,z:8}});
+ return r.success?r.path.map(p=>({x:p.x,z:p.z})): [];
+}
 function makeFacilityChunk(cx,cz){
  const key=cx+','+cz;if(facilityChunks.has(key))return;facilityChunks.add(key);
- const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);
+ const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);navMeshes.push(floor);
  // Boundary walls; leave openings for connected hallways on each side.
  const openN=Math.random()<.72,openS=Math.random()<.72,openW=Math.random()<.72,openE=Math.random()<.72;
  const chunkWalls=[];const wall=(x,z,w,d)=>{B(x,2,z,w,4,d);chunkWalls.push({x,z,w,d});if(navData?.grid){const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,x0=Math.floor((x-w/2-ox)/cs)-1,x1=Math.ceil((x+w/2-ox)/cs)+1,z0=Math.floor((z-d/2-oz)/cs)-1,z1=Math.ceil((z+d/2-oz)/cs)+1;for(let iz=z0;iz<z1;iz++)for(let ix=x0;ix<x1;ix++)if(ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height)navData.grid[iz][ix]=0}};
@@ -55,7 +77,7 @@ function makeFacilityChunk(cx,cz){
   if(Math.random()<.5){let z=cz+8+Math.random()*24,gap=cx+8+Math.random()*24;wall(cx+(gap-cx-4)/2,z,gap-cx-4,1);wall(gap+4+(cx+40-gap-4)/2,z,cx+40-gap-4,1)}
   else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
  }
- scanGeneratedMap(cx,cz,40);
+ scanGeneratedMap(cx,cz,40);rebuildRecastNav();
  // Lamps and props.
  let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk:{x:cx,z:cz,size:40},walls:chunkWalls})}).catch(()=>{});
 }
