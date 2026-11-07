@@ -290,29 +290,9 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
    if(rayClear(px,pz,tx,tz)){route={x:px,z:pz};break}
   }
  }
- // Visibility-based grid steering: raycast to every nearby walkable cell.
- // If a cell ray is blocked, score other reachable cells and steer to the best.
+ // Persistent full-length BFS route: follow every JSON cell in sequence,
+ // rather than selecting a tiny ray probe and stopping there.
  if(navReady&&navData?.grid){
-  const W=navData.width,H=navData.height,cs2=navData.cellSize||1,ud=obj.userData||(obj.userData={});
-  let visible=[],blocked=[];
-  const radius=24;
-  const cx=cellOf(x,z);
-  for(let iz=Math.max(0,cx.z-radius);iz<Math.min(H,cx.z+radius+1);iz++){
-   for(let ix=Math.max(0,cx.x-radius);ix<Math.min(W,cx.x+radius+1);ix++){
-    if(!navData.grid[iz]?.[ix])continue;
-    const px=navData.origin.x+(ix+.5)*cs2,pz=navData.origin.z+(iz+.5)*cs2;
-    if(Math.hypot(px-x,pz-z)<.35)continue;
-    const cell={x:ix,z:iz},p={x:px,z:pz},clear=rayClear(x,z,px,pz);
-    (clear?visible:blocked).push({cell,p,clear,toTarget:Math.hypot(px-tx,pz-tz),fromSelf:Math.hypot(px-x,pz-z)});
-   }
-  }
-  visible.sort((a,b)=>(a.toTarget+a.fromSelf*.12)-(b.toTarget+b.fromSelf*.12));
-  let chosen=visible.find(q=>q.fromSelf>cs2*.65&&q.toTarget<dist-cs2*.3);
-  if(!chosen)chosen=visible.find(q=>q.fromSelf>cs2*.65);
-  if(chosen)route=chosen.p;
- }
-
- /*
   const ud=obj.userData||(obj.userData={}),from=cellOf(x,z),to=cellOf(tx,tz);
   const routeKey=from.x+","+from.z+">"+to.x+","+to.z;
   if(ud.scpGridGoal!==to.x+","+to.z||!ud.scpGridPath?.length||ud.scpGridPathAt===undefined){
@@ -343,17 +323,9 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  if(!route)return false;
  const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz),step=Math.min(speed*dt,d);
  if(d<.01)return false;
- const mx=vx/d*step,mz=vz/d*step,r=.85;
- // Corner recovery: attempt diagonal movement, then slide along either wall axis.
- let moved=false;
- if(!hit(x+mx,z+mz,r)&&jsonRayClear(x,z,mx,mz,r)){
-  obj.position.x=x+mx;obj.position.z=z+mz;moved=true;
- }else{
-  if(Math.abs(mx)>.0001&&!hit(x+mx,z,r)&&jsonRayClear(x,z,mx,0,r)){obj.position.x=x+mx;moved=true}
-  if(Math.abs(mz)>.0001&&!hit(obj.position.x,z+mz,r)&&jsonRayClear(obj.position.x,z,0,mz,r)){obj.position.z=z+mz;moved=true}
- }
- if(!moved){obj.userData.scpGridPath=[];obj.userData.scpGridPathAt=undefined;obj.userData.scpGridGoal='';}
- return moved
+ const mx=vx/d*step,mz=vz/d*step;
+ if(hit(x+mx,z+mz,.85))return false;
+ obj.position.x=x+mx;obj.position.z=z+mz;return true
 }
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
@@ -370,37 +342,14 @@ function frame(now){
   });
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
-   const p=ctl.getObject().position;
-   const dx=p.x-z.position.x,dz=p.z-z.position.z,d=Math.hypot(dx,dz);
+   let p=ctl.getObject().position,dx=p.x-z.position.x,dz=p.z-z.position.z,d=Math.hypot(dx,dz);
    if(navReady){
-    if(!z.userData.path.length||now-z.userData.pathAt>900){
-     z.userData.pathAt=now;
-     const path=findNavPath(z.position.x,z.position.z,p.x,p.z);
-     z.userData.path=path;
-     z.userData.pathIndex=path.length>1?1:0;
-    }
-    let t=z.userData.path[z.userData.pathIndex];
-    if(!t&&d>1){
-     const q=nearestOpen(p.x,p.z);
-     if(q)t={x:navData.origin.x+(q.x+.5)*navData.cellSize,z:navData.origin.z+(q.z+.5)*navData.cellSize};
-    }
-    if(t){
-     let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);
-     if(vl<.4){
-      z.userData.pathIndex++;
-      t=z.userData.path[z.userData.pathIndex];
-      if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz);}
-     }
-     if(t&&vl>.01){
-      const step=Math.min(1.1*dt,vl),mx=vx/vl*step,mz=vz/vl*step;
-      if(!jsonSteerMove(z,mx,mz,.4)){z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0;}
-     }
-    }
-   }else if(d>1){
-    z.position.x+=dx/d*1.1*dt;
-    z.position.z+=dz/d*1.1*dt;
-   }
-   if(d<=1){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt);}
+    // SCP movement is explicitly driven by EXE grid A*: refresh blocked/empty routes promptly.
+    if(!z.userData.path.length||now-z.userData.pathAt>900){z.userData.pathAt=now;{let path=findNavPath(z.position.x,z.position.z,p.x,p.z);z.userData.path=path;z.userData.pathIndex=path.length>1?1:0}}
+    let t=z.userData.path[z.userData.pathIndex];if(!t&&d>1){let q=nearestOpen(p.x,p.z);if(q)t={x:navData.origin.x+q.x+.5,z:navData.origin.z+q.z+.5};}
+    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl),mx=vx/vl*step,mz=vz/vl*step;if(!jsonSteerMove(z,mx,mz,.4)){z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0;/* Replan immediately next frame and try safe axis sliding this frame. *//* blocked: hold position and replan route, no lateral target-following slide */}}}
+   }else if(d>1){z.position.x+=dx/d*1.1*dt;z.position.z+=dz/d*1.1*dt}
+   if(d<=1){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}
   });
   zombies=zombies.filter(z=>{if(z.userData.hp<=0){scene.remove(z);return false}return true});
   if(playerHP<=0)gameover('YOU WERE OVERRUN');
