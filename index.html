@@ -219,7 +219,7 @@ function frame(now){
     // SCP movement is explicitly driven by EXE grid A*: refresh blocked/empty routes promptly.
     if(!z.userData.path.length||now-z.userData.pathAt>900){z.userData.pathAt=now;{let path=findNavPath(z.position.x,z.position.z,p.x,p.z);z.userData.path=path;z.userData.pathIndex=path.length>1?1:0}}
     let t=z.userData.path[z.userData.pathIndex];if(!t&&d>1){let q=nearestOpen(p.x,p.z);if(q)t={x:navData.origin.x+q.x+.5,z:navData.origin.z+q.z+.5};}
-    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl),mx=vx/vl*step,mz=vz/vl*step;if(!jsonSteerMove(z,mx,mz,.4)){z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0}}}
+    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl),mx=vx/vl*step,mz=vz/vl*step;if(!jsonSteerMove(z,mx,mz,.4)){z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0;/* Replan immediately next frame and try safe axis sliding this frame. */const slid=moveColliding(z,mx,mz,.42);if(!slid){const alternatives=[[-mz,mx],[mz,-mx],[-mx,-mz]];for(const [sx,sz] of alternatives){if(jsonRayClear(z.position.x,z.position.z,sx,sz,.4)&&moveColliding(z,sx,sz,.42))break}}}}}
    }else if(d>1){z.position.x+=dx/d*1.1*dt;z.position.z+=dz/d*1.1*dt}
    if(d<=1){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}
   });
