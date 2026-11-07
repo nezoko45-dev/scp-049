@@ -311,11 +311,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
   let chosen=visible.find(q=>q.fromSelf>cs2*.65&&q.toTarget<dist-cs2*.3);
   if(!chosen)chosen=visible.find(q=>q.fromSelf>cs2*.65);
   if(chosen)route=chosen.p;
-  else{
-   // No clear cell ray: BFS finds an alternate open cell, then next frame raycasts again.
-   const start=nearestOpen(x,z),goal=nearestOpen(tx,tz);
-   if(start&&goal){const path=gridRoute(start,goal);if(path[1])route={x:navData.origin.x+(path[1].x+.5)*cs2,z:navData.origin.z+(path[1].z+.5)*cs2}}
-  }
+  // No visible cell ray: skip this steering attempt; the 360-degree ray fan retries next frame.
  }
  /*
   const ud=obj.userData||(obj.userData={}),from=cellOf(x,z),to=cellOf(tx,tz);
@@ -357,10 +353,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
   if(Math.abs(mx)>.0001&&!hit(x+mx,z,r)&&jsonRayClear(x,z,mx,0,r)){obj.position.x=x+mx;moved=true}
   if(Math.abs(mz)>.0001&&!hit(obj.position.x,z+mz,r)&&jsonRayClear(obj.position.x,z,0,mz,r)){obj.position.z=z+mz;moved=true}
  }
- if(!moved){
-  // Force a fresh BFS from the current cell next frame instead of repeating a stale corner waypoint.
-  obj.userData.scpGridPath=[];obj.userData.scpGridPathAt=undefined;obj.userData.scpGridGoal='';
- }
+ if(!moved){obj.userData.scpGridPath=[];obj.userData.scpGridPathAt=undefined;obj.userData.scpGridGoal='';}
  return moved
 }
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
