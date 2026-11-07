@@ -162,7 +162,33 @@ function moveAIByJSON(obj,dx,dz){const x=obj.position.x,z=obj.position.z,len=Mat
 // JSON-grid raycast: sample every cell along SCP's proposed step and steer toward a clear direction.
 function jsonRayClear(x,z,dx,dz,r=.4){if(!navReady||!navData?.grid)return false;const cs=navData.cellSize||1,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.2)));for(let i=0;i<=steps;i++){const t=i/steps,c=cellOf(x+dx*t,z+dz*t);for(const [ox,oz] of [[-r,-r],[r,-r],[-r,r],[r,r],[0,0]]){const q=cellOf(x+dx*t+ox,z+dz*t+oz);if(q.x<0||q.z<0||q.x>=navData.width||q.z>=navData.height||!navData.grid[q.z]?.[q.x])return false}}return true}
 function followJSONPath(obj,speed,now){let ud=obj.userData;if(!ud.path?.length||now-(ud.pathAt||0)>2500)return false;let i=ud.pathIndex||0;while(i<ud.path.length&&Math.hypot(ud.path[i].x-obj.position.x,ud.path[i].z-obj.position.z)<.5)i++;ud.pathIndex=i;if(i>=ud.path.length)return false;const p=ud.path[i],dx=p.x-obj.position.x,dz=p.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;const step=Math.min(speed*dt,d);obj.position.x+=dx/d*step;obj.position.z+=dz/d*step;return true}
-function jsonSteerMove(obj,dx,dz,r=.32){const x=obj.position.x,z=obj.position.z,len=Math.hypot(dx,dz);if(len<1e-5||!navReady||!navData?.grid)return false;const base=Math.atan2(dz,dx),angles=[0,Math.PI/12,-Math.PI/12,Math.PI/6,-Math.PI/6,Math.PI/3,-Math.PI/3,Math.PI/2,-Math.PI/2,2*Math.PI/3,-2*Math.PI/3,Math.PI];for(const off of angles){const q=base+off,mx=Math.cos(q)*len,mz=Math.sin(q)*len,end=cellOf(x+mx,z+mz);if(end.x<0||end.z<0||end.x>=navData.width||end.z>=navData.height||!navData.grid[end.z]?.[end.x])continue;if(jsonRayClear(x,z,mx,mz,r)){obj.position.x=x+mx;obj.position.z=z+mz;return true}}return false}
+function jsonSteerMove(obj,dx,dz,r=.32){
+ if(!navReady||!navData?.grid)return false;
+ const x=obj.position.x,z=obj.position.z,cs=navData.cellSize||1,len=Math.hypot(dx,dz);
+ if(len<1e-5)return false;
+ const base=Math.atan2(dz,dx),start=cellOf(x,z),dirs=[0,Math.PI/12,-Math.PI/12,Math.PI/6,-Math.PI/6,Math.PI/3,-Math.PI/3,Math.PI/2,-Math.PI/2,2*Math.PI/3,-2*Math.PI/3,Math.PI];
+ // Scan outward along candidate headings for the first open cell.
+ let best=null,bestScore=Infinity;
+ for(let a of dirs){
+  const ang=base+a,vx=Math.cos(ang),vz=Math.sin(ang);
+  for(let step=1;step<=12;step++){
+   const px=x+vx*cs*step,pz=z+vz*cs*step,c=cellOf(px,pz);
+   if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height)break;
+   if(!navData.grid[c.z]?.[c.x])continue;
+   const cx=navData.origin.x+(c.x+.5)*cs,cz=navData.origin.z+(c.z+.5)*cs;
+   if(!jsonRayClear(x,z,cx-x,cz-z,r))continue;
+   const score=Math.abs(a)*4+Math.hypot(cx-x,cz-z)*.015;
+   if(score<bestScore){bestScore=score;best={x:cx,z:cz}}
+   break; // nearest open cell in this heading
+  }
+ }
+ if(!best)return false;
+ const vx=best.x-x,vz=best.z-z,d=Math.hypot(vx,vz),move=Math.min(len,d);
+ if(d<1e-5)return false;
+ const mx=vx/d*move,mz=vz/d*move,end=cellOf(x+mx,z+mz);
+ if(!navData.grid[end.z]?.[end.x]||!jsonRayClear(x,z,mx,mz,r))return false;
+ obj.position.x=x+mx;obj.position.z=z+mz;return true
+}
 function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Survived '+Math.floor(360-time)+' seconds</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
