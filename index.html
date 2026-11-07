@@ -13,7 +13,19 @@ let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
 async function buildNavigation(){try{const res=await fetch('./scp-nav.json',{cache:'no-store'});if(!res.ok)throw Error('SCP nav HTTP '+res.status);const data=await res.json();if(data.format!=='scp-nav-v1'||!Array.isArray(data.walkableRows)||data.walkableRows.length!==data.height)throw Error('Invalid SCP nav format');const grid=Array.from({length:data.height},()=>Array(data.width).fill(0));data.walkableRows.forEach((spans,z)=>spans.forEach(([a,b])=>{for(let x=Math.max(0,a);x<=Math.min(data.width-1,b);x++)grid[z][x]=1}));navData={version:1,cellSize:data.cellSize,origin:data.origin,width:data.width,height:data.height,grid};navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';console.info('SCP-readable navigation loaded',navData.width,navData.height)}catch(e){navReady=false;document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='NAV DATA FAILED — RELOAD';console.error('SCP nav load failed',e);document.querySelector('#msg').textContent='SCP navigation data failed to load'}}
 function cellOf(x,z){const cs=navData.cellSize||1;return {x:Math.floor((x-navData.origin.x)/cs),z:Math.floor((z-navData.origin.z)/cs)}}
-function nearestOpen(x,z){let c=cellOf(x,z);for(let r=0;r<12;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;let ix=c.x+dx,iz=c.z+dz;if(ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height&&navData.grid[iz][ix])return {x:ix,z:iz}}return null}
+function nearestOpen(x,z){
+ if(!navData?.grid)return null;let c=cellOf(x,z),W=navData.width,H=navData.height;
+ for(let r=0;r<12;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){
+  if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;
+  let ix=c.x+dx,iz=c.z+dz;if(ix>=0&&iz>=0&&ix<W&&iz<H&&navData.grid[iz]?.[ix])return{x:ix,z:iz}
+ }
+ // If target is far from the nearest open cell, search the entire JSON map.
+ let best=null,bestD=Infinity;
+ for(let iz=0;iz<H;iz++){let row=navData.grid[iz];if(!row)continue;for(let ix=0;ix<W;ix++){
+  if(!row[ix])continue;let d=(ix-c.x)**2+(iz-c.z)**2;if(d<bestD){bestD=d;best={x:ix,z:iz}}
+ }}
+ return best;
+}
 function findNavPath(sx,sz,tx,tz){
  if(!navReady||!navData?.grid)return [];
  const start=nearestOpen(sx,sz),goal=nearestOpen(tx,tz);if(!start||!goal)return [];
