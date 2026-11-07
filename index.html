@@ -14,8 +14,25 @@ let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPa
 async function buildNavigation(){try{const res=await fetch('./scp-nav.json',{cache:'no-store'});if(!res.ok)throw Error('SCP nav HTTP '+res.status);const data=await res.json();if(data.format!=='scp-nav-v1'||!Array.isArray(data.walkableRows)||data.walkableRows.length!==data.height)throw Error('Invalid SCP nav format');const grid=Array.from({length:data.height},()=>Array(data.width).fill(0));data.walkableRows.forEach((spans,z)=>spans.forEach(([a,b])=>{for(let x=Math.max(0,a);x<=Math.min(data.width-1,b);x++)grid[z][x]=1}));navData={version:1,cellSize:data.cellSize,origin:data.origin,width:data.width,height:data.height,grid};navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';console.info('SCP-readable navigation loaded',navData.width,navData.height)}catch(e){navReady=false;document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='NAV DATA FAILED — RELOAD';console.error('SCP nav load failed',e);document.querySelector('#msg').textContent='SCP navigation data failed to load'}}
 function cellOf(x,z){const cs=navData.cellSize||1;return {x:Math.floor((x-navData.origin.x)/cs),z:Math.floor((z-navData.origin.z)/cs)}}
 function nearestOpen(x,z){let c=cellOf(x,z);for(let r=0;r<12;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;let ix=c.x+dx,iz=c.z+dz;if(ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height&&navData.grid[iz][ix])return {x:ix,z:iz}}return null}
-function findNavPath(sx,sz,tx,tz){const s=nearestOpen(sx,sz),t=nearestOpen(tx,tz);if(!s||!t)return [];const key=(x,z)=>z*navData.width+x,open=[{x:s.x,z:s.z,g:0,f:Math.hypot(t.x-s.x,t.z-s.z)}],came=new Map(),cost=new Map([[key(s.x,s.z),0]]),closed=new Set(),dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
-while(open.length){open.sort((a,b)=>a.f-b.f);const n=open.shift(),nk=key(n.x,n.z);if(closed.has(nk))continue;if(n.x===t.x&&n.z===t.z){let out=[n];let k=nk;while(came.has(k)){const p=came.get(k);out.push(p);k=key(p.x,p.z)}out.reverse();return out.map(p=>({x:navData.origin.x+p.x+.5,z:navData.origin.z+p.z+.5}))}closed.add(nk);for(const [dx,dz]of dirs){let x=n.x+dx,z=n.z+dz;if(x<0||z<0||x>=navData.width||z>=navData.height||!navData.grid[z][x])continue;if(dx&&dz&&(!navData.grid[n.z][x]||!navData.grid[z][n.x]))continue;let k=key(x,z),g=n.g+(dx&&dz?1.414:1);if(g>=(cost.get(k)??Infinity))continue;cost.set(k,g);came.set(k,{x:n.x,z:n.z});open.push({x,z,g,f:g+Math.hypot(t.x-x,t.z-z)})}}return []}
+function findNavPath(sx,sz,tx,tz){
+ if(!navReady||!navData?.grid)return [];
+ const start=nearestOpen(sx,sz),goal=nearestOpen(tx,tz);if(!start||!goal)return [];
+ const raw=gridRoute(start,goal);if(!raw.length)return [];
+ const cs=navData.cellSize||1,point=c=>({x:navData.origin.x+(c.x+.5)*cs,z:navData.origin.z+(c.z+.5)*cs});
+ const clearLine=(a,b)=>{
+  const dx=b.x-a.x,dz=b.z-a.z,n=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.2)));
+  for(let i=0;i<=n;i++){const t=i/n,c=cellOf(a.x+dx*t,a.z+dz*t);
+   if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x]||hit(a.x+dx*t,a.z+dz*t,.18))return false;
+  }return true;
+ };
+ // Roblox-like waypoint path: route on the JSON walkability map, then smooth
+ // the route by skipping intermediate cells whenever a clear segment exists.
+ const nodes=raw.map(point),waypoints=[];let anchor=0;
+ while(anchor<nodes.length-1){let far=anchor+1;for(let j=nodes.length-1;j>anchor;j--){if(clearLine(nodes[anchor],nodes[j])){far=j;break}}
+  waypoints.push(nodes[far]);anchor=far;
+ }
+ return waypoints;
+}
 
 document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
 // Infinite facility streaming: add 40m corridor chunks ahead and extend the A* grid.
