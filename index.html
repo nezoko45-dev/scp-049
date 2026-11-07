@@ -277,7 +277,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
   // Favor cells nearest the target globally, then evaluate whether a bent ray can reach them.
   candidates.sort((a,b)=>a.toGoal-b.toGoal);
  }
- const rayClear=(ax,az,bx,bz)=>{let n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){let t=k/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;if(hit(px,pz,.38))return false;if(navReady&&navData?.grid){let c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true};
+ const rayClear=(ax,az,bx,bz)=>{let n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){let t=k/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;if(hit(px,pz,.85))return false;if(navReady&&navData?.grid){let c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true};
  // Direct target ray first. If blocked, bend around hit objects with tangent/side probes,
  // then continue the ray in the chosen direction and use that bent direction to steer.
  let route=null;
@@ -306,7 +306,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz),step=Math.min(speed*dt,d);
  if(d<.01)return false;
  const mx=vx/d*step,mz=vz/d*step;
- if(hit(x+mx,z+mz,.42))return false;
+ if(hit(x+mx,z+mz,.85))return false;
  obj.position.x=x+mx;obj.position.z=z+mz;return true
 }
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
