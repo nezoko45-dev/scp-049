@@ -298,6 +298,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
     const wp={x:navData.origin.x+(path[i].x+.5)*cs2,z:navData.origin.z+(path[i].z+.5)*cs2};
     if(!rayClear(x,z,wp.x,wp.z))break;route=wp;
    }
+   }
    // Take the first BFS cell even if the long ray is obstructed; replan next frame.
    if(!route&&path[1])route={x:navData.origin.x+(path[1].x+.5)*cs2,z:navData.origin.z+(path[1].z+.5)*cs2};
   }
