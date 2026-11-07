@@ -141,8 +141,19 @@ function liveGridAvoidStep(obj,tx,tz,speed){
  ud.gridRouteIndex=index;
  if(index>=path.length)return false;
  const p=center(path[index].x,path[index].z),x=obj.position.x,z=obj.position.z,vx=p.x-x,vz=p.z-z,d=Math.hypot(vx,vz);
- if(d<.01)return false;const n=Math.min(speed*frameDelta,d),nx=x+vx/d*n,nz=z+vz/d*n;
- if(!rayOpen(x,z,{x:nx,z:nz})){ud.gridRouteKey='';ud.gridRouteAt=0;return false}
+ if(d<.01)return false;
+ const n=Math.min(speed*frameDelta,d),nx=x+vx/d*n,nz=z+vz/d*n;
+ // If the next cell is blocked by a wall/object, look ahead along the route
+ // and jump to the first open waypoint on the far side with a clear straight shot.
+ if(!rayOpen(x,z,{x:nx,z:nz})){
+   let skip=-1;
+   for(let j=index+1;j<path.length;j++){
+     const q=center(path[j].x,path[j].z);
+     if(rayOpen(x,z,q)){skip=j;break}
+   }
+   if(skip>=0){ud.gridRouteIndex=skip;const q=center(path[skip].x,path[skip].z),qx=q.x-x,qz=q.z-z,qd=Math.hypot(qx,qz),step=Math.min(speed*frameDelta,qd);if(qd>.01){obj.position.x=x+qx/qd*step;obj.position.z=z+qz/qd*step;return true}}
+   ud.gridRouteKey='';ud.gridRouteAt=0;return false
+ }
  obj.position.x=nx;obj.position.z=nz;return true
 }
 function liveGridCellOpen(x,z){if(!backendGridOnline||!navData?.grid)return false;const c=cellOf(x,z);return c.x>=0&&c.z>=0&&c.x<navData.width&&c.z<navData.height&&!!navData.grid[c.z]?.[c.x]}
