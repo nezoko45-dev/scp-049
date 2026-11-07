@@ -113,21 +113,29 @@ let frameDelta=0;function liveGridAvoidStep(obj,tx,tz,speed){
  if(!navReady||!navData?.grid)return false;
  const cs=navData.cellSize||1,cell=cellOf(obj.position.x,obj.position.z);
  const center=(ix,iz)=>({x:navData.origin.x+(ix+.5)*cs,z:navData.origin.z+(iz+.5)*cs});
- const here=center(cell.x,cell.z),x=obj.position.x,z=obj.position.z;
- // Snap gently onto the current cell center before selecting a neighbor.
+ const x=obj.position.x,z=obj.position.z,here=center(cell.x,cell.z);
  let vx=here.x-x,vz=here.z-z,d=Math.hypot(vx,vz),step=speed*frameDelta;
- if(d>.06){let n=Math.min(step,d);obj.position.x+=vx/d*n;obj.position.z+=vz/d*n;return true}
+ if(d>.06){const n=Math.min(step,d);obj.position.x+=vx/d*n;obj.position.z+=vz/d*n;return true}
+ // Search outward through connected OPEN cells. Blocked cells are never queued,
+ // so the AI naturally routes around walls instead of trying to walk through them.
  const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
- let best=null,score=Infinity;
- for(const [ox,oz] of dirs){let ix=cell.x+ox,iz=cell.z+oz;
-  if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;
-  if(ox&&oz&&(!navData.grid[cell.z]?.[ix]||!navData.grid[iz]?.[cell.x]))continue;
-  const q=center(ix,iz);if(hit(q.x,q.z,.3))continue;
-  const sc=Math.hypot(q.x-tx,q.z-tz);if(sc<score){score=sc;best=q}
+ const key=(ix,iz)=>ix+','+iz,queue=[{x:cell.x,z:cell.z,first:null,depth:0}],seen=new Set([key(cell.x,cell.z)]);
+ let best=null,bestScore=Infinity;
+ for(let qi=0;qi<queue.length&&qi<1800;qi++){
+  const n=queue[qi];if(n.depth>=12)continue;
+  for(const [ox,oz] of dirs){const ix=n.x+ox,iz=n.z+oz,k=key(ix,iz);
+   if(seen.has(k)||ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;
+   if(ox&&oz&&(!navData.grid[n.z]?.[ix]||!navData.grid[iz]?.[n.x]))continue;
+   seen.add(k);const q=center(ix,iz),first=n.first||{x:ix,z:iz};
+   const targetD=Math.hypot(q.x-tx,q.z-tz),score=targetD+n.depth*.025;
+   if(targetD<Math.hypot(here.x-tx,here.z-tz)-.08&&score<bestScore){bestScore=score;best=first}
+   queue.push({x:ix,z:iz,first,depth:n.depth+1});
+  }
  }
  if(!best)return false;
- vx=best.x-x;vz=best.z-z;d=Math.hypot(vx,vz);if(d<.01)return false;
- step=Math.min(step,d);obj.position.x+=vx/d*step;obj.position.z+=vz/d*step;return true
+ const q=center(best.x,best.z);vx=q.x-x;vz=q.z-z;d=Math.hypot(vx,vz);if(d<.01)return false;
+ step=Math.min(step,d);const nx=x+vx/d*step,nz=z+vz/d*step;
+ if(hit(nx,nz,.3))return false;obj.position.x=nx;obj.position.z=nz;return true
 }
 function liveGridCellOpen(x,z){if(!backendGridOnline||!navData?.grid)return false;const c=cellOf(x,z);return c.x>=0&&c.z>=0&&c.x<navData.width&&c.z<navData.height&&!!navData.grid[c.z]?.[c.x]}
 function nearestLiveOpen(x,z,around=7){if(!backendGridOnline||!navData?.grid)return null;const c=cellOf(x,z);let best=null,score=Infinity;for(let dz=-around;dz<=around;dz++)for(let dx=-around;dx<=around;dx++){const ix=c.x+dx,iz=c.z+dz;if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;const d=dx*dx+dz*dz;if(d<score){score=d;best={x:navData.origin.x+(ix+.5)*navData.cellSize,z:navData.origin.z+(iz+.5)*navData.cellSize}}}return best}
