@@ -290,26 +290,26 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
    if(rayClear(px,pz,tx,tz)){route={x:px,z:pz};break}
   }
  }
- // Walkable cells cast forward visibility rays; SCP advances to the best visible cell.
+ // Visibility-based grid steering: raycast to every nearby walkable cell.
+ // If a cell ray is blocked, score other reachable cells and steer to the best.
  if(navReady&&navData?.grid){
-  const W=navData.width,H=navData.height,cs2=navData.cellSize||1,cx=cellOf(x,z),radius=18;
-  let best=null,bestScore=Infinity;
+  const W=navData.width,H=navData.height,cs2=navData.cellSize||1,ud=obj.userData||(obj.userData={});
+  let visible=[],blocked=[];
+  const radius=24;
+  const cx=cellOf(x,z);
   for(let iz=Math.max(0,cx.z-radius);iz<Math.min(H,cx.z+radius+1);iz++){
    for(let ix=Math.max(0,cx.x-radius);ix<Math.min(W,cx.x+radius+1);ix++){
     if(!navData.grid[iz]?.[ix])continue;
     const px=navData.origin.x+(ix+.5)*cs2,pz=navData.origin.z+(iz+.5)*cs2;
-    const fromSelf=Math.hypot(px-x,pz-z),toTarget=Math.hypot(px-tx,pz-tz);
-    if(fromSelf<cs2*.7||toTarget>=dist-cs2*.2)continue;
-    // First ray: SCP to this open cell. Second ray: this cell forward toward target.
-    if(!rayClear(x,z,px,pz))continue;
-    const dx=tx-px,dz=tz-pz,len=Math.hypot(dx,dz)||1,rayLen=Math.min(len,cs2*6);
-    const ex=px+dx/len*rayLen,ez=pz+dz/len*rayLen;
-    if(!rayClear(px,pz,ex,ez))continue;
-    const score=toTarget+fromSelf*.16;
-    if(score<bestScore){bestScore=score;best={x:px,z:pz};}
+    if(Math.hypot(px-x,pz-z)<.35)continue;
+    const cell={x:ix,z:iz},p={x:px,z:pz},clear=rayClear(x,z,px,pz);
+    (clear?visible:blocked).push({cell,p,clear,toTarget:Math.hypot(px-tx,pz-tz),fromSelf:Math.hypot(px-x,pz-z)});
    }
   }
-  if(best)route=best;
+  visible.sort((a,b)=>(a.toTarget+a.fromSelf*.12)-(b.toTarget+b.fromSelf*.12));
+  let chosen=visible.find(q=>q.fromSelf>cs2*.65&&q.toTarget<dist-cs2*.3);
+  if(!chosen)chosen=visible.find(q=>q.fromSelf>cs2*.65);
+  if(chosen)route=chosen.p;
  }
 
  /*
