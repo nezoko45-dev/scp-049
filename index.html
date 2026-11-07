@@ -109,13 +109,13 @@ function moveAIOnExeGrid(obj,dx,dz,r=.4){let moved=false,nx=obj.position.x+dx,nz
 function relocateAIToJSONCell(obj,x=obj.position.x,z=obj.position.z){const q=nearestOpen(x,z);if(!q)return false;const cs=navData.cellSize||1;obj.position.x=navData.origin.x+(q.x+.5)*cs;obj.position.z=navData.origin.z+(q.z+.5)*cs;return true}
 async function refreshLiveGrid(){try{const r=await fetch('http://127.0.0.1:8766/map.json?ai='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error('map fetch');const g=await r.json();if(!g.grid||!g.width||!g.height||!g.origin||!g.cellSize)throw Error('bad map');navData=g;navReady=true;backendGridOnline=true;return true}catch(e){backendGridOnline=false;return false}}
 // Cell-snapped AI: agents travel between cell centers; JSON 1=open, 0=blocked.
-function liveGridAvoidStep(obj,tx,tz,speed){
+let frameDelta=0;function liveGridAvoidStep(obj,tx,tz,speed){
  if(!navReady||!navData?.grid)return false;
  const cs=navData.cellSize||1,cell=cellOf(obj.position.x,obj.position.z);
  const center=(ix,iz)=>({x:navData.origin.x+(ix+.5)*cs,z:navData.origin.z+(iz+.5)*cs});
  const here=center(cell.x,cell.z),x=obj.position.x,z=obj.position.z;
  // Snap gently onto the current cell center before selecting a neighbor.
- let vx=here.x-x,vz=here.z-z,d=Math.hypot(vx,vz),step=speed*dt;
+ let vx=here.x-x,vz=here.z-z,d=Math.hypot(vx,vz),step=speed*frameDelta;
  if(d>.06){let n=Math.min(step,d);obj.position.x+=vx/d*n;obj.position.z+=vz/d*n;return true}
  const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
  let best=null,score=Infinity;
@@ -141,7 +141,7 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Survived '+Math.floor(360-time)+' seconds</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
  requestAnimationFrame(frame);
- let dt=Math.min(.05,(now-last)/1000);last=now;
+ let dt=Math.min(.05,(now-last)/1000);last=now;frameDelta=dt;
  if(active&&!dead){
   time-=dt;streamFacility(now);syncGridBackend(now);
   allies.forEach(a=>{if(a.userData.hp<=0){if(!a.userData.respawnAt)a.userData.respawnAt=now+6000;if(now>=a.userData.respawnAt){a.userData.hp=150;a.userData.dead=false;a.visible=true;a.position.set((Math.random()-.5)*18,0,12+Math.random()*12);a.userData.path=[];a.userData.respawnAt=0;}else{a.userData.dead=true;a.visible=false;return;}}
