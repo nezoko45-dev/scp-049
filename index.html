@@ -109,19 +109,37 @@ function moveAIOnExeGrid(obj,dx,dz,r=.4){let moved=false,nx=obj.position.x+dx,nz
 function relocateAIToJSONCell(obj,x=obj.position.x,z=obj.position.z){const q=nearestOpen(x,z);if(!q)return false;const cs=navData.cellSize||1;obj.position.x=navData.origin.x+(q.x+.5)*cs;obj.position.z=navData.origin.z+(q.z+.5)*cs;return true}
 async function refreshLiveGrid(){try{const r=await fetch('http://127.0.0.1:8766/map.json?ai='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error('map fetch');const g=await r.json();if(!g.grid||!g.width||!g.height||!g.origin||!g.cellSize)throw Error('bad map');navData=g;navReady=true;backendGridOnline=true;return true}catch(e){backendGridOnline=false;return false}}
 // Cell-snapped AI: agents travel between cell centers; JSON 1=open, 0=blocked.
-let frameDelta=0;function liveGridAvoidStep(obj,tx,tz,speed){
+let frameDelta=0;// Reliable grid navigation: BFS finds a connected walkable route; movement follows cell centers.
+function gridRoute(from,to){
+ const W=navData.width,H=navData.height,g=navData.grid;
+ const key=(x,z)=>z*W+x,dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+ const start=key(from.x,from.z),goal=key(to.x,to.z),prev=new Int32Array(W*H);prev.fill(-2);prev[start]=-1;
+ const q=new Int32Array(W*H);let head=0,tail=0;q[tail++]=start;
+ while(head<tail){let k=q[head++];if(k===goal)break;let x=k%W,z=Math.floor(k/W);
+  for(const [dx,dz] of dirs){let nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;
+   if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;let nk=key(nx,nz);if(prev[nk]!==-2)continue;prev[nk]=k;q[tail++]=nk}
+ }
+ if(prev[goal]===-2)return [];
+ let path=[],k=goal;while(k!==-1){path.push({x:k%W,z:Math.floor(k/W)});k=prev[k]}path.reverse();return path
+}
+function liveGridAvoidStep(obj,tx,tz,speed){
  if(!navReady||!navData?.grid||!frameDelta)return false;
  const cs=navData.cellSize||1,center=(ix,iz)=>({x:navData.origin.x+(ix+.5)*cs,z:navData.origin.z+(iz+.5)*cs});
- let c=cellOf(obj.position.x,obj.position.z),x=obj.position.x,z=obj.position.z;
  const open=(ix,iz)=>ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height&&!!navData.grid[iz]?.[ix];
- // If spawned on a blocked tile, relocate toward the nearest open tile.
- if(!open(c.x,c.z)){let q=null,bd=Infinity;for(let r=1;r<=8&&!q;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){if(Math.max(Math.abs(dx),Math.abs(dz))!==r||!open(c.x+dx,c.z+dz))continue;let p=center(c.x+dx,c.z+dz),d=Math.hypot(p.x-x,p.z-z);if(d<bd){bd=d;q=p}}if(q){let vx=q.x-x,vz=q.z-z,d=Math.hypot(vx,vz),n=Math.min(speed*frameDelta,d);if(d>.01&&!hit(x+vx/d*n,z+vz/d*n,.25)){obj.position.x+=vx/d*n;obj.position.z+=vz/d*n;return true}}return false}
- const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
- let chosen=null,best=Infinity,cur=Math.hypot(tx-x,tz-z);
- for(const [dx,dz] of dirs){let ix=c.x+dx,iz=c.z+dz;if(!open(ix,iz))continue;if(dx&&dz&&(!open(c.x+dx,c.z)||!open(c.x,c.z+dz)))continue;let p=center(ix,iz),score=Math.hypot(tx-p.x,tz-p.z);if(score<best){best=score;chosen=p}}
- if(!chosen||best>=cur-.02)return false;
- let vx=chosen.x-x,vz=chosen.z-z,d=Math.hypot(vx,vz),n=Math.min(speed*frameDelta,d);if(d<.01||hit(x+vx/d*n,z+vz/d*n,.25))return false;
- obj.position.x+=vx/d*n;obj.position.z+=vz/d*n;return true
+ let c=cellOf(obj.position.x,obj.position.z),target=cellOf(tx,tz),ud=obj.userData||(obj.userData={});
+ if(!open(c.x,c.z)){let q=nearestOpen(obj.position.x,obj.position.z);if(!q)return false;c={x:q.x,z:q.z}}
+ if(!open(target.x,target.z)){let q=nearestOpen(tx,tz);if(!q)return false;target=q}
+ const stamp=c.x+','+c.z+'>'+target.x+','+target.z;
+ if(ud.gridRouteKey!==stamp||!ud.gridRoute?.length||performance.now()-(ud.gridRouteAt||0)>650){
+  ud.gridRoute=gridRoute(c,target);ud.gridRouteKey=stamp;ud.gridRouteAt=performance.now();ud.gridRouteIndex=1
+ }
+ let path=ud.gridRoute,index=ud.gridRouteIndex||1;
+ while(index<path.length){let p=center(path[index].x,path[index].z);if(Math.hypot(p.x-obj.position.x,p.z-obj.position.z)>.18)break;index++}
+ ud.gridRouteIndex=index;if(index>=path.length)return false;
+ const p=center(path[index].x,path[index].z),x=obj.position.x,z=obj.position.z,vx=p.x-x,vz=p.z-z,d=Math.hypot(vx,vz);
+ if(d<.01)return false;const n=Math.min(speed*frameDelta,d),nx=x+vx/d*n,nz=z+vz/d*n;
+ if(hit(nx,nz,.22)){ud.gridRouteAt=0;return false}
+ obj.position.x=nx;obj.position.z=nz;return true
 }
 function liveGridCellOpen(x,z){if(!backendGridOnline||!navData?.grid)return false;const c=cellOf(x,z);return c.x>=0&&c.z>=0&&c.x<navData.width&&c.z<navData.height&&!!navData.grid[c.z]?.[c.x]}
 function nearestLiveOpen(x,z,around=7){if(!backendGridOnline||!navData?.grid)return null;const c=cellOf(x,z);let best=null,score=Infinity;for(let dz=-around;dz<=around;dz++)for(let dx=-around;dx<=around;dx++){const ix=c.x+dx,iz=c.z+dz;if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;const d=dx*dx+dz*dz;if(d<score){score=d;best={x:navData.origin.x+(ix+.5)*navData.cellSize,z:navData.origin.z+(iz+.5)*navData.cellSize}}}return best}
