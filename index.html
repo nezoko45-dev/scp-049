@@ -290,36 +290,17 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
    if(rayClear(px,pz,tx,tz)){route={x:px,z:pz};break}
   }
  }
- // Persistent full-length BFS route: follow every JSON cell in sequence,
- // rather than selecting a tiny ray probe and stopping there.
- if(navReady&&navData?.grid){
-  const ud=obj.userData||(obj.userData={}),from=cellOf(x,z),to=cellOf(tx,tz);
-  const routeKey=from.x+","+from.z+">"+to.x+","+to.z;
-  if(ud.scpGridGoal!==to.x+","+to.z||!ud.scpGridPath?.length||ud.scpGridPathAt===undefined){
-   const s=nearestOpen(x,z),g=nearestOpen(tx,tz);
-   ud.scpGridPath=s&&g?gridRoute(s,g):[];ud.scpGridPathAt=1;ud.scpGridGoal=to.x+","+to.z;
+ // Raycast from SCP to every open JSON cell, ordered nearest the target.
+ // Pick the first target-nearest cell with a clear ray from SCP.
+ if(navReady&&navData?.grid&&candidates.length){
+  let cellChoice=null;
+  for(const c of candidates){
+   if(c.toGoal>=dist-.25)continue; // must make measurable progress toward target
+   if(rayClear(x,z,c.x,c.z)){cellChoice=c;break;}
   }
-  const path=ud.scpGridPath,cs2=navData.cellSize||1;
-  while(ud.scpGridPathAt<path.length){
-   const cell=path[ud.scpGridPathAt],wp={x:navData.origin.x+(cell.x+.5)*cs2,z:navData.origin.z+(cell.z+.5)*cs2};
-   if(Math.hypot(wp.x-x,wp.z-z)>.22)break;
-   ud.scpGridPathAt++;
-  }
-  if(ud.scpGridPathAt<path.length){
-   const cell=path[ud.scpGridPathAt];route={x:navData.origin.x+(cell.x+.5)*cs2,z:navData.origin.z+(cell.z+.5)*cs2};
-  }else if(rayClear(x,z,tx,tz))route={x:tx,z:tz};
+  if(cellChoice)route=cellChoice;
  }
- // Last-resort global open-cell ray search.
- if(!route&&candidates.length){
-  let best=null,bestScore=Infinity;
-  for(const c of candidates.slice(0,Math.min(500,candidates.length))){
-   const ang=Math.atan2(c.x-x,c.z-z),align=Math.abs(wrapAngle(ang-desired));
-   if(!rayClear(x,z,c.x,c.z))continue;
-   const score=align*5+c.toGoal*.025-c.fromSelf*.002;
-   if(score<bestScore){bestScore=score;best=c}
-  }
-  if(best)route=best;
- }
+
  if(!route)return false;
  const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz),step=Math.min(speed*dt,d);
  if(d<.01)return false;
