@@ -323,9 +323,20 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  if(!route)return false;
  const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz),step=Math.min(speed*dt,d);
  if(d<.01)return false;
- const mx=vx/d*step,mz=vz/d*step;
- if(hit(x+mx,z+mz,.85))return false;
- obj.position.x=x+mx;obj.position.z=z+mz;return true
+ const mx=vx/d*step,mz=vz/d*step,r=.85;
+ // Corner recovery: attempt diagonal movement, then slide along either wall axis.
+ let moved=false;
+ if(!hit(x+mx,z+mz,r)&&jsonRayClear(x,z,mx,mz,r)){
+  obj.position.x=x+mx;obj.position.z=z+mz;moved=true;
+ }else{
+  if(Math.abs(mx)>.0001&&!hit(x+mx,z,r)&&jsonRayClear(x,z,mx,0,r)){obj.position.x=x+mx;moved=true}
+  if(Math.abs(mz)>.0001&&!hit(obj.position.x,z+mz,r)&&jsonRayClear(obj.position.x,z,0,mz,r)){obj.position.z=z+mz;moved=true}
+ }
+ if(!moved){
+  // Force a fresh BFS from the current cell next frame instead of repeating a stale corner waypoint.
+  obj.userData.scpGridPath=[];obj.userData.scpGridPathAt=undefined;obj.userData.scpGridGoal='';
+ }
+ return moved
 }
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
