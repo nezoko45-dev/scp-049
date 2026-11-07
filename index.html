@@ -290,18 +290,24 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
    if(rayClear(px,pz,tx,tz)){route={x:px,z:pz};break}
   }
  }
- // If direct/bent rays are all blocked, use the JSON grid BFS route.
- if(!route&&navReady&&navData?.grid){
-  const start=nearestOpen(x,z),goal=nearestOpen(tx,tz);
-  if(start&&goal){const path=gridRoute(start,goal),cs2=navData.cellSize||1;
-   if(path.length>1){for(let i=1;i<path.length;i++){
-    const wp={x:navData.origin.x+(path[i].x+.5)*cs2,z:navData.origin.z+(path[i].z+.5)*cs2};
-    if(!rayClear(x,z,wp.x,wp.z))break;route=wp;
-   }
-   }
-   // Take the first BFS cell even if the long ray is obstructed; replan next frame.
-   if(!route&&path[1])route={x:navData.origin.x+(path[1].x+.5)*cs2,z:navData.origin.z+(path[1].z+.5)*cs2};
+ // Persistent full-length BFS route: follow every JSON cell in sequence,
+ // rather than selecting a tiny ray probe and stopping there.
+ if(navReady&&navData?.grid){
+  const ud=obj.userData||(obj.userData={}),from=cellOf(x,z),to=cellOf(tx,tz);
+  const routeKey=from.x+","+from.z+">"+to.x+","+to.z;
+  if(ud.scpGridGoal!==to.x+","+to.z||!ud.scpGridPath?.length||ud.scpGridPathAt===undefined){
+   const s=nearestOpen(x,z),g=nearestOpen(tx,tz);
+   ud.scpGridPath=s&&g?gridRoute(s,g):[];ud.scpGridPathAt=1;ud.scpGridGoal=to.x+","+to.z;
   }
+  const path=ud.scpGridPath,cs2=navData.cellSize||1;
+  while(ud.scpGridPathAt<path.length){
+   const cell=path[ud.scpGridPathAt],wp={x:navData.origin.x+(cell.x+.5)*cs2,z:navData.origin.z+(cell.z+.5)*cs2};
+   if(Math.hypot(wp.x-x,wp.z-z)>.22)break;
+   ud.scpGridPathAt++;
+  }
+  if(ud.scpGridPathAt<path.length){
+   const cell=path[ud.scpGridPathAt];route={x:navData.origin.x+(cell.x+.5)*cs2,z:navData.origin.z+(cell.z+.5)*cs2};
+  }else if(rayClear(x,z,tx,tz))route={x:tx,z:tz};
  }
  // Last-resort global open-cell ray search.
  if(!route&&candidates.length){
