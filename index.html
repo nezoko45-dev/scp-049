@@ -262,26 +262,53 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // on upper/lower rings. All rays inspect every direction around SCP.
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const x=obj.position.x,z=obj.position.z,dx=tx-x,dz=tz-z,dist=Math.hypot(dx,dz);if(dist<.05)return false;
- const desired=Math.atan2(dx,dz),length=Math.min(2.5,Math.max(.9,dist)),dirs=[];
- for(let i=0;i<32;i++){let a=i*Math.PI/16;dirs.push([Math.sin(a),Math.cos(a),0])}
- for(const elev of [-.6,.6])for(let i=0;i<16;i++){let a=i*Math.PI/8;dirs.push([Math.cos(elev)*Math.sin(a),Math.cos(elev)*Math.cos(a),Math.sin(elev)])}
- let best=null,scoreBest=-Infinity;
- for(const [vx,vz,vy] of dirs){
-  const h=Math.hypot(vx,vz);if(h<.2)continue;const ex=x+vx/h*length,ez=z+vz/h*length;
-  let blocked=false,n=Math.ceil(length/.15);
-  for(let k=1;k<=n;k++){let t=k/n,px=x+(ex-x)*t,pz=z+(ez-z)*t;
-   if(hit(px,pz,.42)){blocked=true;break}
-   if(navReady&&navData?.grid){let c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x]){blocked=true;break}}
+ const cs=navData?.cellSize||1,desired=Math.atan2(dx,dz);
+ // Search the entire available map for walkable cells, not just a radius around SCP.
+ let candidates=[];
+ if(navReady&&navData?.grid){
+  const goal=cellOf(tx,tz),W=navData.width,H=navData.height;
+  for(let iz=0;iz<H;iz++)for(let ix=0;ix<W;ix++){
+   if(!navData.grid[iz]?.[ix])continue;
+   const px=navData.origin.x+(ix+.5)*cs,pz=navData.origin.z+(iz+.5)*cs;
+   const toGoal=Math.hypot(px-tx,pz-tz),fromSelf=Math.hypot(px-x,pz-z);
+   if(fromSelf<.25)continue;
+   candidates.push({x:px,z:pz,toGoal,fromSelf,cell:{x:ix,z:iz}});
   }
-  if(blocked)continue;
-  let align=Math.cos(wrapAngle(Math.atan2(vx,vz)-desired)),score=align*3-Math.abs(vy)*.1;
-  if(score>scoreBest){scoreBest=score;best={x:ex,z:ez}}
+  // Favor cells nearest the target globally, then evaluate whether a bent ray can reach them.
+  candidates.sort((a,b)=>a.toGoal-b.toGoal);
  }
- if(!best)return false;let mx=best.x-x,mz=best.z-z,d=Math.hypot(mx,mz),step=Math.min(speed*dt,d);
- if(d<.01||hit(x+mx/d*step,z+mz/d*step,.42))return false;
- obj.position.x=x+mx/d*step;obj.position.z=z+mz/d*step;return true
+ const rayClear=(ax,az,bx,bz)=>{let n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){let t=k/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;if(hit(px,pz,.38))return false;if(navReady&&navData?.grid){let c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true};
+ // Direct target ray first. If blocked, bend around hit objects with tangent/side probes,
+ // then continue the ray in the chosen direction and use that bent direction to steer.
+ let route=null;
+ if(rayClear(x,z,tx,tz))route={x:tx,z:tz};
+ else{
+  const angles=[.22,-.22,.45,-.45,.72,-.72,1.05,-1.05,1.45,-1.45,Math.PI/2,-Math.PI/2];
+  for(const a of angles){const ang=desired+a,px=x+Math.sin(ang)*Math.min(2.8,dist),pz=z+Math.cos(ang)*Math.min(2.8,dist);
+   if(!rayClear(x,z,px,pz))continue;
+   // After bending, ray toward target again from the probe point.
+   if(rayClear(px,pz,tx,tz)){route={x:px,z:pz};break}
+  }
+ }
+ // If direct/bent target ray is unavailable, choose the globally open cell
+ // whose heading and distance best advance toward the target.
+ if(!route&&candidates.length){
+  let best=null,bestScore=Infinity;
+  for(const c of candidates.slice(0,Math.min(500,candidates.length))){
+   const ang=Math.atan2(c.x-x,c.z-z),align=Math.abs(wrapAngle(ang-desired));
+   if(!rayClear(x,z,c.x,c.z))continue;
+   const score=align*5+c.toGoal*.025-c.fromSelf*.002;
+   if(score<bestScore){bestScore=score;best=c}
+  }
+  if(best)route=best;
+ }
+ if(!route)return false;
+ const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz),step=Math.min(speed*dt,d);
+ if(d<.01)return false;
+ const mx=vx/d*step,mz=vz/d*step;
+ if(hit(x+mx,z+mz,.42))return false;
+ obj.position.x=x+mx;obj.position.z=z+mz;return true
 }
-
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
  requestAnimationFrame(frame);
