@@ -54,7 +54,8 @@ function makeFacilityChunk(cx,cz){
   if(Math.random()<.5){let z=cz+8+Math.random()*24,gap=cx+8+Math.random()*24;wall(cx+(gap-cx-4)/2,z,gap-cx-4,1);wall(gap+4+(cx+40-gap-4)/2,z,cx+40-gap-4,1)}
   else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
  }
- scanGeneratedMap(cx,cz,40);\n // Lamps and props.
+ scanGeneratedMap(cx,cz,40);
+ // Lamps and props.
  let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk:{x:cx,z:cz,size:40},walls:chunkWalls})}).catch(()=>{});
 }
 let backendGridSyncAt=0,backendGridOnline=false;async function syncGridBackend(now){if(now-backendGridSyncAt<250)return;backendGridSyncAt=now;try{let r=await fetch('http://127.0.0.1:8766/map.json?refresh='+now,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let g=await r.json();if(!g.grid||!g.width||!g.height)throw Error('Invalid grid');const changed=!navData||navData.width!==g.width||navData.height!==g.height||navData.origin?.x!==g.origin?.x||navData.origin?.z!==g.origin?.z;navData=g;navReady=true;backendGridOnline=true;if(changed){navPath=[];navPathAt=0;allies.forEach(a=>{a.userData.path=[];a.userData.pathIndex=0});zombies.forEach(z=>{z.userData.path=[];z.userData.pathIndex=0});}document.querySelector('#head').textContent='LAST SHIFT / GRID EXE ONLINE · AI USING LIVE GRID';}catch(e){backendGridOnline=false;document.querySelector('#head').textContent='LAST SHIFT / GRID EXE OFFLINE · AI USING FALLBACK';}}
