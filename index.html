@@ -25,6 +25,22 @@ function growNav(dir){
  if(dir==='W'){navData.grid.forEach(row=>row.unshift(...Array(40).fill(1)));navData.origin.x-=40;navData.width+=40}
  if(dir==='E'){navData.grid.forEach(row=>row.push(...Array(40).fill(1)));navData.width+=40}
 }
+function scanGeneratedMap(cx,cz,size=40){
+ if(!navData?.grid)return;
+ const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z;
+ const x0=Math.max(0,Math.floor((cx-ox)/cs)),x1=Math.min(navData.width-1,Math.ceil((cx+size-ox)/cs));
+ const z0=Math.max(0,Math.floor((cz-oz)/cs)),z1=Math.min(navData.height-1,Math.ceil((cz+size-oz)/cs));
+ // Rebuild this generated chunk's floor cells, then scan every physical solid against them.
+ for(let iz=z0;iz<=z1;iz++)for(let ix=x0;ix<=x1;ix++)navData.grid[iz][ix]=1;
+ for(const o of solid){
+  const ax0=Math.max(x0,Math.floor((o.x-o.w/2-ox)/cs)),ax1=Math.min(x1,Math.ceil((o.x+o.w/2-ox)/cs));
+  const az0=Math.max(z0,Math.floor((o.z-o.d/2-oz)/cs)),az1=Math.min(z1,Math.ceil((o.z+o.d/2-oz)/cs));
+  for(let iz=az0;iz<=az1;iz++)for(let ix=ax0;ix<=ax1;ix++){
+   const px=ox+(ix+.5)*cs,pz=oz+(iz+.5)*cs;
+   if(px>=o.x-o.w/2-.15&&px<=o.x+o.w/2+.15&&pz>=o.z-o.d/2-.15&&pz<=o.z+o.d/2+.15)navData.grid[iz][ix]=0;
+  }
+ }
+}
 function makeFacilityChunk(cx,cz){
  const key=cx+','+cz;if(facilityChunks.has(key))return;facilityChunks.add(key);
  const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);
@@ -38,7 +54,7 @@ function makeFacilityChunk(cx,cz){
   if(Math.random()<.5){let z=cz+8+Math.random()*24,gap=cx+8+Math.random()*24;wall(cx+(gap-cx-4)/2,z,gap-cx-4,1);wall(gap+4+(cx+40-gap-4)/2,z,cx+40-gap-4,1)}
   else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
  }
- // Lamps and props.
+ scanGeneratedMap(cx,cz,40);\n // Lamps and props.
  let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk:{x:cx,z:cz,size:40},walls:chunkWalls})}).catch(()=>{});
 }
 let backendGridSyncAt=0,backendGridOnline=false;async function syncGridBackend(now){if(now-backendGridSyncAt<250)return;backendGridSyncAt=now;try{let r=await fetch('http://127.0.0.1:8766/map.json?refresh='+now,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let g=await r.json();if(!g.grid||!g.width||!g.height)throw Error('Invalid grid');const changed=!navData||navData.width!==g.width||navData.height!==g.height||navData.origin?.x!==g.origin?.x||navData.origin?.z!==g.origin?.z;navData=g;navReady=true;backendGridOnline=true;if(changed){navPath=[];navPathAt=0;allies.forEach(a=>{a.userData.path=[];a.userData.pathIndex=0});zombies.forEach(z=>{z.userData.path=[];z.userData.pathIndex=0});}document.querySelector('#head').textContent='LAST SHIFT / GRID EXE ONLINE · AI USING LIVE GRID';}catch(e){backendGridOnline=false;document.querySelector('#head').textContent='LAST SHIFT / GRID EXE OFFLINE · AI USING FALLBACK';}}
