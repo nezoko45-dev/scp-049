@@ -184,9 +184,10 @@ function jsonSteerMove(obj,dx,dz,r=.32){
    const cx=navData.origin.x+(c.x+.5)*cs,cz=navData.origin.z+(c.z+.5)*cs;
    if(!jsonRayClear(x,z,cx-x,cz-z,r))continue;
    const toward=(cx-x)*dx+(cz-z)*dz;
+   // Only accept cells that make measurable progress toward the target; don't chase its lateral drift.
    if(toward<=0)break;
    const bearing=Math.atan2(cx-x,cz-z);
-   const score=Math.abs(wrapAngle(bearing-targetBearing))*3+Math.abs(off)*.35+Math.hypot(cx-x,cz-z)*.01;
+   const progress=toward/Math.max(1e-6,len),lateral=Math.abs((cx-x)*(-dz/len)+(cz-z)*(dx/len));if(progress<.25)break;const score=Math.abs(wrapAngle(bearing-targetBearing))*5+Math.abs(off)*.2+lateral*.08-Math.min(progress,2)*.25;
    if(score<bestScore){bestScore=score;best={x:cx,z:cz}}
    break;
   }
