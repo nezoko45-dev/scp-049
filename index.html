@@ -261,52 +261,64 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // 360-degree sphere-like ray fan: 32 horizontal rays and 16 rays each
 // on upper/lower rings. All rays inspect every direction around SCP.
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const x=obj.position.x,z=obj.position.z,dx=tx-x,dz=tz-z,dist=Math.hypot(dx,dz);if(dist<.05)return false;
- const cs=navData?.cellSize||1,desired=Math.atan2(dx,dz);
- // Search the entire available map for walkable cells, not just a radius around SCP.
- let candidates=[];
- if(navReady&&navData?.grid){
-  const goal=cellOf(tx,tz),W=navData.width,H=navData.height;
-  for(let iz=0;iz<H;iz++)for(let ix=0;ix<W;ix++){
-   if(!navData.grid[iz]?.[ix])continue;
-   const px=navData.origin.x+(ix+.5)*cs,pz=navData.origin.z+(iz+.5)*cs;
-   const toGoal=Math.hypot(px-tx,pz-tz),fromSelf=Math.hypot(px-x,pz-z);
-   if(fromSelf<.25)continue;
-   candidates.push({x:px,z:pz,toGoal,fromSelf,cell:{x:ix,z:iz}});
+ const x=obj.position.x,z=obj.position.z,dist=Math.hypot(tx-x,tz-z);
+ if(dist<.05)return false;
+ const cs=navData?.cellSize||1;
+ const rayClear=(ax,az,bx,bz)=>{
+  const n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));
+  for(let k=1;k<=n;k++){
+   const t=k/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;
+   if(hit(px,pz,.85))return false;
+   if(navReady&&navData?.grid){const c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false;}
   }
-  // Favor cells nearest the target globally, then evaluate whether a bent ray can reach them.
-  candidates.sort((a,b)=>a.toGoal-b.toGoal);
- }
- const rayClear=(ax,az,bx,bz)=>{let n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){let t=k/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;if(hit(px,pz,.85))return false;if(navReady&&navData?.grid){let c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true};
- // Direct target ray first. If blocked, bend around hit objects with tangent/side probes,
- // then continue the ray in the chosen direction and use that bent direction to steer.
- let route=null;
- if(rayClear(x,z,tx,tz))route={x:tx,z:tz};
- else{
-  const angles=[.22,-.22,.45,-.45,.72,-.72,1.05,-1.05,1.45,-1.45,Math.PI/2,-Math.PI/2];
-  for(const a of angles){const ang=desired+a,px=x+Math.sin(ang)*Math.min(2.8,dist),pz=z+Math.cos(ang)*Math.min(2.8,dist);
-   if(!rayClear(x,z,px,pz))continue;
-   // After bending, ray toward target again from the probe point.
-   if(rayClear(px,pz,tx,tz)){route={x:px,z:pz};break}
+  return true;
+ };
+ if(!navReady||!navData?.grid)return false;
+ const W=navData.width,H=navData.height,goal=cellOf(tx,tz),key=goal.x+","+goal.z,ud=obj.userData||(obj.userData={});
+ // Build/rebuild a ray-connected cell graph from the current SCP cell.
+ // Nodes are open grid cells; edges exist only when the entire cell-to-cell ray is clear.
+ const start=nearestOpen(x,z);
+ if(!start)return false;
+ if(ud.rayChainGoal!==key||!ud.rayChain||ud.rayChainAt===undefined||ud.rayChainAt>=ud.rayChain.length){
+  const nodes=[],index=new Map();
+  for(let iz=0;iz<H;iz++)for(let ix=0;ix<W;ix++)if(navData.grid[iz]?.[ix]){
+   const id=iz*W+ix,px=navData.origin.x+(ix+.5)*cs,pz=navData.origin.z+(iz+.5)*cs;
+   nodes.push({id,x:px,z:pz,cx:ix,cz:iz});index.set(id,nodes.length-1);
   }
- }
- // Raycast from SCP to every open JSON cell, ordered nearest the target.
- // Pick the first target-nearest cell with a clear ray from SCP.
- if(navReady&&navData?.grid&&candidates.length){
-  let cellChoice=null;
-  for(const c of candidates){
-   if(c.toGoal>=dist-.25)continue; // must make measurable progress toward target
-   if(rayClear(x,z,c.x,c.z)){cellChoice=c;break;}
+  const sid=start.z*W+start.x,source=index.get(sid);
+  let chain=[];
+  if(source!==undefined){
+   // Dijkstra-like greedy best-first over ray-visible cell links, biased toward target.
+   const open=[source],came=new Map(),cost=new Map([[source,0]]),closed=new Set();let found=-1;
+   while(open.length&&closed.size<nodes.length){
+    open.sort((a,b)=>(cost.get(a)+Math.hypot(nodes[a].x-tx,nodes[a].z-tz))-(cost.get(b)+Math.hypot(nodes[b].x-tx,nodes[b].z-tz)));
+    const cur=open.shift();if(closed.has(cur))continue;closed.add(cur);
+    const n=nodes[cur];
+    if(Math.hypot(n.x-tx,n.z-tz)<=cs*1.25||rayClear(n.x,n.z,tx,tz)){found=cur;break;}
+    // Connect ray-clear cells in the surrounding 8-cell neighborhood.
+    for(let oz=-1;oz<=1;oz++)for(let ox=-1;ox<=1;ox++){if(!ox&&!oz)continue;
+     const cx=n.cx+ox,cz=n.cz+oz;if(cx<0||cz<0||cx>=W||cz>=H||!navData.grid[cz]?.[cx])continue;
+     const ni=index.get(cz*W+cx);if(ni===undefined||closed.has(ni))continue;
+     const nn=nodes[ni];if(!rayClear(n.x,n.z,nn.x,nn.z))continue;
+     const nc=cost.get(cur)+Math.hypot(nn.x-n.x,nn.z-n.z);
+     if(nc<(cost.get(ni)??Infinity)){cost.set(ni,nc);came.set(ni,cur);if(!open.includes(ni))open.push(ni);}
+    }
+   }
+   if(found>=0){let ids=[found];while(ids[0]!==source&&came.has(ids[0]))ids.unshift(came.get(ids[0]));chain=ids.map(i=>({x:nodes[i].x,z:nodes[i].z}));}
   }
-  if(cellChoice)route=cellChoice;
+  ud.rayChain=chain;ud.rayChainAt=chain.length>1?1:0;ud.rayChainGoal=key;
  }
-
+ let chain=ud.rayChain||[];
+ // Advance through reached waypoints, then use the next connected cell.
+ while(ud.rayChainAt<chain.length&&Math.hypot(chain[ud.rayChainAt].x-x,chain[ud.rayChainAt].z-z)<cs*.35)ud.rayChainAt++;
+ let route=chain[ud.rayChainAt]||null;
+ // Final target ray only after chain has brought SCP into line of sight.
+ if(!route&&rayClear(x,z,tx,tz))route={x:tx,z:tz};
  if(!route)return false;
- const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz),step=Math.min(speed*dt,d);
- if(d<.01)return false;
- const mx=vx/d*step,mz=vz/d*step;
+ const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz);if(d<.01)return false;
+ const step=Math.min(speed*dt,d),mx=vx/d*step,mz=vz/d*step;
  if(hit(x+mx,z+mz,.85))return false;
- obj.position.x=x+mx;obj.position.z=z+mz;return true
+ obj.position.x=x+mx;obj.position.z=z+mz;return true;
 }
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
