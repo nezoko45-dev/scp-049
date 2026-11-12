@@ -50,12 +50,23 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  for(let deg=0;deg<360;deg+=1){
   const a=headings[deg],vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,reach=0;
   for(const d of samples){if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;reach=d}else blocked++}
-  let edge=0,px=-vz,pz=vx;
-  for(const d of [1.2,2.5,4,6])if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1&&
-   scpGroundScore(p.x+vx*d+px*r*2.1*ud.wallSide,p.z+vz*d+pz*r*2.1*ud.wallSide,r)===0)edge++;
-  // Explicitly reward reducing distance to target; penalize directions moving away.
+  let edge=0,edgeToward=0,px=-vz,pz=vx;
+  for(const d of [1.2,2.5,4,6,8]){
+   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)!==1)continue;
+   const sideA=scpGroundScore(p.x+vx*d+px*r*2.1,p.z+vz*d+pz*r*2.1,r);
+   const sideB=scpGroundScore(p.x+vx*d-px*r*2.1,p.z+vz*d-pz*r*2.1,r);
+   // A score-0 side marks a wall edge; score-1 center is the lane to follow.
+   if(sideA===0||sideB===0){
+    edge++;
+    // Favor wall-parallel travel whose tangent points toward the target.
+    const tangentProgress=Math.max(0,vx*desiredX+vz*desiredZ);
+    edgeToward+=tangentProgress;
+   }
+  }
+  // Reward forward target progress, and strongly reward open wall-edge lanes
+  // that carry SCP along the obstacle toward its target.
   const progress=vx*desiredX+vz*desiredZ;
-  const score=open*1.7+reach*.22-blocked*8+edge*1.5+progress*32;
+  const score=open*1.7+reach*.22-blocked*8+edge*2.8+edgeToward*9+progress*32;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
