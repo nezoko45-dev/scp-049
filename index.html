@@ -91,13 +91,25 @@ const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 function drawSCPRayGizmos(obj,tx,tz){
  if(!scpRayGizmos)return;clearSCPRayViz();
- const x=obj.position.x,z=obj.position.z,y=1.3,reach=7;
- const ud=obj.userData||{};
-
- if(Number.isFinite(tx)&&Number.isFinite(tz)){const arr=[x,y,z,tx,y,tz],g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(arr,3));scpRayViz.add(new T.Line(g,scpRayMatClear))}
- scpRayViz.visible=true;rayHUD.textContent='SCP BOUND STEERING (G toggles debug)'
+ const ud=obj.userData||{},f=ud.flowField;
+ // Render sampled flow vectors as floor-level arrows around SCP.
+ if(f){
+  const verts=[],y=.12,step=3;
+  for(let z=1;z<f.N-1;z+=step)for(let x=1;x<f.N-1;x+=step){
+   const i=z*f.N+x,dx=f.dirX[i],dz=f.dirZ[i];if(!dx&&!dz||f.blocked[i])continue;
+   const wx=f.ox+(x+.5)*f.cs,wz=f.oz+(z+.5)*f.cs;
+   if(Math.hypot(wx-obj.position.x,wz-obj.position.z)>24)continue;
+   const len=f.cs*.42,ex=wx+dx*len,ez=wz+dz*len;
+   verts.push(wx,y,wz,ex,y,ez,ex,y,ez,ex-dx*.22-dz*.13,y,ez-dz*.22+dx*.13,ex,y,ez,ex-dx*.22+dz*.13,y,ez-dz*.22-dx*.13);
+  }
+  if(verts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpRayViz.add(new T.LineSegments(g,scpRayMatClear))}
+ }
+ // Highlight SCP's current sampled direction.
+ const i=f?Math.floor((obj.position.z-f.oz)/f.cs)*f.N+Math.floor((obj.position.x-f.ox)/f.cs):-1;
+ if(f&&i>=0&&i<f.dirX.length){const dx=f.dirX[i],dz=f.dirZ[i],x=obj.position.x,z=obj.position.z;const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([x,.25,z,x+dx*2,.25,z+dz*2],3));scpRayViz.add(new T.Line(g,scpRayMatClear))}
+ scpRayViz.visible=true;rayHUD.textContent='SCP FLOW FIELD (G toggles vectors)'
 }
-window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;scpChainViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos&&typeof bad!=='undefined'&&bad){drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);drawSCPRayChain(bad.userData?.rayChain||[])}if(!scpRayGizmos)clearSCPRayViz()}});
+window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;scpChainViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos&&typeof bad!=='undefined'&&bad){drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);}if(!scpRayGizmos)clearSCPRayViz()}});
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
  const cached=ud.gpsRoute,oldIndex=ud.gpsWaypointIndex||1; if(cached && oldIndex<cached.length-1) return {x:(cached[oldIndex].x-p.x)/step,z:(cached[oldIndex].z-p.z)/step};
