@@ -25,13 +25,23 @@ let facilityScoreSolidCount=-1;
 function rebuildFacilityScoreMap(){
  if(!navData?.grid)return;
  const g=navData.grid,cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,W=navData.width,H=navData.height;
- for(let z=0;z<H;z++)g[z].fill(1);
+ // Preserve remembered JSON scores; only newly generated geometry adds blocked cells.
+ // Existing 0 cells stay blocked even when their chunk is no longer in view.
  for(const o of solid){
   const minX=Math.max(0,Math.floor((o.x-o.w/2)/cs-ox/cs)),maxX=Math.min(W-1,Math.floor((o.x+o.w/2)/cs-ox/cs));
   const minZ=Math.max(0,Math.floor((o.z-o.d/2)/cs-oz/cs)),maxZ=Math.min(H-1,Math.floor((o.z+o.d/2)/cs-oz/cs));
   for(let z=minZ;z<=maxZ;z++)for(let x=minX;x<=maxX;x++)g[z][x]=0;
  }
  navData.revision=(navData.revision||0)+1;facilityScoreSolidCount=solid.length;
+}
+// Facility and AI share one persistent-in-session score map. Generation writes
+// its wall/prop scores into navData.grid; SCP's route planner reads that exact grid.
+function setFacilityScore(x,z,w,d,score){
+ if(!navData?.grid)return;const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z;
+ const x0=Math.max(0,Math.floor((x-w/2-ox)/cs)),x1=Math.min(navData.width-1,Math.floor((x+w/2-ox)/cs));
+ const z0=Math.max(0,Math.floor((z-d/2-oz)/cs)),z1=Math.min(navData.height-1,Math.floor((z+d/2-oz)/cs));
+ for(let iz=z0;iz<=z1;iz++)for(let ix=x0;ix<=x1;ix++)navData.grid[iz][ix]=score?1:0;
+ navData.revision=(navData.revision||0)+1;
 }
 function cellOf(x,z){const cs=navData.cellSize||1;return {x:Math.floor((x-navData.origin.x)/cs),z:Math.floor((z-navData.origin.z)/cs)}}
 function nearestOpen(x,z){
@@ -258,7 +268,7 @@ function makeFacilityChunk(cx,cz){
  const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);navMeshes.push(floor);
  // Boundary walls; leave openings for connected hallways on each side.
  const openN=Math.random()<.72,openS=Math.random()<.72,openW=Math.random()<.72,openE=Math.random()<.72;
- const chunkWalls=[];const wall=(x,z,w,d)=>{B(x,2,z,w,4,d);chunkWalls.push({x,z,w,d});if(navData?.grid){const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,x0=Math.floor((x-w/2-ox)/cs)-1,x1=Math.ceil((x+w/2-ox)/cs)+1,z0=Math.floor((z-d/2-oz)/cs)-1,z1=Math.ceil((z+d/2-oz)/cs)+1;for(let iz=z0;iz<z1;iz++)for(let ix=x0;ix<x1;ix++)if(ix>=0&&iz>=0&&ix<navData.width&&iz<navData.height)navData.grid[iz][ix]=0}};
+ const chunkWalls=[];const wall=(x,z,w,d)=>{B(x,2,z,w,4,d);chunkWalls.push({x,z,w,d});setFacilityScore(x,z,w,d,0)};
  if(!openN)wall(cx+20,cz,40,1);if(!openS)wall(cx+20,cz+40,40,1);
  if(!openW)wall(cx,cz+20,1,40);if(!openE)wall(cx+40,cz+20,1,40);
  // Interior hallway partitions, always with a doorway gap.
