@@ -47,7 +47,7 @@ function drawSCPRayChain(points){
  for(let i=0;i<scpRayGroup.children.length;i++){const line=scpRayGroup.children[i];line.geometry.setFromPoints([new T.Vector3(points[i].x,.22,points[i].z),new T.Vector3(points[i+1].x,.22,points[i+1].z)]);line.visible=scpRayGizmos}
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
- const p=obj.position,points=[{x:p.x,z:p.z}],step=1.35,maxSegments=150;let x=p.x,z=p.z,prevX=0,prevZ=1;
+ const p=obj.position,points=[{x:p.x,z:p.z}],step=1.1,maxSegments=260;let x=p.x,z=p.z,prevX=0,prevZ=1;
  const visited=[];
  for(let chain=0;chain<maxSegments;chain++){let best=null,bestScore=-1e9;
   for(let deg=0;deg<360;deg+=2){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
@@ -65,9 +65,8 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
    const score=open*2.2+clear*.6+toward*5.5+smooth*2.8+progress*3.5+contour*2.4-blockedAhead*.35-revisit;
    if(score>bestScore){bestScore=score;best={vx,vz}}
   }
-  if(!best)break;
-  visited.push({x,z});x+=best.vx*step;z+=best.vz*step;prevX=best.vx;prevZ=best.vz;points.push({x,z});
-  if(Math.hypot(tx-x,tz-z)<step*.7)break;
+  if(!best){for(let deg=0;deg<360;deg+=2){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);if(scpGroundScore(x+vx*.32,z+vz*.32,r)!==1||hit(x+vx*.32,z+vz*.32,r))continue;let open=0,clear=0;for(const d of [.5,1,1.5,2.2,3,4.5])if(scpGroundScore(x+vx*d,z+vz*d,r)===1&&!hit(x+vx*d,z+vz*d,r)){open++;clear=d}const td=Math.hypot(tx-x,tz-z),toward=td?((tx-x)*vx+(tz-z)*vz)/td:0,smooth=vx*prevX+vz*prevZ,score=open*3+clear*.8+toward*4+smooth*2;if(score>bestScore){bestScore=score;best={vx,vz}}}}
+  if(!best)break;visited.push({x,z});x+=best.vx*step;z+=best.vz*step;prevX=best.vx;prevZ=best.vz;points.push({x,z});if(Math.hypot(tx-x,tz-z)<step*.45)break;
  }
  drawSCPRayChain(points);
  return points.length>1?{x:(points[1].x-p.x)/step,z:(points[1].z-p.z)/step}:null;
