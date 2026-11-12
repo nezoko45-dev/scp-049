@@ -94,11 +94,11 @@ function drawSCPRayGizmos(obj,tx,tz){
  const ud=obj.userData||{},f=ud.flowField;
  // Render sampled flow vectors as floor-level arrows around SCP.
  if(f){
-  const verts=[],y=.12,step=3;
-  for(let z=1;z<f.N-1;z+=step)for(let x=1;x<f.N-1;x+=step){
-   const i=z*f.N+x,dx=f.dirX[i],dz=f.dirZ[i];if(!dx&&!dz||f.blocked[i])continue;
+  const verts=[],y=.12,step=5;
+  // Render vectors across the complete generated facility, not just a 24m bubble around SCP.
+  for(let z=1;z<f.H-1;z+=step)for(let x=1;x<f.N-1;x+=step){
+   const i=z*f.N+x,dx=f.dirX[i],dz=f.dirZ[i];if((!dx&&!dz)||f.blocked[i])continue;
    const wx=f.ox+(x+.5)*f.cs,wz=f.oz+(z+.5)*f.cs;
-   if(Math.hypot(wx-obj.position.x,wz-obj.position.z)>24)continue;
    const len=f.cs*.42,ex=wx+dx*len,ez=wz+dz*len;
    verts.push(wx,y,wz,ex,y,ez,ex,y,ez,ex-dx*.22-dz*.13,y,ez-dz*.22+dx*.13,ex,y,ez,ex-dx*.22+dz*.13,y,ez-dz*.22-dx*.13);
   }
