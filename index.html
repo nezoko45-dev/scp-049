@@ -65,6 +65,14 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   }
   // Reward forward target progress, and strongly reward open wall-edge lanes
   // that carry SCP along the obstacle toward its target.
+  // Target following is field-based: evaluate how much each open score-1
+  // sample reduces target distance, rather than steering along a direct chase ray.
+  let targetGain=0;
+  for(const d of [.7,1.4,2.5,4,6,8,10]){
+   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)!==1)continue;
+   const before=dist,after=Math.hypot(tx-(p.x+vx*d),tz-(p.z+vz*d));
+   targetGain+=Math.max(-1.5,Math.min(1.5,before-after))/(.5+d*.12);
+  }
   const progress=vx*desiredX+vz*desiredZ;
   // Repulsion/attraction field: every score-1 sample pulls this heading
   // forward; every score-0 sample pushes it away. Near samples weigh most.
@@ -87,9 +95,8 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   }
   // When the direct target lane is blocked, soften target pull and prioritize
   // clearance/contour instead of repeatedly pushing into the wall.
-  const directBlocked=scpGroundScore(p.x+desiredX*Math.min(2.5,dist),p.z+desiredZ*Math.min(2.5,dist),r)===0;
-  const targetWeight=directBlocked?9:32;
-  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+progress*targetWeight;
+  // No direct target ray/chase: targetGain comes only from reachable open samples.
+  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*24;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
