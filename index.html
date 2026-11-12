@@ -69,10 +69,10 @@ function scpGroundScore(x,z,r=.42){
  for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0;
  return 1
 }
-let scpRayGizmos=true;
-const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=true;
+let scpRayGizmos=false;
+const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
 const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),scpRayMatHit=new T.LineBasicMaterial({color:0xff2222,depthTest:false});
-const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.textContent='G = toggle SCP RAY GIZMOS | CYAN = steering/target | RED = wall contact';
+const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.style.display='none';
 const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
 function drawSCPRayChain(points){
@@ -84,7 +84,7 @@ function drawSCPRayChain(points){
  const line=new T.Line(g,scpChainMat);scpChainViz.add(line);
  const pg=new T.BufferGeometry();pg.setAttribute('position',new T.Float32BufferAttribute(verts.slice(),3));
  const pm=new T.PointsMaterial({color:0xffd400,size:.16,sizeAttenuation:true,depthTest:false});
- scpChainViz.add(new T.Points(pg,pm));scpChainViz.visible=scpRayGizmos
+ scpChainViz.add(new T.Points(pg,pm));scpChainViz.visible=false
 }
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
 const drawRayChain=drawSCPRayChain;
@@ -110,7 +110,7 @@ function drawSCPRayGizmos(obj,tx,tz){
  }
  scpRayViz.visible=true;rayHUD.textContent='CELL FLOWFIELD VECTORS (G toggles)';
 }
-window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;scpChainViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos&&typeof bad!=='undefined'&&bad){drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);}if(!scpRayGizmos)clearSCPRayViz()}});
+
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
  const cached=ud.gpsRoute,oldIndex=ud.gpsWaypointIndex||1; if(cached && oldIndex<cached.length-1) return {x:(cached[oldIndex].x-p.x)/step,z:(cached[oldIndex].z-p.z)/step};
@@ -381,7 +381,7 @@ function spawnZombie(){
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);if(Math.random()<.03)spawnZombie();if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;function fallback(){let a=new T.Mesh(new T.CapsuleGeometry(.45,1.3,5,10),mats[2]);a.position.y=1.3;let b=new T.Mesh(new T.CylinderGeometry(.5,.7,1.5,12),mats[2]);b.position.y=.8;let h=new T.Mesh(new T.SphereGeometry(.3),mats[1]);h.position.y=2.3;bad.add(a,b,h);loaded=true}new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true},undefined,fallback);setTimeout(()=>!loaded&&fallback(),7000);
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayGroup.children.forEach(o=>o.visible=scpRayGizmos)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 function hit(x,z,r=.5){return solid.some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
 function moveColliding(obj,dx,dz,r=.4){let x=obj.position.x,z=obj.position.z,moved=false;if(!hit(x+dx,z,r)){obj.position.x=x+dx;moved=true}if(!hit(obj.position.x,z+dz,r)){obj.position.z=z+dz;moved=true}return moved}
 /* JSON-grid ray steering: sample the baked/live facility grid along the intended move.
@@ -643,13 +643,13 @@ function frame(now){
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
-  drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);
+
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
   document.querySelector('#msg').textContent=dist<12?'Footsteps nearby…':bossHP<=0?'BOSS DEFEATED':'';
  }
- renderer.render(scene,cam);if(scpRayGizmos&&(!scpTarget||!scpTarget.obj)){rayOverlay.style.display='block';rayCtx.clearRect(0,0,rayOverlay.width,rayOverlay.height);rayCtx.fillStyle='#00ffff';rayCtx.font='bold 24px monospace';rayCtx.fillText('G RAY DEBUG · WAITING FOR TARGET',30,140)}
+ renderer.render(scene,cam);
 }
 requestAnimationFrame(frame);onresize=()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)};
 </script>
