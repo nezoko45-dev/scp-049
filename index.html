@@ -79,7 +79,18 @@ function drawSCPRayChain(points){while(scpChainViz.children.length){const o=scpC
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
-function drawSCPRayGizmos(obj,tx,tz){if(!scpRayGizmos)return;clearSCPRayViz();const x=obj.position.x,z=obj.position.z,y=1.3,reach=7,clear=[],blocked=[];for(let k=0;k<48;k++){const a=k*Math.PI/24,dx=Math.sin(a),dz=Math.cos(a),ex=x+dx*reach,ez=z+dz*reach,arr=scpRayClearSegment(x,z,ex,ez,.18)?clear:blocked;arr.push(x,y,z,ex,y,ez)}for(const [arr,mat] of [[clear,scpRayMatClear],[blocked,scpRayMatHit]])if(arr.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(arr,3));scpRayViz.add(new T.LineSegments(g,mat))}if(Number.isFinite(tx)&&Number.isFinite(tz)){const route=obj.userData?.wrapWaypoint||{x:tx,z:tz},arr=[x,y,z,route.x,y,route.z,route.x,y,route.z,tx,y,tz],g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(arr,3));scpRayViz.add(new T.Line(g,scpRayMatClear))}scpRayViz.visible=true;rayHUD.textContent='TARGET WRAP RAY: cyan | clear rays / blocked rays'}
+function drawSCPRayGizmos(obj,tx,tz){
+ if(!scpRayGizmos)return;clearSCPRayViz();
+ const x=obj.position.x,z=obj.position.z,y=1.3,reach=7,clear=[],blocked=[];
+ for(let k=0;k<48;k++){const a=k*Math.PI/24,dx=Math.sin(a),dz=Math.cos(a),ex=x+dx*reach,ez=z+dz*reach,arr=scpRayClearSegment(x,z,ex,ez,.18)?clear:blocked;arr.push(x,y,z,ex,y,ez)}
+ for(const [arr,mat] of [[clear,scpRayMatClear],[blocked,scpRayMatHit]])if(arr.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(arr,3));scpRayViz.add(new T.LineSegments(g,mat))}
+ const ud=obj.userData||{};
+ if(ud.wallRay){const rx=ud.wallRay.x,rz=ud.wallRay.z,arr=[x,y,z,x+rx*reach,y,z+rz*reach],g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(arr,3));scpRayViz.add(new T.Line(g,scpRayMatClear));
+  if(ud.wallPoint){const wp=ud.wallPoint,arr2=[x,y,z,wp.x,y,wp.z],g2=new T.BufferGeometry();g2.setAttribute('position',new T.Float32BufferAttribute(arr2,3));scpRayViz.add(new T.Line(g2,scpRayMatHit))}
+ }
+ if(Number.isFinite(tx)&&Number.isFinite(tz)){const arr=[x,y,z,tx,y,tz],g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(arr,3));scpRayViz.add(new T.Line(g,scpRayMatClear))}
+ scpRayViz.visible=true;rayHUD.textContent='LIVE WALL RAY: cyan tangent | red wall contact | target ray'
+}
 window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;scpChainViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos&&typeof bad!=='undefined'&&bad){drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);drawSCPRayChain(bad.userData?.rayChain||[])}if(!scpRayGizmos)clearSCPRayViz()}});
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
@@ -588,7 +599,7 @@ function frame(now){
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
-  drawSCPRayGizmos(bad);
+  drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
