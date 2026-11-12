@@ -530,37 +530,37 @@ function gradientSCP(x,z){
 }
 
 function buildSCPFlowField(tx,tz,startX=tx,startZ=tz){
- // Recenter the field between SCP and its target so neither actor falls
- // outside the vector map. This remains target-seeded vector navigation.
- const cs=1.25,N=192,half=N/2,cx=(tx+startX)/2,cz=(tz+startZ)/2,ox=cx-half*cs,oz=cz-half*cs,total=N*N,id=(x,z)=>z*N+x;
+ // Whole-facility vector field: use the complete generated navigation map,
+ // not a small bubble around SCP/target. Every reachable open cell gets
+ // a downhill direction from a target-seeded BFS.
+ const cs=navReady&&navData?.grid?navData.cellSize:1,N=navReady&&navData?.grid?navData.width:400,H=navReady&&navData?.grid?navData.height:400;
+ const ox=navReady&&navData?.grid?navData.origin.x:-200,oz=navReady&&navData?.grid?navData.origin.z:-200,total=N*H,id=(x,z)=>z*N+x;
  const blocked=new Uint8Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total),distance=new Int32Array(total);distance.fill(-1);
- for(let z=0;z<N;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=hit(wx,wz,.48)?1:0}
- // Find nearest open seed to target if the target itself sits in a blocked cell.
+ for(let z=0;z<H;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=((navData?.grid&&!navData.grid[z]?.[x])||hit(wx,wz,.48))?1:0}
+ // Target seeds the global field; if it lands on an occupied cell, choose nearest open cell.
  let sx=Math.floor((tx-ox)/cs),sz=Math.floor((tz-oz)/cs),seed=null;
- for(let r=0;r<N&&!seed;r++)for(let dz=-r;dz<=r&&!seed;dz++)for(let dx=-r;dx<=r;dx++){
+ for(let r=0;r<Math.max(N,H)&&!seed;r++)for(let dz=-r;dz<=r&&!seed;dz++)for(let dx=-r;dx<=r;dx++){
   if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;const x=sx+dx,z=sz+dz;
-  if(x>=0&&z>=0&&x<N&&z<N&&!blocked[id(x,z)]){seed={x,z};break}
+  if(x>=1&&z>=1&&x<N-1&&z<H-1&&!blocked[id(x,z)]){seed={x,z};break}
  }
  if(seed){
-  const queue=new Int32Array(total);let head=0,tail=0;const start=id(seed.x,seed.z);queue[tail++]=start;distance[start]=0;
+  const queue=new Int32Array(total);let head=0,tail=0;const root=id(seed.x,seed.z);queue[tail++]=root;distance[root]=0;
   const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
   while(head<tail){const u=queue[head++],x=u%N,z=(u/N)|0;
-   for(const [dx,dz] of dirs){const nx=x+dx,nz=z+dz;if(nx<1||nz<1||nx>=N-1||nz>=N-1)continue;const v=id(nx,nz);if(blocked[v]||distance[v]>=0)continue;
-    // Prevent diagonal corner-cutting between two blocked orthogonal cells.
+   for(const [dx,dz] of dirs){const nx=x+dx,nz=z+dz;if(nx<1||nz<1||nx>=N-1||nz>=H-1)continue;const v=id(nx,nz);if(blocked[v]||distance[v]>=0)continue;
     if(dx&&dz&&(blocked[id(x+dx,z)]||blocked[id(x,z+dz)]))continue;
     distance[v]=distance[u]+1;dirX[v]=-dx;dirZ[v]=-dz;queue[tail++]=v;
    }
   }
  }
- // Normalize predecessor directions for smooth, stable movement.
  for(let i=0;i<total;i++){if(blocked[i]||distance[i]<=0)continue;const l=Math.hypot(dirX[i],dirZ[i])||1;dirX[i]/=l;dirZ[i]/=l}
- return {cs,N,ox,oz,dirX,dirZ,blocked,distance,targetX:tx,targetZ:tz,solidCount:solid.length,builtAt:performance.now()};
+ return {cs,N,H,ox,oz,dirX,dirZ,blocked,distance,targetX:tx,targetZ:tz,solidCount:solid.length,revision:navData?.revision||0,builtAt:performance.now()};
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,radius=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  let f=ud.flowField;
  if(!f||f.solidCount!==solid.length||Math.hypot(tx-f.targetX,tz-f.targetZ)>3||performance.now()-f.builtAt>1200)f=ud.flowField=buildSCPFlowField(tx,tz,p.x,p.z);
- const N=f.N,ix=Math.floor((p.x-f.ox)/f.cs),iz=Math.floor((p.z-f.oz)/f.cs),cell=(x,z)=>z*N+x,inside=(x,z)=>x>=1&&z>=1&&x<N-1&&z<N-1;
+ const N=f.N,ix=Math.floor((p.x-f.ox)/f.cs),iz=Math.floor((p.z-f.oz)/f.cs),cell=(x,z)=>z*N+x,inside=(x,z)=>x>=1&&z>=1&&x<N-1&&z<f.H-1;
  // Follow the field as a discrete sequence: current cell -> lowest-distance
  // adjacent cell -> that cell's next lower-distance neighbor, one step at a time.
  let cx=ix,cz=iz,current=inside(ix,iz)?f.distance[cell(ix,iz)]:-1;
