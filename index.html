@@ -252,7 +252,7 @@ function makeFacilityChunk(cx,cz){
  }
  scanGeneratedMap(cx,cz,40);
  // Lamps and props.
- let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);// Local grid bridge is optional; facility navigation is generated in-game.
+ let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk:{x:cx,z:cz,size:40},walls:chunkWalls})}).catch(()=>{});
 }
 let backendGridSyncAt=0,backendGridOnline=false;async function syncGridBackend(now){if(now-backendGridSyncAt<250)return;backendGridSyncAt=now;try{let r=await fetch('http://127.0.0.1:8766/map.json?refresh='+now,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let g=await r.json();if(!g.grid||!g.width||!g.height)throw Error('Invalid grid');const changed=!navData||navData.width!==g.width||navData.height!==g.height||navData.origin?.x!==g.origin?.x||navData.origin?.z!==g.origin?.z;navData=g;navReady=true;backendGridOnline=true;if(changed){navPath=[];navPathAt=0;allies.forEach(a=>{a.userData.path=[];a.userData.pathIndex=0});zombies.forEach(z=>{z.userData.path=[];z.userData.pathIndex=0});}document.querySelector('#head').textContent='LAST SHIFT / GRID EXE ONLINE · AI USING LIVE GRID';}catch(e){backendGridOnline=false;document.querySelector('#head').textContent='LAST SHIFT / GRID EXE OFFLINE · AI USING FALLBACK';}}
 function streamFacility(now){
@@ -506,7 +506,7 @@ function frame(now){
  requestAnimationFrame(frame);
  let dt=Math.min(.05,(now-last)/1000);last=now;frameDelta=dt;
  if(active&&!dead){
-  streamFacility(now);
+  streamFacility(now);syncGridBackend(now);
   allies.forEach(a=>{if(a.userData.hp<=0){if(!a.userData.respawnAt)a.userData.respawnAt=now+6000;if(now>=a.userData.respawnAt){a.userData.hp=150;a.userData.dead=false;a.visible=true;a.position.set((Math.random()-.5)*18,0,12+Math.random()*12);a.userData.path=[];a.userData.respawnAt=0;}else{a.userData.dead=true;a.visible=false;return;}}
    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
    a.rotation.y=Math.atan2(dx,dz);
