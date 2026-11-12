@@ -43,33 +43,36 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
  const desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
+ const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
- // Score each heading independently. No top-direction averaging (the source of spin).
- for(let deg=0;deg<360;deg+=2){
-  const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,reach=0;
+ // Persistent wall-follow side: choose it once, don't flip sides every frame.
+ if(!ud.wallSide)ud.wallSide=1;
+ for(let deg=0;deg<360;deg+=1){
+  const a=headings[deg],vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,reach=0;
   for(const d of samples){if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;reach=d}else blocked++}
   let edge=0,px=-vz,pz=vx;
   for(const d of [1.2,2.5,4,6])if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1&&
-    (scpGroundScore(p.x+vx*d+px*r*2.1,p.z+vz*d+pz*r*2.1,r)===0||
-     scpGroundScore(p.x+vx*d-px*r*2.1,p.z+vz*d-pz*r*2.1,r)===0))edge+=1;
-  // Forward progress is continuous; open lanes and wall edges shape the path.
-  const score=open*2.2+reach*.35-blocked*9+edge*1.1+(vx*desiredX+vz*desiredZ)*18;
+   scpGroundScore(p.x+vx*d+px*r*2.1*ud.wallSide,p.z+vz*d+pz*r*2.1*ud.wallSide,r)===0)edge++;
+  // Explicitly reward reducing distance to target; penalize directions moving away.
+  const progress=vx*desiredX+vz*desiredZ;
+  const score=open*1.7+reach*.22-blocked*8+edge*1.5+progress*32;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
-  // Check short movement segment, not just distant samples.
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
-  if(safe&&score>bestScore){bestScore=score;best={vx,vz}}
+  if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
  }
  if(!best){ud.moveDir?.set(0,0,0);return false}
- // Smoothly turn toward ONE stable winning direction, with reduced angular rate.
- let hx=ud.scoreSteerX??best.vx,hz=ud.scoreSteerZ??best.vz;
- // Reinitialize stale heading if it points into blocked ground.
+ // Lock the wall-follow side until target progress resumes or the route clears.
+ const oldX=ud.scoreSteerX??best.vx,oldZ=ud.scoreSteerZ??best.vz;
+ const oldProgress=oldX*desiredX+oldZ*desiredZ;
+ if(oldProgress<-.15)ud.wallSide*=-1;
+ let hx=oldX,hz=oldZ;
  if(scpGroundScore(p.x+hx*.5,p.z+hz*.5,r)===0||hit(p.x+hx*.5,p.z+hz*.5,r)){hx=best.vx;hz=best.vz}
  const from=Math.atan2(hx,hz),to=Math.atan2(best.vx,best.vz);
  let delta=Math.atan2(Math.sin(to-from),Math.cos(to-from));
- const maxTurn=Math.max(.015,dt*2.4),turn=Math.max(-maxTurn,Math.min(maxTurn,delta)),ang=from+turn;
+ // Smooth turn but keep it bounded to avoid oscillatory direction flips.
+ const maxTurn=Math.max(.01,dt*1.65),turn=Math.max(-maxTurn,Math.min(maxTurn,delta)),ang=from+turn;
  const steerX=Math.sin(ang),steerZ=Math.cos(ang),nx=p.x+steerX*speed*dt,nz=p.z+steerZ*speed*dt;
  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){ud.scoreSteerX=steerX;ud.scoreSteerZ=steerZ;p.x=nx;p.z=nz;ud.moveDir?.set(steerX,0,steerZ);obj.rotation.y=Math.atan2(steerX,steerZ);return true}
- // Keep heading steady; do not reset/snap each blocked frame (prevents spin).
  ud.moveDir?.set(0,0,0);return false
 }
 document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
