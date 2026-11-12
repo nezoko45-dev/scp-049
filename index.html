@@ -349,27 +349,34 @@ for(let i=0;i<4;i++){let g=createSurvivor();g.position.set([-8,8,-8,8][i],0,[12,
 function spawnZombie(){
  let g=new T.Group(),skin=new T.MeshStandardMaterial({color:0x59664b,roughness:.95}),dark=new T.MeshStandardMaterial({color:0x20251d,roughness:1}),bone=new T.MeshStandardMaterial({color:0xb9b7a8,roughness:.7}),eyeRed=new T.MeshStandardMaterial({color:0xff1010,emissive:0xff0000,emissiveIntensity:2.8}),pupil=new T.MeshBasicMaterial({color:0xffffff});
  function mesh(geo,mat,parent,x,y,z){let m=new T.Mesh(geo,mat);m.position.set(x,y,z);parent.add(m);return m}
- // Ragged, hunched procedural body with segmented limbs and exposed ribs.
  let torso=mesh(new T.CapsuleGeometry(.34,.72,4,7),skin,g,0,1.12,0);torso.rotation.x=-.16;
  mesh(new T.BoxGeometry(.48,.13,.38),dark,g,0,1.48,0);
  for(let k=0;k<3;k++){let rib=mesh(new T.TorusGeometry(.25-k*.025,.035,5,10,Math.PI),bone,g,0,1.22-k*.13,.16);rib.rotation.z=Math.PI}
  let head=mesh(new T.SphereGeometry(.28,9,7),skin,g,0,1.78,.08);head.scale.set(.9,1.1,.85);
  mesh(new T.ConeGeometry(.09,.18,5),bone,g,-.12,1.59,.24).rotation.x=.5;
  const limbs=[];
- for(let side of [-1,1]){
-  let arm=new T.Group();arm.position.set(side*.34,1.42,0);g.add(arm);
-  mesh(new T.CapsuleGeometry(.105,.48,3,6),skin,arm,0,-.28,.02).rotation.z=side*.18;
-  mesh(new T.SphereGeometry(.12,7,6),dark,arm,0,-.57,.08);
-  for(let f=0;f<3;f++)mesh(new T.ConeGeometry(.025,.13,4),bone,arm,(f-1)*.065,-.66,.14).rotation.x=-.5;
+ // Four visibly segmented limbs: shoulder/hip joints, upper segments, elbow/knee,
+ // lower segments, and separate hands/feet (no single conjoined capsule).
+ for(const side of [-1,1]){
+  const arm=new T.Group();arm.position.set(side*.34,1.42,0);g.add(arm);
+  mesh(new T.CapsuleGeometry(.095,.28,3,6),skin,arm,0,-.17,0).rotation.z=side*.18;
+  const elbow=new T.Group();elbow.position.set(0,-.34,.025);arm.add(elbow);
+  mesh(new T.SphereGeometry(.075,7,6),dark,elbow,0,0,0);
+  mesh(new T.CapsuleGeometry(.075,.30,3,6),skin,elbow,0,-.19,.025).rotation.z=side*.12;
+  const hand=mesh(new T.BoxGeometry(.12,.14,.11),dark,elbow,0,-.38,.08);
+  for(let f=0;f<3;f++)mesh(new T.ConeGeometry(.02,.10,4),bone,elbow,(f-1)*.04,-.46,.12).rotation.x=-.5;
   limbs.push(arm);
-  let leg=new T.Group();leg.position.set(side*.16,.68,0);g.add(leg);
-  mesh(new T.CapsuleGeometry(.13,.48,3,6),dark,leg,0,-.25,0);
-  mesh(new T.BoxGeometry(.22,.12,.34),skin,leg,0,-.53,.1);limbs.push(leg);
+  const leg=new T.Group();leg.position.set(side*.16,.68,0);g.add(leg);
+  mesh(new T.CapsuleGeometry(.105,.30,3,6),dark,leg,0,-.16,0);
+  const knee=new T.Group();knee.position.set(0,-.33,0);leg.add(knee);
+  mesh(new T.SphereGeometry(.075,7,6),skin,knee,0,0,.015);
+  mesh(new T.CapsuleGeometry(.085,.31,3,6),skin,knee,0,-.19,0);
+  mesh(new T.BoxGeometry(.20,.10,.30),dark,knee,0,-.37,.08);
+  limbs.push(leg);
  }
- // unmistakable glowing red eyes with bright white pupils
  for(let side of [-1,1]){mesh(new T.SphereGeometry(.075,8,6),eyeRed,g,side*.105,1.82,.315);mesh(new T.SphereGeometry(.027,8,6),pupil,g,side*.105,1.82,.378)}
  g.position.set(bad.position.x+(Math.random()-.5)*10,0,bad.position.z+(Math.random()-.5)*10);
- g.userData.hp=100;g.userData.limbs=limbs;g.userData.torso=torso;g.userData.head=head;g.userData.animT=Math.random()*6;g.userData.attackT=0;g.userData.path=[];g.userData.pathIndex=0;g.userData.pathAt=0;scene.add(g);zombies.push(g)
+ g.userData.hp=100;g.userData.limbs=limbs;g.userData.torso=torso;g.userData.head=head;g.userData.animT=Math.random()*6;g.userData.attackT=0;g.userData.flowField=null;g.userData.flowTargetX=NaN;g.userData.flowTargetZ=NaN;scene.add(g);zombies.push(g)
 }
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);if(Math.random()<.03)spawnZombie();if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
@@ -600,7 +607,17 @@ function frame(now){
    const target=z.userData.targetObj||ctl.getObject(),tp=target.position,d=Math.hypot(tp.x-z.position.x,tp.z-z.position.z);
    z.userData.animT=(z.userData.animT||0)+dt;const moving=d>1;
    z.userData.attackT=Math.max(0,(z.userData.attackT||0)-dt);
-   if(moving)scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4);
+   if(moving){
+    // Each zombie follows its own cached target-seeded cell flowfield.
+    const f=z.userData.flowField;
+    if(!f||Math.hypot(tp.x-z.userData.flowTargetX,tp.z-z.userData.flowTargetZ)>2||(f.revision!==(navData?.revision||0))){
+      z.userData.flowField=buildSCPFlowField(tp.x,tp.z,z.position.x,z.position.z);z.userData.flowTargetX=tp.x;z.userData.flowTargetZ=tp.z;
+    }
+    const field=z.userData.flowField,cs=field?.cs||1,x=Math.floor((z.position.x-(field?.ox??-200))/cs),zz=Math.floor((z.position.z-(field?.oz??-200))/cs);
+    let vx=0,vz=0;if(field&&x>=0&&zz>=0&&x<field.N&&zz<field.H){const ii=zz*field.N+x;vx=field.dirX[ii];vz=field.dirZ[ii]}
+    if(Math.hypot(vx,vz)>.01){const ll=Math.hypot(vx,vz),stride=Math.min(1.1*dt,Math.max(.04,1.1*dt));vx/=ll;vz/=ll;const mx=vx*stride,mz=vz*stride;if(!hit(z.position.x+mx,z.position.z+mz,.4)){z.position.x+=mx;z.position.z+=mz;z.rotation.y=Math.atan2(vx,vz)}else scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4)}
+    else scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4)
+   }
    const t=z.userData.animT,arms=z.userData.limbs||[],torso=z.userData.torso;
    // Procedural run cycle follows the chosen target; attack lunge triggers on any selected victim.
    if(moving){arms.forEach((limb,i)=>{limb.rotation.x=Math.sin(t*10+(i%2)*Math.PI)*.62+(i<2?-.12:0)});if(torso)torso.position.y=1.12+Math.abs(Math.sin(t*10))*.07;z.userData.head&&(z.userData.head.rotation.x=Math.sin(t*10)*.08)}
