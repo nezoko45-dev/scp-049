@@ -557,60 +557,32 @@ function buildSCPFlowField(tx,tz,startX=tx,startZ=tz){
  return {cs,N,H,ox,oz,dirX,dirZ,blocked,distance,targetX:tx,targetZ:tz,solidCount:solid.length,revision:navData?.revision||0,builtAt:performance.now()};
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),p=obj.position,radius=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- let f=ud.flowField;
- if(!f||f.solidCount!==solid.length||Math.hypot(tx-f.targetX,tz-f.targetZ)>3||performance.now()-f.builtAt>1200)f=ud.flowField=buildSCPFlowField(tx,tz,p.x,p.z);
- const N=f.N,ix=Math.floor((p.x-f.ox)/f.cs),iz=Math.floor((p.z-f.oz)/f.cs),cell=(x,z)=>z*N+x,inside=(x,z)=>x>=1&&z>=1&&x<N-1&&z<f.H-1;
- // Follow the field as a discrete sequence: current cell -> lowest-distance
- // adjacent cell -> that cell's next lower-distance neighbor, one step at a time.
- let cx=ix,cz=iz,current=inside(ix,iz)?f.distance[cell(ix,iz)]:-1;
- if(current<0||f.blocked[cell(ix,iz)]){
-  let near=null,nd=Infinity;
-  for(let z=Math.max(1,iz-5);z<=Math.min(N-2,iz+5);z++)for(let x=Math.max(1,ix-5);x<=Math.min(N-2,ix+5);x++){
-   const u=cell(x,z),d=Math.hypot(x-ix,z-iz);
-   if(!f.blocked[u]&&f.distance[u]>=0&&d<nd){near={x,z};nd=d}
-  }
-  if(!near){
-   // SCP may be outside the field radius or separated by a broad wall.
-   // Find the nearest reachable cell anywhere in the target-seeded field.
-   let best=Infinity;for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++){const u=cell(x,z);if(f.blocked[u]||f.distance[u]<0)continue;const d=(x-ix)*(x-ix)+(z-iz)*(z-iz);if(d<best){best=d;near={x,z}}}
-  }
-  if(near){cx=near.x;cz=near.z;current=f.distance[cell(cx,cz)]}
+ const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
+ // Continuous ground-vector steering: sample the actual floor around SCP,
+ // never look up a navigation cell. Each open ground probe contributes a
+ // downhill vector toward the target; nearby solid ground repels the blend.
+ const sampleRadius=2.6,probeRadius=.48,angles=24,step=Math.max(.025,speed*dt);
+ let sx=0,sz=0,weightSum=0,clearanceBest=0;
+ for(let k=0;k<angles;k++){
+  const a=k*Math.PI*2/angles,dx=Math.sin(a),dz=Math.cos(a);
+  let clear=0;for(let q=1;q<=5;q++){const d=q*.42;if(!hit(p.x+dx*d,p.z+dz*d,probeRadius))clear=d;else break}
+  if(clear<.42)continue;
+  // Sample open ground farther ahead; ground clearance weights the vector.
+  const gx=p.x+dx*sampleRadius,gz=p.z+dz*sampleRadius;
+  if(hit(gx,gz,probeRadius))continue;
+  const toTarget=Math.hypot(tx-gx,tz-gz),base=Math.max(.05,clear/sampleRadius);
+  const w=base/(1+toTarget*.012);
+  sx+=dx*w;sz+=dz*w;weightSum+=w;clearanceBest=Math.max(clearanceBest,clear);
  }
- let next=null,bestDistance=current;
- const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
- for(const [dx,dz] of dirs){const x=cx+dx,z=cz+dz;if(!inside(x,z))continue;const u=cell(x,z),d=f.distance[u];if(f.blocked[u]||d<0||d>=bestDistance)continue;
-  if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;
-  next={x,z};bestDistance=d;
- }
- // SCP never steers toward a target coordinate. The target only seeds the
- // field; movement is exclusively from the field's offered vector sequence.
- let wx,wz;
- if(next){wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs}
- else if(inside(cx,cz)&&f.distance[cell(cx,cz)]>=0){
-  const u=cell(cx,cz),dx=f.dirX[u],dz=f.dirZ[u];
-  if(Math.hypot(dx,dz)>.01){wx=p.x+dx*f.cs;wz=p.z+dz*f.cs}
-  else{wx=p.x;wz=p.z}
- }else{wx=p.x;wz=p.z}
- let vx=wx-p.x,vz=wz-p.z,len=Math.hypot(vx,vz);
- if(len<.12&&next){ud.flowSequenceCell=cell(next.x,next.z);wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs;vx=wx-p.x;vz=wz-p.z;len=Math.hypot(vx,vz)}
- if(len<.05){
-  // At a field sink/edge, select an open adjacent vector cell; never fall back
-  // to target coordinates. If no vector is available, rebuild field next tick.
-  const choices=[];for(const [dx,dz] of dirs){const x=cx+dx,z=cz+dz;if(!inside(x,z))continue;const u=cell(x,z);if(f.blocked[u]||f.distance[u]<0)continue;if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;choices.push({x,z,d:f.distance[u]})}
-  choices.sort((a,b)=>a.d-b.d);if(choices.length){const q=choices[0];wx=f.ox+(q.x+.5)*f.cs;wz=f.oz+(q.z+.5)*f.cs;vx=wx-p.x;vz=wz-p.z;len=Math.hypot(vx,vz)}else{ud.moveDir.set(0,0,0);return false}
- }
- vx/=len;vz/=len;
- const step=Math.max(.02,speed*dt),desired=Math.atan2(vx,vz),facing=ud.steerAngle??desired,delta=Math.atan2(Math.sin(desired-facing),Math.cos(desired-facing)),angle=facing+Math.max(-dt*3,Math.min(dt*3,delta));
- // Walk the offered flow vector first; if its turn is obstructed, test alternate
- // lower-distance flow neighbors instead of freezing against the blocked vector.
- let candidates=[[Math.sin(angle),Math.cos(angle)],[vx,vz]];
- if(next){for(const [dx,dz] of dirs){const x=cx+dx,z=cz+dz;if(!inside(x,z))continue;const u=cell(x,z);if(f.blocked[u]||f.distance[u]<0||f.distance[u]>=current)continue;if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;const ax=f.ox+(x+.5)*f.cs-p.x,az=f.oz+(z+.5)*f.cs-p.z,al=Math.hypot(ax,az)||1;candidates.push([ax/al,az/al])}}
- let mx=0,mz=0,chosen=null;for(const [dx,dz] of candidates){const x=dx*step,z=dz*step;if(!hit(p.x+x,p.z+z,radius)){mx=x;mz=z;chosen=[dx,dz];break}}
- if(!chosen){const u=inside(ix,iz)?cell(ix,iz):-1;if(u>=0){f.blocked[u]=1;f.distance[u]=-1;f.dirX[u]=f.dirZ[u]=0}ud.flowStall=(ud.flowStall||0)+1;ud.flowField=buildSCPFlowField(tx,tz,p.x,p.z);ud.moveDir.set(0,0,0);return false}
- p.x+=mx;p.z+=mz;ud.steerAngle=Math.atan2(chosen[0],chosen[1]);ud.moveDir.set(chosen[0],0,chosen[1]);obj.rotation.y=Math.atan2(mx,mz);
- ud.flowSequenceCell=next?cell(next.x,next.z):cell(cx,cz);
- ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;return true
+ if(weightSum<.001){ud.moveDir.set(0,0,0);ud.groundFlowStall=(ud.groundFlowStall||0)+1;return false}
+ // Target supplies the downhill potential; all actual motion is selected
+ // from collision-free ground samples and their blended flow vectors.
+ sx/=weightSum;sz/=weightSum;let len=Math.hypot(sx,sz);if(len<.08){ud.moveDir.set(0,0,0);return false}sx/=len;sz/=len;
+ const dirs=[Math.atan2(sz,sx),Math.atan2(sz,sx)+.35,Math.atan2(sz,sx)-.35,Math.atan2(sz,sx)+.7,Math.atan2(sz,sx)-.7];
+ let chosen=null;for(const a of dirs){const dx=Math.cos(a),dz=Math.sin(a);if(!hit(p.x+dx*step,p.z+dz*step,r)){chosen=[dx,dz];break}}
+ if(!chosen){ud.moveDir.set(0,0,0);return false}
+ p.x+=chosen[0]*step;p.z+=chosen[1]*step;ud.moveDir.set(chosen[0],0,chosen[1]);obj.rotation.y=Math.atan2(chosen[0],chosen[1]);
+ ud.groundFlowVector={x:chosen[0],z:chosen[1],sampledAt:performance.now()};ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;ud.flowField=null;return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
