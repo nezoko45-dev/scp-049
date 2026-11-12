@@ -369,15 +369,21 @@ function frame(now){
   });
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
-   const p=ctl.getObject().position,d=Math.hypot(p.x-z.position.x,p.z-z.position.z);
+   // SCP-style target selection: randomly switch between the player and living survivors.
+   if(!z.userData.targetObj||performance.now()>=z.userData.targetUntil||z.userData.targetObj.userData?.hp<=0||z.userData.targetObj.userData?.dead){
+    const pool=[{kind:'player',obj:ctl.getObject()},...allies.filter(a=>a.userData.hp>0&&!a.userData.dead).map(a=>({kind:'survivor',obj:a}))];
+    const pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject()};
+    z.userData.targetKind=pick.kind;z.userData.targetObj=pick.obj;z.userData.targetUntil=performance.now()+6000+Math.random()*7000;
+   }
+   const target=z.userData.targetObj||ctl.getObject(),tp=target.position,d=Math.hypot(tp.x-z.position.x,tp.z-z.position.z);
    z.userData.animT=(z.userData.animT||0)+dt;const moving=d>1;
    z.userData.attackT=Math.max(0,(z.userData.attackT||0)-dt);
-   if(moving)scoreDirectionMove(z,p.x,p.z,1.1,dt,.4);
+   if(moving)scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4);
    const t=z.userData.animT,arms=z.userData.limbs||[],torso=z.userData.torso;
-   // Procedural run cycle: alternating arm/leg swing, hunched bob and head lurch.
+   // Procedural run cycle follows the chosen target; attack lunge triggers on any selected victim.
    if(moving){arms.forEach((limb,i)=>{limb.rotation.x=Math.sin(t*10+(i%2)*Math.PI)*.62+(i<2?-.12:0)});if(torso)torso.position.y=1.12+Math.abs(Math.sin(t*10))*.07;z.userData.head&&(z.userData.head.rotation.x=Math.sin(t*10)*.08)}
    else{arms.forEach((limb,i)=>{limb.rotation.x=i<2?-.35:0});if(torso)torso.position.y=1.12}
-   if(d<=1){if(z.userData.attackT<=0){z.userData.attackT=.72;arms.slice(0,2).forEach((a,i)=>a.rotation.x=-1.65+(i*.25));}playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}
+   if(d<=1){if(z.userData.attackT<=0){z.userData.attackT=.72;arms.slice(0,2).forEach((a,i)=>a.rotation.x=-1.65+(i*.25));}if(z.userData.targetKind==='player'){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}else target.userData.hp=Math.max(0,target.userData.hp-18*dt)}
   });
   zombies=zombies.filter(z=>{if(z.userData.hp<=0){scene.remove(z);return false}return true});
   if(playerHP<=0)gameover('YOU WERE OVERRUN');
