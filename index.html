@@ -78,7 +78,7 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
   next.sort((a,b)=>a.score-b.score);frontier=next.slice(0,12);
   if(!frontier.length)break;
  }
- if(cached&&cached.length>oldIndex+1){const tail=cached.slice(oldIndex);const candidateEnd=bestRoute[bestRoute.length-1],tailEnd=tail[tail.length-1];const candidateProgress=Math.hypot(tx-candidateEnd.x,tz-candidateEnd.z),tailProgress=Math.hypot(tx-tailEnd.x,tz-tailEnd.z);if(candidateProgress>tailProgress+1.25){bestRoute=bestRoute.concat(tail.filter((q,i)=>i>0&&Math.hypot(q.x-bestRoute[bestRoute.length-1].x,q.z-bestRoute[bestRoute.length-1].z)>.2))}}drawSCPRayChain(bestRoute);ud.gpsRoute=bestRoute;ud.gpsAt=now;ud.gpsTx=tx;ud.gpsTz=tz;ud.gpsX=p.x;ud.gpsZ=p.z;
+ if(cached&&cached.length>oldIndex+1){const candidateEnd=bestRoute[bestRoute.length-1],tailEnd=cached[cached.length-1],candidateProgress=Math.hypot(tx-candidateEnd.x,tz-candidateEnd.z),tailProgress=Math.hypot(tx-tailEnd.x,tz-tailEnd.z);if(candidateProgress>tailProgress+1.25)bestRoute=cached}drawSCPRayChain(bestRoute);ud.gpsRoute=bestRoute;ud.gpsAt=now;ud.gpsTx=tx;ud.gpsTz=tz;ud.gpsX=p.x;ud.gpsZ=p.z;
  return bestRoute.length>1?{x:(bestRoute[1].x-p.x)/step,z:(bestRoute[1].z-p.z)/step}:null;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
