@@ -542,31 +542,29 @@ function generateSCPRope(obj,tx,tz){
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- // Rebuild the bound-collision particle rope when target changes or it is consumed.
- if(!ud.ropeChain||!ud.ropeTarget||Math.hypot(tx-ud.ropeTarget.x,tz-ud.ropeTarget.z)>1||ud.ropeChain.length<2){
-  ud.ropeChain=generateSCPRope(obj,tx,tz);ud.ropeTarget={x:tx,z:tz};
+ // Build a route from the actual current position; refresh frequently to prevent stale ropes.
+ if(!ud.ropeChain||!ud.ropeTarget||Math.hypot(tx-ud.ropeTarget.x,tz-ud.ropeTarget.z)>1.2||performance.now()-(ud.ropeBuiltAt||0)>650||ud.ropeChain.length<2){
+  ud.ropeChain=generateSCPRope(obj,tx,tz);ud.ropeTarget={x:tx,z:tz};ud.ropeBuiltAt=performance.now();
  }
  let chain=ud.ropeChain;
- // Validate rope particles against solid bounds; repair blocked particles with edge detours.
- for(let i=1;i<chain.length-1;i++){
-  const q=chain[i];if(hit(q.x,q.z,.5)){
-   const b=solid.find(o=>Math.abs(q.x-o.x)<o.w/2+.5&&Math.abs(q.z-o.z)<o.d/2+.5);
-   if(b){const opts=[{x:b.x-b.w/2-.85,z:q.z},{x:b.x+b.w/2+.85,z:q.z},{x:q.x,z:b.z-b.d/2-.85},{x:q.x,z:b.z+b.d/2+.85}].filter(v=>!hit(v.x,v.z,.48));if(opts.length){opts.sort((a,b)=>Math.hypot(a.x-p.x,a.z-p.z)-Math.hypot(b.x-p.x,b.z-p.z));chain[i]=opts[0]}}
-  }
+ // Remove particles already passed; don't let SCP aim backward at its own rope.
+ while(chain.length>1&&Math.hypot(chain[0].x-p.x,chain[0].z-p.z)<.85)chain.shift();
+ let next=chain[0]||{x:tx,z:tz},dx=next.x-p.x,dz=next.z-p.z,m=Math.hypot(dx,dz)||1;dx/=m;dz/=m;
+ // Try a fan of bound-tested steering directions, preferring the rope heading.
+ const step=speed*dt,base=Math.atan2(dx,dz),angles=[0,.22,-.22,.48,-.48,.82,-.82,1.25,-1.25,Math.PI];
+ let chosen=null;
+ for(const off of angles){const a=base+off,vx=Math.sin(a)*step,vz=Math.cos(a)*step;if(!hit(p.x+vx,p.z+vz,.48)){chosen={vx,vz,a};break}}
+ if(!chosen){ // emergency escape: push away from the nearest overlapping solid bounds
+  const b=solid.find(o=>Math.abs(p.x-o.x)<o.w/2+.65&&Math.abs(p.z-o.z)<o.d/2+.65);
+  if(b){const ex=p.x-b.x,ez=p.z-b.z,em=Math.hypot(ex,ez)||1;chosen={vx:ex/em*step,vz:ez/em*step,a:Math.atan2(ex,ez)}}
+  if(!chosen)return false;
  }
- while(chain.length>1&&Math.hypot(chain[0].x-p.x,chain[0].z-p.z)<.7)chain.shift();
- const next=chain[0]||{x:tx,z:tz};let dx=next.x-p.x,dz=next.z-p.z,m=Math.hypot(dx,dz)||1;dx/=m;dz/=m;
- const desired=Math.atan2(dx,dz),current=obj.rotation.y,delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
- obj.rotation.y=current+delta*Math.min(1,dt*8);dx=Math.sin(obj.rotation.y);dz=Math.cos(obj.rotation.y);
- const move=speed*dt;
- // Bound-only collision: attempt forward, then axis slides; no raycasts or navmesh.
- if(!moveColliding(obj,dx*move,dz*move,.48)){
-  const slid=moveColliding(obj,dx*move,0,.48)||moveColliding(obj,0,dz*move,.48);
-  if(!slid){ud.ropeChain=null;return false}
-  // Mark route dirty so next frame's particles re-route around the obstacle.
-  ud.ropeChain=null;
- }
- ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);
+ // Bound-only movement and smooth turning.
+ const moved=moveColliding(obj,chosen.vx,chosen.vz,.48);
+ if(!moved){ud.ropeChain=null;return false}
+ const desired=chosen.a,current=obj.rotation.y,delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));obj.rotation.y=current+delta*Math.min(1,dt*9);
+ ud.moveAngle=obj.rotation.y;ud.moveDir.set(Math.sin(obj.rotation.y),0,Math.cos(obj.rotation.y));
+ // Keep rope anchored at SCP and consume waypoints as he advances.
  if(chain.length){chain[0].x=p.x;chain[0].z=p.z}
  if(scpRayGizmos)drawSCPRayChain(chain);
  return true
