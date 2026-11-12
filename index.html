@@ -451,53 +451,40 @@ function scpRayClearSegment(x,z,nx,nz,r=.42){
  }
  return true;
 }
+function buildSCPGPSChain(sx,sz,tx,tz){
+ // GPS route: calculate a cell path on the facility's live occupancy grid.
+ // No fan probing or trial rays; each route edge becomes a steerable ray segment.
+ if(!navData?.grid)return null;
+ const g=navData.grid,W=navData.width,H=navData.height,cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z;
+ const cell=(x,z)=>({x:Math.floor((x-ox)/cs),z:Math.floor((z-oz)/cs)});
+ const world=(x,z)=>({x:ox+(x+.5)*cs,z:oz+(z+.5)*cs});
+ const nearest=(p)=>{let c=cell(p.x,p.z);if(g[c.z]?.[c.x])return c;for(let r=1;r<10;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;let x=c.x+dx,z=c.z+dz;if(x>=0&&z>=0&&x<W&&z<H&&g[z]?.[x])return{x,z}}return null};
+ const s=nearest({x:sx,z:sz}),goal=nearest({x:tx,z:tz});if(!s||!goal)return null;
+ const key=(x,z)=>x+','+z,dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+ const open=[{x:s.x,z:s.z,f:0}],came=new Map(),cost=new Map([[key(s.x,s.z),0]]),closed=new Set();let found=false,iterations=0;
+ const heuristic=(x,z)=>Math.hypot(goal.x-x,goal.z-z);
+ while(open.length&&iterations++<30000){open.sort((a,b)=>a.f-b.f);const n=open.shift(),nk=key(n.x,n.z);if(closed.has(nk))continue;if(n.x===goal.x&&n.z===goal.z){found=true;break}closed.add(nk);
+ for(const [dx,dz] of dirs){const x=n.x+dx,z=n.z+dz,k=key(x,z);if(x<0||z<0||x>=W||z>=H||!g[z]?.[x]||closed.has(k))continue;
+ if(dx&&dz&&(!g[n.z]?.[x]||!g[z]?.[n.x]))continue;
+ const step=dx&&dz?Math.SQRT2:1,ng=cost.get(nk)+step;if(ng>=(cost.get(k)??Infinity))continue;cost.set(k,ng);came.set(k,nk);open.push({x,z,f:ng+heuristic(x,z)})}
+ }
+ if(!found)return null;let cur=key(goal.x,goal.z),path=[];while(cur){const [x,z]=cur.split(',').map(Number);path.push(world(x,z));if(cur===key(s.x,s.z))break;cur=came.get(cur)}path.reverse();path[0]={x:sx,z:sz};path.push({x:tx,z:tz});return path
+}
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),now=performance.now(),targetKey=Math.round(tx/3)+','+Math.round(tz/3);
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- // Build a target-directed branching chain from real horizontal ray probes.
- // Each node shoots toward the target first, then fans around that bearing;
- // blocked rays terminate and clear rays form detours around geometry.
- if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>5000){
-  const step=1.05,dirs=48,beamWidth=14,maxDepth=220;
-  const start={x:obj.position.x,z:obj.position.z,a:ud.moveAngle||0,path:[{x:obj.position.x,z:obj.position.z}],score:0};
-  let beam=[start],best=start,bestDist=Math.hypot(tx-start.x,tz-start.z),reached=false;
-  const visited=new Map();
-  for(let depth=0;depth<maxDepth&&!reached;depth++){
-   const next=[];
-   for(const node of beam){
-    const d0=Math.hypot(tx-node.x,tz-node.z);
-    for(let k=0;k<dirs;k++){
-     // Aim the ray fan directly at the target first, then fan outward around that bearing.
-     const bearing=Math.atan2(tx-node.x,tz-node.z),offset=((k+dirs/2)%dirs-dirs/2)*Math.PI*2/dirs,a=bearing+offset,vx=Math.sin(a),vz=Math.cos(a),x=node.x+vx*step,z=node.z+vz*step;
-     if(!scpRayClearSegment(node.x,node.z,x,z,.43))continue;
-     // Reject branches that immediately point back into the same obstacle.
-     let clearance=0;for(const d of [.5,1,1.5,2,2.8])if(scpRayClearSegment(node.x,node.z,node.x+vx*d,node.z+vz*d,.38))clearance++;
-     const dist=Math.hypot(tx-x,tz-z),progress=d0-dist,turn=Math.abs(Math.atan2(Math.sin(a-node.a),Math.cos(a-node.a)));
-     const key=Math.round(x*1.3)+','+Math.round(z*1.3),old=visited.get(key);if(old!==undefined&&old<=depth+1)continue;visited.set(key,depth+1);
-     const score=node.score+progress*3+clearance*.14-turn*.48-.02;
-     const cand={x,z,a,path:node.path.concat({x,z}),score};
-     if(dist<bestDist){best=cand;bestDist=dist}
-     if(dist<step*1.15&&scpRayClearSegment(x,z,tx,tz,.4)){best=cand;reached=true;break}
-     next.push(cand);
-    }
-    if(reached)break;
-   }
-   if(reached)break;
-   next.sort((a,b)=>(b.score-Math.hypot(tx-b.x,tz-b.z)*.4)-(a.score-Math.hypot(tx-a.x,tz-a.z)*.4));
-   beam=next.slice(0,beamWidth);if(!beam.length)break;
-  }
-  // Final target link is added only if real rays can reach it without hitting geometry.
-  const route=best.path.slice();if(scpRayClearSegment(best.x,best.z,tx,tz,.4))route.push({x:tx,z:tz});
-  ud.rayChain=route;ud.rayChainIndex=1;ud.rayChainAtTime=now;ud.rayTargetKey=targetKey;drawSCPRayChain(route);
+ // Generate GPS route once per target/update interval, then follow its ray waypoint chain.
+ if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>1800){
+  const route=buildSCPGPSChain(obj.position.x,obj.position.z,tx,tz);
+  if(route?.length>1){ud.rayChain=route;ud.rayChainIndex=1;ud.rayChainAtTime=now;ud.rayTargetKey=targetKey;drawSCPRayChain(route)}
  }
  drawSCPRayGizmos(obj);const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
- while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.6)i++;
- ud.rayChainIndex=i;
- if(scpRayGizmos)drawSCPRayChain(chain);else scpChainViz.visible=false;
+ while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.65)i++;
+ ud.rayChainIndex=i;if(scpRayGizmos)drawSCPRayChain(chain);else scpChainViz.visible=false;
  const waypoint=chain[i];if(!waypoint)return false;
  const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
  const move=Math.min(speed*dt,d),nx=obj.position.x+dx/d*move,nz=obj.position.z+dz/d*move;
- if(!scpRayClearSegment(obj.position.x,obj.position.z,nx,nz,.42))return false;
+ if(!scpRayClearSegment(obj.position.x,obj.position.z,nx,nz,.42)){ud.rayChainAtTime=0;return false}
  obj.position.x=nx;obj.position.z=nz;ud.moveAngle=Math.atan2(dx,dz);ud.moveDir?.set(dx/d,0,dz/d);return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
