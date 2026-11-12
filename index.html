@@ -70,9 +70,15 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  for(let k=1;k<=6;k++){const d=step*k/6;if(scpGroundScore(p.x+mx*d,p.z+mz*d,r)===0||hit(p.x+mx*d,p.z+mz*d,r)){viable=false;break}}
  let chosen={vx:mx,vz:mz};
  if(!viable){const q=candidates.find(q=>{for(let k=1;k<=6;k++){const d=step*k/6;if(scpGroundScore(p.x+q.vx*d,p.z+q.vz*d,r)===0||hit(p.x+q.vx*d,p.z+q.vz*d,r))return false}return true});if(!q){obj.userData.moveDir?.set(0,0,0);return false}chosen=q}
- const nx=p.x+chosen.vx*speed*dt,nz=p.z+chosen.vz*speed*dt;
- if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){p.x=nx;p.z=nz;obj.userData.moveDir?.set(chosen.vx,0,chosen.vz);obj.rotation.y=Math.atan2(chosen.vx,chosen.vz);return true}
- obj.userData.moveDir?.set(0,0,0);return false
+ // Smoothly rotate the steering heading toward the best score vector.
+ const ud=obj.userData,prevX=ud.scoreSteerX??chosen.vx,prevZ=ud.scoreSteerZ??chosen.vz;
+ const turnAlpha=1-Math.exp(-Math.max(0,dt)*4.2);
+ let steerX=prevX+(chosen.vx-prevX)*turnAlpha,steerZ=prevZ+(chosen.vz-prevZ)*turnAlpha,sl=Math.hypot(steerX,steerZ);
+ if(sl<.001){steerX=chosen.vx;steerZ=chosen.vz;sl=1}steerX/=sl;steerZ/=sl;
+ // If the smooth arc would enter a blocked score, smoothly favor the viable score vector instead.
+ const nx=p.x+steerX*speed*dt,nz=p.z+steerZ*speed*dt;
+ if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){ud.scoreSteerX=steerX;ud.scoreSteerZ=steerZ;p.x=nx;p.z=nz;ud.moveDir?.set(steerX,0,steerZ);obj.rotation.y=Math.atan2(steerX,steerZ);return true}
+ ud.scoreSteerX=chosen.vx;ud.scoreSteerZ=chosen.vz;ud.moveDir?.set(chosen.vx,0,chosen.vz);return false
 }
 document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
 // Infinite facility streaming: add 40m corridor chunks ahead and extend the A* grid.
