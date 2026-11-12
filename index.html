@@ -30,8 +30,13 @@ function nearestOpen(x,z){
 // multi-sample ground-score steering as FPE: open=1, solid=0, direction-driven.
 function findNavPath(){return []}
 function scpGroundScore(x,z,r=.42){
- // Physical collider boxes are authoritative; no graph, nodes, or route.
- for(const o of solid){if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0}
+ // Walls and every solid collider are explicitly score 0; clear ground is 1.
+ // Check the live facility grid first (0=blocked, 1=open), then exact wall boxes.
+ if(navData?.grid&&navData.origin&&navData.cellSize){
+  const cs=navData.cellSize,ix=Math.floor((x-navData.origin.x)/cs),iz=Math.floor((z-navData.origin.z)/cs);
+  if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||navData.grid[iz]?.[ix]===0)return 0;
+ }
+ for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0;
  return 1
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
