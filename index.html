@@ -39,9 +39,28 @@ function scpGroundScore(x,z,r=.42){
  for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0;
  return 1
 }
+let scpRayGizmos=false;
+const scpRayGroup=new T.Group();scene.add(scpRayGroup);
+function drawSCPRayChain(points){
+ while(scpRayGroup.children.length<points.length-1){scpRayGroup.add(new T.Line(new T.BufferGeometry(),new T.LineBasicMaterial({color:0x35eaff,transparent:true,opacity:.9})))}
+ while(scpRayGroup.children.length>points.length-1){const o=scpRayGroup.children.pop();o.geometry.dispose();o.material.dispose()}
+ for(let i=0;i<scpRayGroup.children.length;i++){const line=scpRayGroup.children[i];line.geometry.setFromPoints([new T.Vector3(points[i].x,.22,points[i].z),new T.Vector3(points[i+1].x,.22,points[i+1].z)]);line.visible=scpRayGizmos}
+}
+function buildSCPRayChain(obj,tx,tz,r=.42){
+ const p=obj.position,points=[{x:p.x,z:p.z}],step=2.6;let x=p.x,z=p.z,prevX=0,prevZ=1;
+ for(let chain=0;chain<6;chain++){let best=null,bestScore=-1e9;
+  for(let deg=0;deg<360;deg+=5){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);if(scpGroundScore(x+vx*.35,z+vz*.35,r)!==1||hit(x+vx*.35,z+vz*.35,r))continue;
+   let open=0,clear=0;for(const d of [.6,1.2,1.8,2.6,3.4])if(scpGroundScore(x+vx*d,z+vz*d,r)===1&&!hit(x+vx*d,z+vz*d,r)){open++;clear=d}if(!open)continue;
+   const td=Math.hypot(tx-x,tz-z),toward=td>0?((tx-x)*vx+(tz-z)*vz)/td:0,smooth=vx*prevX+vz*prevZ,progress=td-Math.hypot(tx-(x+vx*step),tz-(z+vz*step)),score=open*3+clear*.8+toward*5+smooth*2+progress*3;
+   if(score>bestScore){bestScore=score;best={vx,vz}}
+  }
+  if(!best)break;x+=best.vx*step;z+=best.vz*step;prevX=best.vx;prevZ=best.vz;points.push({x,z});if(Math.hypot(tx-x,tz-z)<1.8)break;
+ }
+ drawSCPRayChain(points);return points.length>1?{x:(points[1].x-p.x)/step,z:(points[1].z-p.z)/step}:null;
+}
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- const desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
+ let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;\n if(obj===bad){const chain=buildSCPRayChain(obj,tx,tz,r);if(chain){desiredX=chain.x;desiredZ=chain.z}}
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
@@ -250,7 +269,7 @@ function spawnZombie(){
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);if(Math.random()<.03)spawnZombie();if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;function fallback(){let a=new T.Mesh(new T.CapsuleGeometry(.45,1.3,5,10),mats[2]);a.position.y=1.3;let b=new T.Mesh(new T.CylinderGeometry(.5,.7,1.5,12),mats[2]);b.position.y=.8;let h=new T.Mesh(new T.SphereGeometry(.3),mats[1]);h.position.y=2.3;bad.add(a,b,h);loaded=true}new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true},undefined,fallback);setTimeout(()=>!loaded&&fallback(),7000);
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady||!navData?.grid){document.querySelector('#msg').textContent='Waiting for facility-navdata.json';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayGroup.children.forEach(o=>o.visible=scpRayGizmos)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady||!navData?.grid){document.querySelector('#msg').textContent='Waiting for facility-navdata.json';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 function hit(x,z,r=.5){return solid.some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
 function moveColliding(obj,dx,dz,r=.4){let x=obj.position.x,z=obj.position.z,moved=false;if(!hit(x+dx,z,r)){obj.position.x=x+dx;moved=true}if(!hit(obj.position.x,z+dz,r)){obj.position.z=z+dz;moved=true}return moved}
 /* JSON-grid ray steering: sample the baked/live facility grid along the intended move.
