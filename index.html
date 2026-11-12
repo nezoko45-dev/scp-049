@@ -75,7 +75,21 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
    if(ground===1)attraction+=weight;
    else repulsion+=weight;
   }
-  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+progress*32;
+  // Wall contour steering: score open lanes that run alongside a nearby
+  // score-0 boundary, and bias the contour side consistently (no wall ping-pong).
+  let contour=0;
+  for(const d of [.7,1.4,2.2,3.2]){
+   const lx=p.x+vx*d-pz*r*2.4,lz=p.z+vz*d+px*r*2.4;
+   const rx=p.x+vx*d+pz*r*2.4,rz=p.z+vz*d-px*r*2.4;
+   const left=scpGroundScore(lx,lz,r),right=scpGroundScore(rx,rz,r);
+   if(left===0&&right===1)contour+=ud.wallSide*1.8;
+   if(right===0&&left===1)contour-=ud.wallSide*1.8;
+  }
+  // When the direct target lane is blocked, soften target pull and prioritize
+  // clearance/contour instead of repeatedly pushing into the wall.
+  const directBlocked=scpGroundScore(p.x+desiredX*Math.min(2.5,dist),p.z+desiredZ*Math.min(2.5,dist),r)===0;
+  const targetWeight=directBlocked?9:32;
+  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+progress*targetWeight;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
