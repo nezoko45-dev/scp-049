@@ -80,7 +80,26 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
  }
- if(!best){ud.moveDir?.set(0,0,0);return false}
+ if(!best){
+  // Recovery: never freeze or invent a direction. Search every heading for
+  // an actual score-1 opening and take a short, collision-safe escape step.
+  let escape=null,escapeScore=-Infinity;
+  for(let deg=0;deg<360;deg++){
+   const a=headings[deg],vx=Math.sin(a),vz=Math.cos(a);
+   if(scpGroundScore(p.x+vx*.3,p.z+vz*.3,r)!==1||hit(p.x+vx*.3,p.z+vz*.3,r))continue;
+   let clear=0;for(const d of [.5,1,1.5,2,3,4])if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1&&!hit(p.x+vx*d,p.z+vz*d,r))clear++;
+   const toward=vx*desiredX+vz*desiredZ;
+   const value=clear*12+toward*4;
+   if(value>escapeScore){escapeScore=value;escape={vx,vz}}
+  }
+  if(!escape){ud.moveDir?.set(0,0,0);return false}
+  const step=Math.min(speed*dt,.22),nx=p.x+escape.vx*step,nz=p.z+escape.vz*step;
+  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){
+   ud.scoreSteerX=escape.vx;ud.scoreSteerZ=escape.vz;p.x=nx;p.z=nz;
+   ud.moveDir?.set(escape.vx,0,escape.vz);obj.rotation.y=Math.atan2(escape.vx,escape.vz);return true
+  }
+  ud.moveDir?.set(0,0,0);return false
+}
  // Lock the wall-follow side until target progress resumes or the route clears.
  const oldX=ud.scoreSteerX??best.vx,oldZ=ud.scoreSteerZ??best.vz;
  const oldProgress=oldX*desiredX+oldZ*desiredZ;
