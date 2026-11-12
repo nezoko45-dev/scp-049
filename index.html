@@ -482,41 +482,40 @@ function scpRayClearSegment(x,z,nx,nz,r=.42){
  }
  return true;
 }
-function buildSCPGPSChain(sx,sz,tx,tz){
- // GPS route: calculate a cell path on the facility's live occupancy grid.
- // No fan probing or trial rays; each route edge becomes a steerable ray segment.
- if(!navData?.grid)return null;
- const g=navData.grid,W=navData.width,H=navData.height,cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z;
- const cell=(x,z)=>({x:Math.floor((x-ox)/cs),z:Math.floor((z-oz)/cs)});
- const world=(x,z)=>({x:ox+(x+.5)*cs,z:oz+(z+.5)*cs});
- const nearest=(p)=>{let c=cell(p.x,p.z);if(g[c.z]?.[c.x])return c;for(let r=1;r<10;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;let x=c.x+dx,z=c.z+dz;if(x>=0&&z>=0&&x<W&&z<H&&g[z]?.[x])return{x,z}}return null};
- const s=nearest({x:sx,z:sz}),goal=nearest({x:tx,z:tz});if(!s||!goal)return null;
- const key=(x,z)=>x+','+z,dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
- const open=[{x:s.x,z:s.z,f:0}],came=new Map(),cost=new Map([[key(s.x,s.z),0]]),closed=new Set();let found=false,iterations=0;
- const heuristic=(x,z)=>Math.hypot(goal.x-x,goal.z-z);
- while(open.length&&iterations++<30000){open.sort((a,b)=>a.f-b.f);const n=open.shift(),nk=key(n.x,n.z);if(closed.has(nk))continue;if(n.x===goal.x&&n.z===goal.z){found=true;break}closed.add(nk);
- for(const [dx,dz] of dirs){const x=n.x+dx,z=n.z+dz,k=key(x,z);if(x<0||z<0||x>=W||z>=H||!g[z]?.[x]||closed.has(k))continue;
- if(dx&&dz&&(!g[n.z]?.[x]||!g[z]?.[n.x]))continue;
- const step=dx&&dz?Math.SQRT2:1,ng=cost.get(nk)+step;if(ng>=(cost.get(k)??Infinity))continue;cost.set(k,ng);came.set(k,nk);open.push({x,z,f:ng+heuristic(x,z)})}
+// SCP navigates directly from remembered JSON occupancy scores. No A*, no waypoint route.
+function scoreSCPDirection(x,z,dx,dz){
+ const cs=navData?.cellSize||1,ox=navData?.origin.x||0,oz=navData?.origin.z||0,g=navData?.grid;
+ let score=0;
+ for(const dist of [1.5,3,5,7]){
+  const px=x+dx*dist,pz=z+dz*dist;
+  if(hit(px,pz,.48))return -100;
+  if(g){const ix=Math.floor((px-ox)/cs),iz=Math.floor((pz-oz)/cs);if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||g[iz]?.[ix]!==1)return -100}
+  score+=1/(dist+1);
  }
- if(!found)return null;let cur=key(goal.x,goal.z),path=[];while(cur){const [x,z]=cur.split(',').map(Number);path.push(world(x,z));if(cur===key(s.x,s.z))break;cur=came.get(cur)}path.reverse();path[0]={x:sx,z:sz};path.push({x:tx,z:tz});return path
+ return score
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),now=performance.now(),targetKey=Math.round(tx/3)+','+Math.round(tz/3);if(!ud.moveDir)ud.moveDir=new T.Vector3();
+ const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- // Generate GPS route once per target/update interval, then follow its ray waypoint chain.
- if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>1800){
-  const route=buildSCPGPSChain(obj.position.x,obj.position.z,tx,tz);
-  if(route?.length>1){ud.rayChain=route;ud.rayChainIndex=1;ud.rayChainAtTime=now;ud.rayTargetKey=targetKey;drawSCPRayChain(route)}
+ drawSCPRayGizmos(obj);
+ const toX=tx-p.x,toZ=tz-p.z,targetLen=Math.hypot(toX,toZ)||1,txd=toX/targetLen,tzd=toZ/targetLen;
+ let best=null,bestScore=-Infinity;
+ // Score 24 compass directions using the remembered JSON cells and live collision geometry.
+ for(let k=0;k<24;k++){
+  const a=k*Math.PI/12,dx=Math.sin(a),dz=Math.cos(a),open=scoreSCPDirection(p.x,p.z,dx,dz);
+  if(open<0)continue;
+  const alignment=dx*txd+dz*tzd,turn=ud.moveDir.lengthSq()>.001?(dx*ud.moveDir.x+dz*ud.moveDir.z):alignment;
+  const score=alignment*3.2+open*.65+turn*.45;
+  if(score>bestScore){bestScore=score;best={x:dx,z:dz}}
  }
- drawSCPRayGizmos(obj);const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
- while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.65)i++;
- ud.rayChainIndex=i;if(scpRayGizmos)drawSCPRayChain(chain);else scpChainViz.visible=false;
- const waypoint=chain[i];if(!waypoint)return false;
- const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
- const move=Math.min(speed*dt,d),nx=obj.position.x+dx/d*move,nz=obj.position.z+dz/d*move;
- if(!scpRayClearSegment(obj.position.x,obj.position.z,nx,nz,.42)){ud.rayChainAtTime=0;return false}
- obj.position.x=nx;obj.position.z=nz;ud.moveAngle=Math.atan2(dx,dz);ud.moveDir.set(dx/d,0,dz/d);obj.rotation.y=ud.moveAngle;return true
+ if(!best){ud.moveDir.set(0,0,0);return false}
+ // Smoothly rotate toward the chosen score direction, then move along it.
+ const desired=Math.atan2(best.x,best.z),current=obj.rotation.y;
+ let delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
+ obj.rotation.y=current+delta*Math.min(1,dt*7);
+ const dx=Math.sin(obj.rotation.y),dz=Math.cos(obj.rotation.y),move=speed*dt,nx=p.x+dx*move,nz=p.z+dz*move;
+ if(!scpRayClearSegment(p.x,p.z,nx,nz,.42)){ud.moveDir.set(0,0,0);return false}
+ p.x=nx;p.z=nz;ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
