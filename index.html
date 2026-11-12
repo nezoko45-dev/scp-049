@@ -47,22 +47,27 @@ function drawSCPRayChain(points){
  for(let i=0;i<scpRayGroup.children.length;i++){const line=scpRayGroup.children[i];line.geometry.setFromPoints([new T.Vector3(points[i].x,.22,points[i].z),new T.Vector3(points[i+1].x,.22,points[i+1].z)]);line.visible=scpRayGizmos}
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
- const p=obj.position,points=[{x:p.x,z:p.z}],step=2.2,maxSegments=90;let x=p.x,z=p.z,prevX=0,prevZ=1;
- const targetDist=Math.hypot(tx-x,tz-z);
+ const p=obj.position,points=[{x:p.x,z:p.z}],step=1.35,maxSegments=150;let x=p.x,z=p.z,prevX=0,prevZ=1;
+ const visited=[];
  for(let chain=0;chain<maxSegments;chain++){let best=null,bestScore=-1e9;
-  for(let deg=0;deg<360;deg+=3){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
-   if(scpGroundScore(x+vx*.35,z+vz*.35,r)!==1||hit(x+vx*.35,z+vz*.35,r))continue;
-   let open=0,clear=0;for(const d of [.5,1,1.5,2,2.8,3.6])if(scpGroundScore(x+vx*d,z+vz*d,r)===1&&!hit(x+vx*d,z+vz*d,r)){open++;clear=d}if(!open)continue;
+  for(let deg=0;deg<360;deg+=2){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
+   if(scpGroundScore(x+vx*.32,z+vz*.32,r)!==1||hit(x+vx*.32,z+vz*.32,r))continue;
+   let open=0,clear=0,blockedAhead=0;for(const d of [.45,.8,1.2,1.7,2.3,3]){if(scpGroundScore(x+vx*d,z+vz*d,r)===1&&!hit(x+vx*d,z+vz*d,r)){open++;clear=d}else blockedAhead++}
    const td=Math.hypot(tx-x,tz-z),toward=td>0?((tx-x)*vx+(tz-z)*vz)/td:0,smooth=vx*prevX+vz*prevZ;
    const progress=td-Math.hypot(tx-(x+vx*step),tz-(z+vz*step));
-   const score=open*2.5+clear*.7+toward*7+smooth*2+progress*4;
+   // Wall contour: reward a clear lane beside a blocked side, with a persistent
+   // tangent direction so the chain bends around corners instead of terminating.
+   const px=-vz,pz=vx;let contour=0;
+   for(const d of [.7,1.3,2,2.8]){const left=scpGroundScore(x+vx*d+px*r*2.3,z+vz*d+pz*r*2.3,r),right=scpGroundScore(x+vx*d-px*r*2.3,z+vz*d-pz*r*2.3,r);
+    if(left===0&&right===1)contour+=2.2;if(right===0&&left===1)contour+=2.2;
+   }
+   let revisit=0;for(const q of visited)if(Math.hypot(x+vx*step-q.x,z+vz*step-q.z)<1.1){revisit=8;break}
+   const score=open*2.2+clear*.6+toward*5.5+smooth*2.8+progress*3.5+contour*2.4-blockedAhead*.35-revisit;
    if(score>bestScore){bestScore=score;best={vx,vz}}
   }
   if(!best)break;
-  x+=best.vx*step;z+=best.vz*step;prevX=best.vx;prevZ=best.vz;points.push({x,z});
-  if(Math.hypot(tx-x,tz-z)<step*.65)break;
-  // Avoid infinite loops when the ray repeatedly circles the same corridor.
-  if(points.length>12){const old=points[points.length-9];if(Math.hypot(x-old.x,z-old.z)<.8)break}
+  visited.push({x,z});x+=best.vx*step;z+=best.vz*step;prevX=best.vx;prevZ=best.vz;points.push({x,z});
+  if(Math.hypot(tx-x,tz-z)<step*.7)break;
  }
  drawSCPRayChain(points);
  return points.length>1?{x:(points[1].x-p.x)/step,z:(points[1].z-p.z)/step}:null;
