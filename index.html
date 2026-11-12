@@ -517,9 +517,26 @@ function gradientSCP(x,z){
  return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
 }
 function generateSCPRope(obj,tx,tz){
- // Particle waypoint rope: straight interpolation, deliberately no raycasts.
- const p=obj.position,dx=tx-p.x,dz=tz-p.z,len=Math.hypot(dx,dz),spacing=.62,count=Math.max(2,Math.min(160,Math.ceil(len/spacing)));
- const points=[];for(let i=0;i<=count;i++){const t=i/count;points.push({x:p.x+dx*t,z:p.z+dz*t})}return points
+ // Collision-aware particle rope: waypoint particles test solid bounds (no raycasts).
+ const p=obj.position,dx=tx-p.x,dz=tz-p.z,len=Math.hypot(dx,dz)||1,nx=-dz/len,nz=dx/len,spacing=.62,count=Math.max(2,Math.min(160,Math.ceil(len/spacing))),points=[{x:p.x,z:p.z}];
+ let side=1;
+ for(let i=1;i<count;i++){
+  const t=i/count,x=p.x+dx*t,z=p.z+dz*t;
+  if(hit(x,z,.62)){
+   // Push this rope particle around the nearest blocking object's edge.
+   const block=solid.find(o=>Math.abs(x-o.x)<o.w/2+.62&&Math.abs(z-o.z)<o.d/2+.62);
+   if(block){
+    const edgeX=block.w/2+.9,edgeZ=block.d/2+.9;
+    const candidates=[
+     {x:block.x+edgeX,z:z},{x:block.x-edgeX,z:z},
+     {x:x,z:block.z+edgeZ},{x:x,z:block.z-edgeZ},
+     {x:x+nx*1.5*side,z:z+nz*1.5*side},{x:x-nx*1.5*side,z:z-nz*1.5*side}
+    ].filter(q=>!hit(q.x,q.z,.48));
+    if(candidates.length){candidates.sort((a,b)=>Math.hypot(a.x-(p.x+dx*(t+.025)),a.z-(p.z+dz*(t+.025)))-Math.hypot(b.x-(p.x+dx*(t+.025)),b.z-(p.z+dz*(t+.025))));const q=candidates[0];points.push({x:q.x,z:q.z});side*=-1}
+   }
+  }else points.push({x,z});
+ }
+ points.push({x:tx,z:tz});return points
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
@@ -534,7 +551,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const next=chain[0]||{x:tx,z:tz};let dx=next.x-p.x,dz=next.z-p.z,m=Math.hypot(dx,dz)||1;dx/=m;dz/=m;
  const desired=Math.atan2(dx,dz),current=obj.rotation.y,delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
  obj.rotation.y=current+delta*Math.min(1,dt*8);dx=Math.sin(obj.rotation.y);dz=Math.cos(obj.rotation.y);
- const move=speed*dt;p.x+=dx*move;p.z+=dz*move;ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);
+ const move=speed*dt;if(!moveColliding(obj,dx*move,dz*move,.48)){ud.ropeChain=null;return false}ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);
  // Keep the remaining waypoint rope attached to SCP's current position.
  if(chain.length){chain[0].x=p.x;chain[0].z=p.z}
  if(scpRayGizmos)drawSCPRayChain(chain);
