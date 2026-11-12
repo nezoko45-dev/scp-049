@@ -47,7 +47,8 @@ function drawSCPRayChain(points){
  for(let i=0;i<scpRayGroup.children.length;i++){const line=scpRayGroup.children[i];line.geometry.setFromPoints([new T.Vector3(points[i].x,.22,points[i].z),new T.Vector3(points[i+1].x,.22,points[i+1].z)]);line.visible=scpRayGizmos}
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
- const p=obj.position,step=1.1,maxSegments=260,points=[{x:p.x,z:p.z}];
+ const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
+ const cached=ud.gpsRoute; if(cached && now-(ud.gpsAt||0)<500 && Math.hypot(tx-(ud.gpsTx??tx),tz-(ud.gpsTz??tz))<2.2 && Math.hypot(p.x-(ud.gpsX??p.x),p.z-(ud.gpsZ??p.z))<1.5) return cached.length>1?{x:(cached[1].x-p.x)/step,z:(cached[1].z-p.z)/step}:null;
  // GPS-style ray routing: explore a branching set of open-ground routes,
  // score whole routes by target distance, clearance and smoothness.
  let frontier=[{x:p.x,z:p.z,dx:0,dz:1,path:points,score:0,depth:0}],bestRoute=points,bestDistance=Math.hypot(tx-p.x,tz-p.z);
@@ -58,7 +59,7 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
    const td=Math.hypot(tx-node.x,tz-node.z);
    if(td<step*.8){bestRoute=node.path;reached=true;break}
    // Sweep candidate directions across 360 degrees; rays only extend on score-1 ground.
-   for(let deg=0;deg<360;deg+=6){
+   for(let deg=0;deg<360;deg+=12){
     const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a),nx=node.x+vx*step,nz=node.z+vz*step;
     if(scpGroundScore(node.x+vx*.35,node.z+vz*.35,r)!==1||hit(node.x+vx*.35,node.z+vz*.35,r)||scpGroundScore(nx,nz,r)!==1||hit(nx,nz,r))continue;
     let clear=0;for(const d of [.5,1,1.6,2.3,3.2])if(scpGroundScore(node.x+vx*d,node.z+vz*d,r)===1&&!hit(node.x+vx*d,node.z+vz*d,r))clear++;
@@ -73,10 +74,10 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
   }
   // Beam search keeps several promising branches, allowing corner routes
   // to survive instead of committing to one locally attractive direction.
-  next.sort((a,b)=>a.score-b.score);frontier=next.slice(0,36);
+  next.sort((a,b)=>a.score-b.score);frontier=next.slice(0,12);
   if(!frontier.length)break;
  }
- drawSCPRayChain(bestRoute);
+ drawSCPRayChain(bestRoute);ud.gpsRoute=bestRoute;ud.gpsAt=now;ud.gpsTx=tx;ud.gpsTz=tz;ud.gpsX=p.x;ud.gpsZ=p.z;
  return bestRoute.length>1?{x:(bestRoute[1].x-p.x)/step,z:(bestRoute[1].z-p.z)/step}:null;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
