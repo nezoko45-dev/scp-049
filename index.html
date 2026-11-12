@@ -41,15 +41,22 @@ function scpGroundScore(x,z,r=.42){
  return 1
 }
 let scpRayGizmos=false;
-const rayHUD=document.createElement('div');rayHUD.id='rayHUD';rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:20;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:none;pointer-events:none;text-shadow:0 0 8px #00ffff';document.body.appendChild(rayHUD);
-window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';rayHUD.textContent=scpRayGizmos?'RAY CHAIN ON · GROUND ROUTE':'RAY CHAIN OFF'}});
+const rayHUD=document.createElement('div');rayHUD.id='rayHUD';rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:30;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:none;pointer-events:none;text-shadow:0 0 8px #00ffff;white-space:pre';document.body.appendChild(rayHUD);
+// Visible 3D ray-chain renderer: cyan segments and bright node markers, above floor.
+const scpRayViz=new T.Group();scpRayViz.name='SCP actual ray-chain visualization';scene.add(scpRayViz);scpRayViz.visible=false;
+function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose()}}
 function drawSCPRayChain(points){
- // Actual route chain: each waypoint is a coordinate node connected in order.
- if(!scpRayGizmos)return;
- rayHUD.textContent='ACTUAL RAY CHAIN · '+(points?.length||0)+' WAYPOINTS';
- rayHUD.style.whiteSpace='pre';
- rayHUD.textContent+='\n'+(points||[]).slice(0,18).map((p,i)=>i+': '+p.x.toFixed(1)+', '+p.z.toFixed(1)).join('\n');
+ if(!scpRayGizmos){scpRayViz.visible=false;return}
+ clearSCPRayViz();const pts=(points||[]).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.z));
+ if(pts.length>1){const v=[];for(let i=1;i<pts.length;i++)v.push(pts[i-1].x,1.35,pts[i-1].z,pts[i].x,1.35,pts[i].z);
+ const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(v,3));scpRayViz.add(new T.LineSegments(g,new T.LineBasicMaterial({color:0x00ffff,depthTest:false,transparent:true,opacity:1})))}
+ const markerG=new T.SphereGeometry(.16,10,8),markerM=new T.MeshBasicMaterial({color:0xffee33,depthTest:false});
+ for(let i=0;i<pts.length;i+=Math.max(1,Math.floor(pts.length/60))){const m=new T.Mesh(markerG,markerM);m.position.set(pts[i].x,1.45,pts[i].z);scpRayViz.add(m)}
+ scpRayViz.visible=true;
+ rayHUD.textContent='LIVE RAYCAST CHAIN · '+pts.length+' NODES\\nG toggles visible 3D chain';
 }
+window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPRayChain(bad.userData.rayChain||[]);else rayHUD.textContent='RAY CHAIN OFF'}});
+
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
  const cached=ud.gpsRoute,oldIndex=ud.gpsWaypointIndex||1; if(cached && oldIndex<cached.length-1) return {x:(cached[oldIndex].x-p.x)/step,z:(cached[oldIndex].z-p.z)/step};
@@ -484,12 +491,12 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
   }
   // Final target link is added only if real rays can reach it without hitting geometry.
   const route=best.path.slice();if(scpRayClearSegment(best.x,best.z,tx,tz,.4))route.push({x:tx,z:tz});
-  ud.rayChain=route;ud.rayChainIndex=1;ud.rayChainAtTime=now;ud.rayTargetKey=targetKey;
+  ud.rayChain=route;ud.rayChainIndex=1;ud.rayChainAtTime=now;ud.rayTargetKey=targetKey;drawSCPRayChain(route);
  }
  const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
  while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.6)i++;
  ud.rayChainIndex=i;
- if(scpRayGizmos){rayHUD.textContent='LIVE 3D RAYCAST CHAIN · '+chain.length+' NODES · '+i+'/'+chain.length+'\n'+chain.slice(0,16).map((p,k)=>k+': '+p.x.toFixed(1)+','+p.z.toFixed(1)).join('\n')}
+ if(scpRayGizmos)drawSCPRayChain(chain);
  const waypoint=chain[i];if(!waypoint)return false;
  const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
  const move=Math.min(speed*dt,d),nx=obj.position.x+dx/d*move,nz=obj.position.z+dz/d*move;
