@@ -46,7 +46,7 @@ const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),s
 const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:30;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:none;pointer-events:none';document.body.appendChild(rayHUD);
 const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=false;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
-function drawSCPRayChain(points){while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.geometry.dispose()}if(!Array.isArray(points)||points.length<2)return;const verts=[];for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i];verts.push(a.x,1.35,a.z,b.x,1.35,b.z)}const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpChainViz.add(new T.LineSegments(g,scpChainMat));scpChainViz.visible=scpRayGizmos}
+function drawSCPRayChain(points){while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}if(!Array.isArray(points)||points.length<2){scpChainViz.visible=false;return}for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],dx=b.x-a.x,dz=b.z-a.z,len=Math.hypot(dx,dz);if(len<.02)continue;const dir=new T.Vector3(dx/len,0,dz/len),origin=new T.Vector3(a.x,1.35,a.z),arrow=new T.ArrowHelper(dir,origin,len,0xffd400,Math.min(.35,len*.22),Math.min(.22,len*.12));arrow.line.material=scpChainMat;arrow.cone.material=scpChainMat;scpChainViz.add(arrow)}scpChainViz.visible=scpRayGizmos}
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
@@ -493,7 +493,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  drawSCPRayGizmos(obj);const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
  while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.6)i++;
  ud.rayChainIndex=i;
- if(scpRayGizmos)drawSCPRayChain(chain);
+ if(scpRayGizmos)drawSCPRayChain(chain);else scpChainViz.visible=false;
  const waypoint=chain[i];if(!waypoint)return false;
  const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
  const move=Math.min(speed*dt,d),nx=obj.position.x+dx/d*move,nz=obj.position.z+dz/d*move;
