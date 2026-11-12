@@ -93,9 +93,9 @@ function drawSCPRayGizmos(obj,tx,tz){
  if(!scpRayGizmos)return;clearSCPRayViz();
  const x=obj.position.x,z=obj.position.z,y=1.3,reach=7;
  const ud=obj.userData||{};
- if(ud.ropeChain?.length>1)drawSCPRayChain(ud.ropeChain);
+
  if(Number.isFinite(tx)&&Number.isFinite(tz)){const arr=[x,y,z,tx,y,tz],g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(arr,3));scpRayViz.add(new T.Line(g,scpRayMatClear))}
- scpRayViz.visible=true;rayHUD.textContent='ROPE GPS: linked rays bend around obstacles (G toggles)'
+ scpRayViz.visible=true;rayHUD.textContent='SCP BOUND STEERING (G toggles debug)'
 }
 window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;scpChainViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos&&typeof bad!=='undefined'&&bad){drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);drawSCPRayChain(bad.userData?.rayChain||[])}if(!scpRayGizmos)clearSCPRayViz()}});
 function buildSCPRayChain(obj,tx,tz,r=.42){
@@ -516,57 +516,45 @@ function gradientSCP(x,z){
  }
  return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
 }
-function generateSCPRope(obj,tx,tz){
- // Loose collision-aware particle rope: particles fan around obstacle corners with slack.
- const p=obj.position,dx=tx-p.x,dz=tz-p.z,len=Math.hypot(dx,dz)||1,spacing=.62,count=Math.max(2,Math.min(160,Math.ceil(len/spacing))),points=[{x:p.x,z:p.z}];
- const obstacles=solid.filter(o=>{const t=((o.x-p.x)*dx+(o.z-p.z)*dz)/(len*len);if(t<=0||t>=1)return false;const qx=p.x+dx*t,qz=p.z+dz*t;return Math.abs(qx-o.x)<o.w/2+1.5&&Math.abs(qz-o.z)<o.d/2+1.5});
- // Insert corner anchors with extra slack so rope bows loosely around bounds.
- for(const o of obstacles){
-  const pad=1.05, corners=[
-   {x:o.x-o.w/2-pad,z:o.z-o.d/2-pad},{x:o.x+o.w/2+pad,z:o.z-o.d/2-pad},
-   {x:o.x+o.w/2+pad,z:o.z+o.d/2+pad},{x:o.x-o.w/2-pad,z:o.z+o.d/2+pad}
-  ];
-  const valid=corners.filter(q=>!hit(q.x,q.z,.48));
-  if(valid.length){valid.sort((a,b)=>Math.hypot(a.x-(p.x+dx*.5),a.z-(p.z+dz*.5))-Math.hypot(b.x-(p.x+dx*.5),b.z-(p.z+dz*.5)));points.push(valid[0]);}
- }
- points.push({x:tx,z:tz});
- // Sort anchors along route progression, then add smooth bowed particles between anchors.
- points.sort((a,b)=>((a.x-p.x)*dx+(a.z-p.z)*dz)-((b.x-p.x)*dx+(b.z-p.z)*dz));
- const anchors=points.slice(),loose=[anchors[0]];
- for(let a=1;a<anchors.length;a++){
-  const A=anchors[a-1],B=anchors[a],d=Math.hypot(B.x-A.x,B.z-A.z),n=Math.max(1,Math.ceil(d/spacing),);for(let k=1;k<n;k++){const t=k/n;loose.push({x:A.x+(B.x-A.x)*t,z:A.z+(B.z-A.z)*t})}loose.push(B)
- }
- // Offset particles outward from nearby obstacle faces to create slack/bowing.
- for(let i=1;i<loose.length-1;i++){const q=loose[i],o=solid.find(b=>Math.abs(q.x-b.x)<b.w/2+1.25&&Math.abs(q.z-b.z)<b.d/2+1.25);if(o){const dxq=q.x-o.x,dzq=q.z-o.z;if(Math.abs(dxq/(o.w/2+1))>Math.abs(dzq/(o.d/2+1)))q.x+=Math.sign(dxq||1)*.38;else q.z+=Math.sign(dzq||1)*.38}}
- return loose
-}
+
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- // Build a route from the actual current position; refresh frequently to prevent stale ropes.
- if(!ud.ropeChain||!ud.ropeTarget||Math.hypot(tx-ud.ropeTarget.x,tz-ud.ropeTarget.z)>1.2||performance.now()-(ud.ropeBuiltAt||0)>650||ud.ropeChain.length<2){
-  ud.ropeChain=generateSCPRope(obj,tx,tz);ud.ropeTarget={x:tx,z:tz};ud.ropeBuiltAt=performance.now();
+ // Direct collision-bound steering: no rope, waypoints, raycasts, or grid.
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz)||1,targetX=dx/dist,targetZ=dz/dist;
+ const step=Math.max(.02,speed*dt),radius=.48;
+ // Sample candidate headings; score clear movement by target progress and clearance.
+ let best=null,bestScore=-Infinity;
+ const angles=[0,.18,-.18,.38,-.38,.65,-.65,.95,-.95,1.3,-1.3,Math.PI/2,-Math.PI/2,Math.PI];
+ const facing=ud.steerAngle??Math.atan2(targetX,targetZ);
+ for(const off of angles){
+  const a=facing+off,vx=Math.sin(a),vz=Math.cos(a);
+  let clear=0,blocked=0,reach=0;
+  for(const d of [.55,1,1.6,2.4,3.4,4.8,6]){
+   if(!hit(p.x+vx*d,p.z+vz*d,radius)){clear++;reach=d}else blocked++;
+  }
+  // Ensure the actual next step and intermediate samples are collision-free.
+  let safe=true;for(let k=1;k<=5;k++){const d=step*k/5;if(hit(p.x+vx*d,p.z+vz*d,radius)){safe=false;break}}
+  if(!safe)continue;
+  const toward=vx*targetX+vz*targetZ;
+  const side=Math.abs(vx*targetZ-vz*targetX);
+  const score=toward*18+clear*2.4+reach*.3-blocked*4-side*1.8-Math.abs(off)*.12;
+  if(score>bestScore){bestScore=score;best={vx,vz,a,score}}
  }
- let chain=ud.ropeChain;
- // Remove particles already passed; don't let SCP aim backward at its own rope.
- while(chain.length>1&&Math.hypot(chain[0].x-p.x,chain[0].z-p.z)<.85)chain.shift();
- let next=chain[0]||{x:tx,z:tz},dx=next.x-p.x,dz=next.z-p.z,m=Math.hypot(dx,dz)||1;dx/=m;dz/=m;
- // Try a fan of bound-tested steering directions, preferring the rope heading.
- const step=speed*dt,base=Math.atan2(dx,dz),angles=[0,.22,-.22,.48,-.48,.82,-.82,1.25,-1.25,Math.PI];
- let chosen=null;
- for(const off of angles){const a=base+off,vx=Math.sin(a)*step,vz=Math.cos(a)*step;if(!hit(p.x+vx,p.z+vz,.48)){chosen={vx,vz,a};break}}
- if(!chosen){ // emergency escape: push away from the nearest overlapping solid bounds
-  const b=solid.find(o=>Math.abs(p.x-o.x)<o.w/2+.65&&Math.abs(p.z-o.z)<o.d/2+.65);
-  if(b){const ex=p.x-b.x,ez=p.z-b.z,em=Math.hypot(ex,ez)||1;chosen={vx:ex/em*step,vz:ez/em*step,a:Math.atan2(ex,ez)}}
-  if(!chosen)return false;
+ if(!best){
+  // Escape from nearby bounding boxes by choosing the safest free direction.
+  let escape=null,es=-Infinity;
+  for(let deg=0;deg<360;deg+=5){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);if(hit(p.x+vx*Math.min(step,.25),p.z+vz*Math.min(step,.25),radius))continue;let free=0;for(const d of [.5,1,1.5,2.5,3.5])if(!hit(p.x+vx*d,p.z+vz*d,radius))free++;const s=free*4+vx*targetX+vz*targetZ;if(s>es){es=s;escape={vx,vz,a}}}
+  if(!escape){ud.moveDir.set(0,0,0);return false}best=escape;
  }
- // Bound-only movement and smooth turning.
- const moved=moveColliding(obj,chosen.vx,chosen.vz,.48);
- if(!moved){ud.ropeChain=null;return false}
- const desired=chosen.a,current=obj.rotation.y,delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));obj.rotation.y=current+delta*Math.min(1,dt*9);
- ud.moveAngle=obj.rotation.y;ud.moveDir.set(Math.sin(obj.rotation.y),0,Math.cos(obj.rotation.y));
- // Keep rope anchored at SCP and consume waypoints as he advances.
- if(chain.length){chain[0].x=p.x;chain[0].z=p.z}
- if(scpRayGizmos)drawSCPRayChain(chain);
+ // Turn smoothly while moving only through bound-tested free space.
+ let delta=Math.atan2(Math.sin(best.a-facing),Math.cos(best.a-facing)),turn=Math.max(-dt*2.8,Math.min(dt*2.8,delta)),a=facing+turn;
+ let vx=Math.sin(a),vz=Math.cos(a),mx=vx*step,mz=vz*step;
+ if(hit(p.x+mx,p.z+mz,radius)){vx=best.vx;vz=best.vz;mx=vx*step;mz=vz*step;a=best.a}
+ if(hit(p.x+mx,p.z+mz,radius)){ud.moveDir.set(0,0,0);return false}
+ p.x+=mx;p.z+=mz;ud.steerAngle=a;ud.moveDir.set(vx,0,vz);
+ obj.rotation.y=Math.atan2(vx,vz);
+ // Keep any old rope data cleared so no rope is generated or followed.
+ ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;
  return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
