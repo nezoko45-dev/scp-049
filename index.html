@@ -582,16 +582,17 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  let wx,wz;if(next){wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs}
  else{wx=tx;wz=tz}
  let vx=wx-p.x,vz=wz-p.z,len=Math.hypot(vx,vz);
- if(len<.12&&next){ud.flowSequenceCell=cell(next.x,next.z);return sphereRaySteerSCP(obj,tx,tz,speed,dt)}
+ if(len<.12&&next){ud.flowSequenceCell=cell(next.x,next.z);wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs;vx=wx-p.x;vz=wz-p.z;len=Math.hypot(vx,vz)}
  if(len<.05){ud.moveDir.set(0,0,0);return false}
  vx/=len;vz/=len;
  const step=Math.max(.02,speed*dt),desired=Math.atan2(vx,vz),facing=ud.steerAngle??desired,delta=Math.atan2(Math.sin(desired-facing),Math.cos(desired-facing)),angle=facing+Math.max(-dt*3,Math.min(dt*3,delta));
- let mx=Math.sin(angle)*step,mz=Math.cos(angle)*step;
- // Collision bounds validate the sequential waypoint step; if turning is blocked,
- // use the exact waypoint direction for this frame instead.
- if(hit(p.x+mx,p.z+mz,radius)){mx=vx*step;mz=vz*step}
- if(hit(p.x+mx,p.z+mz,radius)){ud.moveDir.set(0,0,0);return false}
- p.x+=mx;p.z+=mz;ud.steerAngle=angle;ud.moveDir.set(mx/step,0,mz/step);obj.rotation.y=Math.atan2(mx,mz);
+ // Walk the offered flow vector first; if its turn is obstructed, test alternate
+ // lower-distance flow neighbors instead of freezing against the blocked vector.
+ let candidates=[[Math.sin(angle),Math.cos(angle)],[vx,vz]];
+ if(next){for(const [dx,dz] of dirs){const x=cx+dx,z=cz+dz;if(!inside(x,z))continue;const u=cell(x,z);if(f.blocked[u]||f.distance[u]<0||f.distance[u]>=current)continue;if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;const ax=f.ox+(x+.5)*f.cs-p.x,az=f.oz+(z+.5)*f.cs-p.z,al=Math.hypot(ax,az)||1;candidates.push([ax/al,az/al])}}
+ let mx=0,mz=0,chosen=null;for(const [dx,dz] of candidates){const x=dx*step,z=dz*step;if(!hit(p.x+x,p.z+z,radius)){mx=x;mz=z;chosen=[dx,dz];break}}
+ if(!chosen){const u=inside(ix,iz)?cell(ix,iz):-1;if(u>=0){f.blocked[u]=1;f.distance[u]=-1;f.dirX[u]=f.dirZ[u]=0}ud.flowStall=(ud.flowStall||0)+1;ud.flowField=buildSCPFlowField(tx,tz);ud.moveDir.set(0,0,0);return false}
+ p.x+=mx;p.z+=mz;ud.steerAngle=Math.atan2(chosen[0],chosen[1]);ud.moveDir.set(chosen[0],0,chosen[1]);obj.rotation.y=Math.atan2(mx,mz);
  ud.flowSequenceCell=next?cell(next.x,next.z):cell(cx,cz);
  ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;return true
 }
