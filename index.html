@@ -560,47 +560,39 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,radius=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  let f=ud.flowField;
  if(!f||f.solidCount!==solid.length||Math.hypot(tx-f.targetX,tz-f.targetZ)>3||performance.now()-f.builtAt>1200)f=ud.flowField=buildSCPFlowField(tx,tz);
- const N=f.N,ix=Math.floor((p.x-f.ox)/f.cs),iz=Math.floor((p.z-f.oz)/f.cs);
- const inside=(x,z)=>x>=1&&z>=1&&x<N-1&&z<N-1;
- const cell=(x,z)=>z*N+x;
- let gx=0,gz=0;
- if(inside(ix,iz)&&!f.blocked[cell(ix,iz)]){gx=f.dirX[cell(ix,iz)];gz=f.dirZ[cell(ix,iz)]}
- // If the current vector is blocked/stale, blend nearby open-cell vectors.
- if(Math.hypot(gx,gz)<.05){
-  let best=-Infinity;
-  for(let dz=-4;dz<=4;dz++)for(let dx=-4;dx<=4;dx++){
-   const x=ix+dx,z=iz+dz;if(!inside(x,z)||f.blocked[cell(x,z)])continue;
-   const wx=f.ox+(x+.5)*f.cs,wz=f.oz+(z+.5)*f.cs,d=Math.hypot(wx-p.x,wz-p.z);
-   if(d>f.cs*5)continue;const u=cell(x,z),align=(dx===0&&dz===0)?1:0;
-   const score=(f.dirX[u]*(tx-p.x)+f.dirZ[u]*(tz-p.z))/Math.max(1,Math.hypot(tx-p.x,tz-p.z))-d*.12+align*.1;
-   if(score>best){best=score;gx=f.dirX[u];gz=f.dirZ[u]}
+ const N=f.N,ix=Math.floor((p.x-f.ox)/f.cs),iz=Math.floor((p.z-f.oz)/f.cs),cell=(x,z)=>z*N+x,inside=(x,z)=>x>=1&&z>=1&&x<N-1&&z<N-1;
+ // Follow the field as a discrete sequence: current cell -> lowest-distance
+ // adjacent cell -> that cell's next lower-distance neighbor, one step at a time.
+ let cx=ix,cz=iz,current=inside(ix,iz)?f.distance[cell(ix,iz)]:-1;
+ if(current<0||f.blocked[cell(ix,iz)]){
+  let near=null,nd=Infinity;
+  for(let z=Math.max(1,iz-5);z<=Math.min(N-2,iz+5);z++)for(let x=Math.max(1,ix-5);x<=Math.min(N-2,ix+5);x++){
+   const u=cell(x,z),d=Math.hypot(x-ix,z-iz);
+   if(!f.blocked[u]&&f.distance[u]>=0&&d<nd){near={x,z};nd=d}
   }
+  if(near){cx=near.x;cz=near.z;current=f.distance[cell(cx,cz)]}
  }
- if(Math.hypot(gx,gz)<.05){const dx=tx-p.x,dz=tz-p.z,l=Math.hypot(dx,dz)||1;gx=dx/l;gz=dz/l}
- // Sample candidate headings from nearby open flow vectors; blocked vectors are discarded.
- const base=Math.atan2(gx,gz),candidates=[];
- for(let dz=-3;dz<=3;dz++)for(let dx=-3;dx<=3;dx++){
-  const x=ix+dx,z=iz+dz;if(!inside(x,z)||f.blocked[cell(x,z)])continue;
-  const u=cell(x,z),vx=f.dirX[u],vz=f.dirZ[u],l=Math.hypot(vx,vz);if(l<.05)continue;
-  const wx=f.ox+(x+.5)*f.cs,wz=f.oz+(z+.5)*f.cs;
-  const distance=Math.hypot(wx-p.x,wz-p.z);if(distance>f.cs*4)continue;
-  const alignment=vx*gx+vz*gz,progress=vx*(tx-p.x)+vz*(tz-p.z);
-  candidates.push({vx:vx/l,vz:vz/l,score:alignment*3+progress/Math.max(1,Math.hypot(tx-p.x,tz-p.z))-distance*.08});
+ let next=null,bestDistance=current;
+ const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+ for(const [dx,dz] of dirs){const x=cx+dx,z=cz+dz;if(!inside(x,z))continue;const u=cell(x,z),d=f.distance[u];if(f.blocked[u]||d<0||d>=bestDistance)continue;
+  if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;
+  next={x,z};bestDistance=d;
  }
- candidates.sort((a,b)=>b.score-a.score);
- let chosen=null,step=Math.max(.02,speed*dt);
- for(const q of candidates){
-  let clear=true;for(let k=1;k<=6;k++){const d=step*k/6;if(hit(p.x+q.vx*d,p.z+q.vz*d,radius)){clear=false;break}}
-  if(clear){chosen=q;break}
- }
- // If local field vectors are all blocked, scan headings using collision bounds only.
- if(!chosen){let best=-Infinity;for(let deg=0;deg<360;deg+=5){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);let clear=true;for(let k=1;k<=8;k++){const d=Math.min(1.2,step)*k/8;if(hit(p.x+vx*d,p.z+vz*d,radius)){clear=false;break}}if(!clear)continue;const score=vx*gx+vz*gz+(vx*(tx-p.x)+vz*(tz-p.z))/Math.max(1,Math.hypot(tx-p.x,tz-p.z));if(score>best){best=score;chosen={vx,vz}}}}
- if(!chosen){ud.moveDir.set(0,0,0);return false}
- const desired=Math.atan2(chosen.vx,chosen.vz),facing=ud.steerAngle??desired,delta=Math.atan2(Math.sin(desired-facing),Math.cos(desired-facing)),angle=facing+Math.max(-dt*3,Math.min(dt*3,delta));
+ // The waypoint is the center of the next cell in the descending-distance sequence.
+ let wx,wz;if(next){wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs}
+ else{wx=tx;wz=tz}
+ let vx=wx-p.x,vz=wz-p.z,len=Math.hypot(vx,vz);
+ if(len<.12&&next){ud.flowSequenceCell=cell(next.x,next.z);return sphereRaySteerSCP(obj,tx,tz,speed,dt)}
+ if(len<.05){ud.moveDir.set(0,0,0);return false}
+ vx/=len;vz/=len;
+ const step=Math.max(.02,speed*dt),desired=Math.atan2(vx,vz),facing=ud.steerAngle??desired,delta=Math.atan2(Math.sin(desired-facing),Math.cos(desired-facing)),angle=facing+Math.max(-dt*3,Math.min(dt*3,delta));
  let mx=Math.sin(angle)*step,mz=Math.cos(angle)*step;
- if(hit(p.x+mx,p.z+mz,radius)){mx=chosen.vx*step;mz=chosen.vz*step}
+ // Collision bounds validate the sequential waypoint step; if turning is blocked,
+ // use the exact waypoint direction for this frame instead.
+ if(hit(p.x+mx,p.z+mz,radius)){mx=vx*step;mz=vz*step}
  if(hit(p.x+mx,p.z+mz,radius)){ud.moveDir.set(0,0,0);return false}
  p.x+=mx;p.z+=mz;ud.steerAngle=angle;ud.moveDir.set(mx/step,0,mz/step);obj.rotation.y=Math.atan2(mx,mz);
+ ud.flowSequenceCell=next?cell(next.x,next.z):cell(cx,cz);
  ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
