@@ -40,37 +40,39 @@ function scpGroundScore(x,z,r=.42){
  return 1
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
- const p=obj.position,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);if(dist<.08)return false;
- const desiredX=dx/dist,desiredZ=dz/dist,candidates=[];
- // Directional steering: score 360 world-space movement vectors, not turn steps.
- // No yaw/left-right preference is included in the navigation decision.
+ const p=obj.position,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0,candidates=[];
+ // Ground-score field is the primary steering signal: 1 attracts, 0 repels.
+ // Test all 360 directions; target direction is only a weak tie-breaker.
+ const samples=[.3,.6,.9,1.2,1.6,2,2.5,3.1,3.8,4.6,5.4];
  for(let deg=0;deg<360;deg++){
-  const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,clear=0;
-  for(const d of [.3,.6,.9,1.2,1.6,2,2.5,3.1,3.8,4.6,5.4]){
-   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;clear=d}
-   else blocked++;
+  const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,openReach=0;
+  for(const d of samples){
+   const score=scpGroundScore(p.x+vx*d,p.z+vz*d,r);
+   if(score===1){open++;openReach=d}else blocked++;
   }
-  const toward=vx*desiredX+vz*desiredZ;
-  const score=open*2.2-blocked*3.8+clear*1.7+toward*5.0;
-  if(scpGroundScore(p.x+vx*.2,p.z+vz*.2,r)===1)candidates.push({vx,vz,score,open,blocked,clear})
+  // Open score-1 ground accumulates strong positive value; every score-0
+  // sample receives a steep penalty, so directions through walls lose.
+  const groundValue=open*3.4+openReach*1.15-blocked*8.5;
+  const targetTie=(vx*desiredX+vz*desiredZ)*.65;
+  const score=groundValue+targetTie;
+  if(scpGroundScore(p.x+vx*.2,p.z+vz*.2,r)===1)candidates.push({vx,vz,score,open,blocked,openReach});
  }
  if(!candidates.length){obj.userData.moveDir?.set(0,0,0);return false}
  candidates.sort((a,b)=>b.score-a.score);
- // Blend the best open headings into one direct steering vector. This avoids
- // an artificial rotate-left/rotate-right behavior and points movement itself.
+ // Average the top ground-score directions into a direct movement vector.
  let sx=0,sz=0,sw=0;
- for(const q of candidates.slice(0,12)){const w=Math.max(.01,q.score-candidates[11].score+.12);sx+=q.vx*w;sz+=q.vz*w;sw+=w}
- let mx=sx/sw,mz=sz/sw,ml=Math.hypot(mx,mz);if(ml<.001){mx=candidates[0].vx;mz=candidates[0].vz;ml=1}mx/=ml;mz/=ml;
- // If blended direction crosses a blocked sample, use the best fully-clear
- // scored heading instead of wall-following or rotating in place.
- let chosen={vx:mx,vz:mz};
+ for(const q of candidates.slice(0,10)){const w=Math.max(.01,q.score-candidates[9].score+.2);sx+=q.vx*w;sz+=q.vz*w;sw+=w}
+ let mx=sx/sw,mz=sz/sw,ml=Math.hypot(mx,mz);
+ if(ml<.001){mx=candidates[0].vx;mz=candidates[0].vz;ml=1}mx/=ml;mz/=ml;
  const step=Math.max(.12,speed*dt);let viable=true;
  for(let k=1;k<=6;k++){const d=step*k/6;if(scpGroundScore(p.x+mx*d,p.z+mz*d,r)===0||hit(p.x+mx*d,p.z+mz*d,r)){viable=false;break}}
- if(!viable){let q=candidates.find(q=>{for(let k=1;k<=6;k++){let d=step*k/6;if(scpGroundScore(p.x+q.vx*d,p.z+q.vz*d,r)===0||hit(p.x+q.vx*d,p.z+q.vz*d,r))return false}return true});if(!q){obj.userData.moveDir?.set(0,0,0);return false}chosen=q}
+ let chosen={vx:mx,vz:mz};
+ if(!viable){const q=candidates.find(q=>{for(let k=1;k<=6;k++){const d=step*k/6;if(scpGroundScore(p.x+q.vx*d,p.z+q.vz*d,r)===0||hit(p.x+q.vx*d,p.z+q.vz*d,r))return false}return true});if(!q){obj.userData.moveDir?.set(0,0,0);return false}chosen=q}
  const nx=p.x+chosen.vx*speed*dt,nz=p.z+chosen.vz*speed*dt;
  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){p.x=nx;p.z=nz;obj.userData.moveDir?.set(chosen.vx,0,chosen.vz);obj.rotation.y=Math.atan2(chosen.vx,chosen.vz);return true}
  obj.userData.moveDir?.set(0,0,0);return false
-}document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
+}
+document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
 // Infinite facility streaming: add 40m corridor chunks ahead and extend the A* grid.
 const facilityChunks=new Set();let streamedNorth=-95,streamedSouth=25,streamedWest=-39,streamedEast=39;
 function growNav(dir){
