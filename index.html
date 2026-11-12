@@ -53,10 +53,20 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   // Open score-1 ground accumulates strong positive value; every score-0
   // sample receives a steep penalty, so directions through walls lose.
   const groundValue=open*2.6+openReach*.65-blocked*10.5;
-  // Strong forward-progress preference makes SCP route around broad obstacles
-  // instead of wandering in locally safe directions. Open samples still win.
+  // Wall-follow bonus: reward open score-1 lanes that run beside score-0
+  // boundaries. This lets SCP trace a wall edge toward a gap instead of
+  // repeatedly pushing straight into the wall.
+  const px=-vz,pz=vx;let edgeFollow=0;
+  for(const d of [1,2,3,4,5]){
+   const center=scpGroundScore(p.x+vx*d,p.z+vz*d,r);
+   if(center!==1)continue;
+   const sideA=scpGroundScore(p.x+vx*d+px*(r*2.1),p.z+vz*d+pz*(r*2.1),r);
+   const sideB=scpGroundScore(p.x+vx*d-px*(r*2.1),p.z+vz*d-pz*(r*2.1),r);
+   if(sideA===0||sideB===0)edgeFollow+=1.8;
+  }
+  // Target progress guides the wall trace toward the destination.
   const targetTie=(vx*desiredX+vz*desiredZ)*12;
-  const score=groundValue+targetTie;
+  const score=groundValue+edgeFollow+targetTie;
   if(scpGroundScore(p.x+vx*.2,p.z+vz*.2,r)===1)candidates.push({vx,vz,score,open,blocked,openReach});
  }
  if(!candidates.length){obj.userData.moveDir?.set(0,0,0);return false}
