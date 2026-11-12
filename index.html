@@ -502,27 +502,33 @@ function gradientSCP(x,z){
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- const toX=tx-p.x,toZ=tz-p.z,len=Math.hypot(toX,toZ)||1,target={x:toX/len,z:toZ/len};
- const grad=gradientSCP(p.x,p.z);let best=null,bestScore=-Infinity;
- // Each candidate heading receives binary ray scores: clear=1, blocked=0.
- for(let k=0;k<72;k++){
-  const a=k*Math.PI/36,dx=Math.sin(a),dz=Math.cos(a);let rayScore=1;
-  for(const d of [.8,1.5,2.5,4,6]){
-   const px=p.x+dx*d,pz=p.z+dz*d;
-   if(hit(px,pz,.44)||!scpRayClearSegment(p.x,p.z,px,pz,.42)){rayScore=0;break}
+ const now=performance.now(),toX=tx-p.x,toZ=tz-p.z,len=Math.hypot(toX,toZ)||1,target={x:toX/len,z:toZ/len};
+ // Rebuild a short forward ray route periodically; between rebuilds SCP follows the cached ray direction.
+ if(!ud.followRay||now>=(ud.followRayAt||0)){
+  const grad=gradientSCP(p.x,p.z);let best=null,bestScore=-Infinity;
+  for(let k=0;k<72;k++){
+   const angle=k*Math.PI/36,dx=Math.sin(angle),dz=Math.cos(angle);
+   // Binary ray score: every sampled segment clear => 1; any collision => 0.
+   let rayScore=1;
+   for(const d of [.8,1.5,2.5,4,6,8]){
+    const px=p.x+dx*d,pz=p.z+dz*d;
+    if(hit(px,pz,.44)||!scpRayClearSegment(p.x,p.z,px,pz,.42)){rayScore=0;break}
+   }
+   if(!rayScore)continue;
+   const targetPull=dx*target.x+dz*target.z,gradientPull=dx*grad.x+dz*grad.z;
+   const inertia=ud.moveDir.lengthSq()>.001?dx*ud.moveDir.x+dz*ud.moveDir.z:targetPull;
+   const score=rayScore*2+targetPull*2.8+gradientPull*2+grad.score*.35+inertia*.55;
+   if(score>bestScore){bestScore=score;best={x:dx,z:dz}}
   }
-  if(rayScore===0)continue;
-  const targetPull=dx*target.x+dz*target.z,gradientPull=dx*grad.x+dz*grad.z;
-  const inertia=ud.moveDir.lengthSq()>.001?dx*ud.moveDir.x+dz*ud.moveDir.z:targetPull;
-  const score=rayScore*2.0+targetPull*2.8+gradientPull*2.0+grad.score*.35+inertia*.55;
-  if(score>bestScore){bestScore=score;best={x:dx,z:dz}}
+  ud.followRay=best;ud.followRayAt=now+220;
  }
- if(!best){ud.moveDir.set(0,0,0);return false}
- const desired=Math.atan2(best.x,best.z),current=obj.rotation.y;
+ const ray=ud.followRay;if(!ray){ud.moveDir.set(0,0,0);return false}
+ // Rotate toward and advance along the selected ray, not directly toward the target.
+ const desired=Math.atan2(ray.x,ray.z),current=obj.rotation.y;
  let delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
  obj.rotation.y=current+delta*Math.min(1,dt*8);
  const dx=Math.sin(obj.rotation.y),dz=Math.cos(obj.rotation.y),move=speed*dt,nx=p.x+dx*move,nz=p.z+dz*move;
- if(!scpRayClearSegment(p.x,p.z,nx,nz,.42)){ud.moveDir.set(0,0,0);return false}
+ if(!scpRayClearSegment(p.x,p.z,nx,nz,.42)){ud.followRay=null;ud.moveDir.set(0,0,0);return false}
  p.x=nx;p.z=nz;ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
