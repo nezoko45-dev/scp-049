@@ -532,7 +532,7 @@ function gradientSCP(x,z){
 function buildSCPFlowField(tx,tz){
  // Connected flow field: flood open cells outward from the target.
  // Each reachable cell points to its predecessor toward the target.
- const cs=1.25,N=72,half=N/2,ox=tx-half*cs,oz=tz-half*cs,total=N*N,id=(x,z)=>z*N+x;
+ const cs=1.25,N=128,half=N/2,ox=tx-half*cs,oz=tz-half*cs,total=N*N,id=(x,z)=>z*N+x;
  const blocked=new Uint8Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total),distance=new Int32Array(total);distance.fill(-1);
  for(let z=0;z<N;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=hit(wx,wz,.48)?1:0}
  // Find nearest open seed to target if the target itself sits in a blocked cell.
@@ -569,6 +569,11 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
   for(let z=Math.max(1,iz-5);z<=Math.min(N-2,iz+5);z++)for(let x=Math.max(1,ix-5);x<=Math.min(N-2,ix+5);x++){
    const u=cell(x,z),d=Math.hypot(x-ix,z-iz);
    if(!f.blocked[u]&&f.distance[u]>=0&&d<nd){near={x,z};nd=d}
+  }
+  if(!near){
+   // SCP may be outside the field radius or separated by a broad wall.
+   // Find the nearest reachable cell anywhere in the target-seeded field.
+   let best=Infinity;for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++){const u=cell(x,z);if(f.blocked[u]||f.distance[u]<0)continue;const d=(x-ix)*(x-ix)+(z-iz)*(z-iz);if(d<best){best=d;near={x,z}}}
   }
   if(near){cx=near.x;cz=near.z;current=f.distance[cell(cx,cz)]}
  }
