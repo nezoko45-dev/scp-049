@@ -558,31 +558,31 @@ function buildSCPFlowField(tx,tz,startX=tx,startZ=tz){
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- // Continuous ground-vector steering: sample the actual floor around SCP,
- // never look up a navigation cell. Each open ground probe contributes a
- // downhill vector toward the target; nearby solid ground repels the blend.
- const sampleRadius=2.6,probeRadius=.48,angles=24,step=Math.max(.025,speed*dt);
- let sx=0,sz=0,weightSum=0,clearanceBest=0;
- for(let k=0;k<angles;k++){
-  const a=k*Math.PI*2/angles,dx=Math.sin(a),dz=Math.cos(a);
-  let clear=0;for(let q=1;q<=5;q++){const d=q*.42;if(!hit(p.x+dx*d,p.z+dz*d,probeRadius))clear=d;else break}
-  if(clear<.42)continue;
-  // Sample open ground farther ahead; ground clearance weights the vector.
-  const gx=p.x+dx*sampleRadius,gz=p.z+dz*sampleRadius;
-  if(hit(gx,gz,probeRadius))continue;
-  const toTarget=Math.hypot(tx-gx,tz-gz),base=Math.max(.05,clear/sampleRadius);
-  const w=base/(1+toTarget*.012);
-  sx+=dx*w;sz+=dz*w;weightSum+=w;clearanceBest=Math.max(clearanceBest,clear);
+ // Choose the best continuous ground vector independently. Averaging opposing
+ // open probes cancels the steering vector and was causing SCP to freeze.
+ const step=Math.max(.025,speed*dt),toX=tx-p.x,toZ=tz-p.z,toLen=Math.hypot(toX,toZ)||1,desiredX=toX/toLen,desiredZ=toZ/toLen;
+ let chosen=null,best=-Infinity;
+ for(let k=0;k<48;k++){
+  const a=k*Math.PI*2/48,dx=Math.sin(a),dz=Math.cos(a),alignment=dx*desiredX+dz*desiredZ;
+  // Probe farther ahead along each ground direction; reject blocked ground,
+  // reward free travel, and gently favor continuing the last heading.
+  let clear=0;for(let q=1;q<=8;q++){const d=q*.35;if(hit(p.x+dx*d,p.z+dz*d,r))break;clear=d}
+  if(clear<step)continue;
+  const look=Math.min(2.8,Math.max(step,clear)),gx=p.x+dx*look,gz=p.z+dz*look;
+  if(hit(gx,gz,r))continue;
+  const progress=(gx-p.x)*desiredX+(gz-p.z)*desiredZ;
+  const turn=ud.moveDir?.lengthSq()>.01?(dx*ud.moveDir.x+dz*ud.moveDir.z):0;
+  const score=progress*.8+clear*.22+turn*.35;
+  if(score>best){best=score;chosen={x:dx,z:dz,clear}}
  }
- if(weightSum<.001){ud.moveDir.set(0,0,0);ud.groundFlowStall=(ud.groundFlowStall||0)+1;return false}
- // Target supplies the downhill potential; all actual motion is selected
- // from collision-free ground samples and their blended flow vectors.
- sx/=weightSum;sz/=weightSum;let len=Math.hypot(sx,sz);if(len<.08){ud.moveDir.set(0,0,0);return false}sx/=len;sz/=len;
- const dirs=[Math.atan2(sz,sx),Math.atan2(sz,sx)+.35,Math.atan2(sz,sx)-.35,Math.atan2(sz,sx)+.7,Math.atan2(sz,sx)-.7];
- let chosen=null;for(const a of dirs){const dx=Math.cos(a),dz=Math.sin(a);if(!hit(p.x+dx*step,p.z+dz*step,r)){chosen=[dx,dz];break}}
- if(!chosen){ud.moveDir.set(0,0,0);return false}
- p.x+=chosen[0]*step;p.z+=chosen[1]*step;ud.moveDir.set(chosen[0],0,chosen[1]);obj.rotation.y=Math.atan2(chosen[0],chosen[1]);
- ud.groundFlowVector={x:chosen[0],z:chosen[1],sampledAt:performance.now()};ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;ud.flowField=null;return true
+ if(!chosen){ud.moveDir.set(0,0,0);ud.groundFlowStall=(ud.groundFlowStall||0)+1;return false}
+ // If the preferred heading is obstructed at the immediate step, shrink the
+ // stride until its ground sample is clear; do not abandon a valid vector.
+ let stride=Math.min(step,chosen.clear),mx=chosen.x*stride,mz=chosen.z*stride;
+ while(stride>.025&&hit(p.x+mx,p.z+mz,r)){stride*=.5;mx=chosen.x*stride;mz=chosen.z*stride}
+ if(hit(p.x+mx,p.z+mz,r)){ud.moveDir.set(0,0,0);return false}
+ p.x+=mx;p.z+=mz;ud.moveDir.set(chosen.x,0,chosen.z);obj.rotation.y=Math.atan2(chosen.x,chosen.z);
+ ud.groundFlowVector={x:chosen.x,z:chosen.z,sampledAt:performance.now()};ud.groundFlowStall=0;ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;ud.flowField=null;return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
