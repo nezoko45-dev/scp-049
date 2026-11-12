@@ -45,13 +45,13 @@ const scpRayGroup=new T.Group();scene.add(scpRayGroup);
 const rayHUD=document.createElement('div');rayHUD.id='rayHUD';rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:20;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font: bold 14px monospace;display:none;pointer-events:none;text-shadow:0 0 8px #00ffff';rayHUD.textContent='GIZMO ACTIVE · WAITING FOR SCP ROUTE';document.body.appendChild(rayHUD);
 window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayGroup.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';rayHUD.textContent=scpRayGizmos?'GIZMO ACTIVE · CYAN RAY CHAIN / YELLOW WAYPOINTS':'GIZMO OFF'}});
 function drawSCPRayChain(points){
- while(scpRayGroup.children.length){const o=scpRayGroup.children.pop();o.geometry?.dispose();o.material?.dispose()}
+ while(scpRayGroup.children.length){const o=scpRayGroup.children[0];scpRayGroup.remove(o);o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose()}
  if(points?.length>1){
-  const verts=[];for(let i=1;i<points.length;i++)verts.push(points[i-1].x,.65,points[i-1].z,points[i].x,.65,points[i].z);
+  const verts=[];for(let i=1;i<points.length;i++)verts.push(points[i-1].x,1.35,points[i-1].z,points[i].x,1.35,points[i].z);
   const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(verts,3));
   scpRayGroup.add(new T.LineSegments(geo,new T.LineBasicMaterial({color:0x00ffff,depthTest:false,transparent:true,opacity:1})));
-  const markGeo=new T.SphereGeometry(.12,8,6),markMat=new T.MeshBasicMaterial({color:0xffee44,depthTest:false});
-  for(let i=1;i<points.length;i+=Math.max(1,Math.floor(points.length/24))){const m=new T.Mesh(markGeo,markMat);m.position.set(points[i].x,.75,points[i].z);scpRayGroup.add(m)}
+  const markGeo=new T.SphereGeometry(.24,10,8),markMat=new T.MeshBasicMaterial({color:0xffee44,depthTest:false});
+  for(let i=1;i<points.length;i+=Math.max(1,Math.floor(points.length/24))){const m=new T.Mesh(markGeo,markMat);m.position.set(points[i].x,1.45,points[i].z);scpRayGroup.add(m)}
  }
  scpRayGroup.visible=scpRayGizmos;
 }
@@ -440,7 +440,9 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // 360-degree sphere-like ray fan: 32 horizontal rays and 16 rays each
 // on upper/lower rings. All rays inspect every direction around SCP.
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- if(!navReady||!navData?.grid)return false;
+ // Always draw a visible target beam, even while the precomputed grid is loading.
+ if(scpRayGizmos)drawSCPRayChain([{x:obj.position.x,z:obj.position.z},{x:tx,z:tz}]);
+ if(!navReady||!navData?.grid){if(scpRayGizmos)rayHUD.textContent='GIZMO ACTIVE · GRID NOT READY · DIRECT TARGET BEAM';return false;}
  const ud=obj.userData||(obj.userData={}),cs=navData.cellSize||1;
  let from=cellOf(obj.position.x,obj.position.z),to=cellOf(tx,tz);
  const open=(q)=>q.x>=0&&q.z>=0&&q.x<navData.width&&q.z<navData.height&&!!navData.grid[q.z]?.[q.x];
