@@ -502,7 +502,7 @@ function buildSCPGPSChain(sx,sz,tx,tz){
  if(!found)return null;let cur=key(goal.x,goal.z),path=[];while(cur){const [x,z]=cur.split(',').map(Number);path.push(world(x,z));if(cur===key(s.x,s.z))break;cur=came.get(cur)}path.reverse();path[0]={x:sx,z:sz};path.push({x:tx,z:tz});return path
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),now=performance.now(),targetKey=Math.round(tx/3)+','+Math.round(tz/3);
+ const ud=obj.userData||(obj.userData={}),now=performance.now(),targetKey=Math.round(tx/3)+','+Math.round(tz/3);if(!ud.moveDir)ud.moveDir=new T.Vector3();
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
  // Generate GPS route once per target/update interval, then follow its ray waypoint chain.
  if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>1800){
@@ -516,7 +516,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
  const move=Math.min(speed*dt,d),nx=obj.position.x+dx/d*move,nz=obj.position.z+dz/d*move;
  if(!scpRayClearSegment(obj.position.x,obj.position.z,nx,nz,.42)){ud.rayChainAtTime=0;return false}
- obj.position.x=nx;obj.position.z=nz;ud.moveAngle=Math.atan2(dx,dz);ud.moveDir?.set(dx/d,0,dz/d);return true
+ obj.position.x=nx;obj.position.z=nz;ud.moveAngle=Math.atan2(dx,dz);ud.moveDir.set(dx/d,0,dz/d);obj.rotation.y=ud.moveAngle;return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
