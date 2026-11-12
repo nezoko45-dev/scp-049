@@ -91,21 +91,24 @@ const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 function drawSCPRayGizmos(obj,tx,tz){
  if(!scpRayGizmos)return;clearSCPRayViz();
- const p=obj.position,ud=obj.userData||{},verts=[],y=.12,r=.48;
- // Visualize the actual continuous ground flow probes (not obsolete grid cells).
- const desiredX=(tx-p.x)/(Math.hypot(tx-p.x,tz-p.z)||1),desiredZ=(tz-p.z)/(Math.hypot(tx-p.x,tz-p.z)||1);
- for(let k=0;k<48;k++){
-  const ang=k*Math.PI*2/48,dx=Math.sin(ang),dz=Math.cos(ang);let clear=0;
-  for(let q=1;q<=8;q++){const d=q*.35;if(hit(p.x+dx*d,p.z+dz*d,r))break;clear=d}
-  if(clear<.1)continue;
-  const len=Math.min(2.8,clear),score=len*.22+len*(dx*desiredX+dz*desiredZ)*.8+(ud.moveDir?.lengthSq()>.01?(dx*ud.moveDir.x+dz*ud.moveDir.z)*.35:0);
-  const ex=p.x+dx*len,ez=p.z+dz*len;
-  verts.push(p.x,y,p.z,ex,y,ez);
-  // selected/best direction gets a longer highlight
-  if(ud.groundFlowVector&&Math.abs(dx-ud.groundFlowVector.x)<.08&&Math.abs(dz-ud.groundFlowVector.z)<.08)verts.push(ex,y,ez,ex+dx*.35,y,ez+dz*.35);
+ const ud=obj.userData||{},f=ud.flowField;
+ if(f){
+  const verts=[],y=.12,step=4;
+  // Draw the actual cell-flowfield vectors across the generated facility.
+  for(let z=1;z<f.H-1;z+=step)for(let x=1;x<f.N-1;x+=step){
+   const i=z*f.N+x,dx=f.dirX[i],dz=f.dirZ[i];if((!dx&&!dz)||f.blocked[i]||f.distance[i]<0)continue;
+   const wx=f.ox+(x+.5)*f.cs,wz=f.oz+(z+.5)*f.cs,len=f.cs*.42,ex=wx+dx*len,ez=wz+dz*len;
+   verts.push(wx,y,wz,ex,y,ez,ex,y,ez,ex-dx*.22-dz*.13,y,ez-dz*.22+dx*.13,ex,y,ez,ex-dx*.22+dz*.13,y,ez-dz*.22-dx*.13);
+  }
+  if(verts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpRayViz.add(new T.LineSegments(g,scpRayMatClear))}
+  // Emphasize SCP's current cell vector so its movement direction is visible.
+  const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs),i=z*f.N+x;
+  if(x>=0&&z>=0&&x<f.N&&z<f.H&&f.dirX[i]||f.dirZ[i]){
+   const dx=f.dirX[i],dz=f.dirZ[i],px=obj.position.x,pz=obj.position.z;
+   const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([px,.28,pz,px+dx*2,.28,pz+dz*2],3));scpRayViz.add(new T.Line(g,scpRayMatClear))
+  }
  }
- if(verts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpRayViz.add(new T.LineSegments(g,scpRayMatClear))}
- scpRayViz.visible=true;rayHUD.textContent='GROUND FLOW PROBES (G toggles) — 48 sampled directions';
+ scpRayViz.visible=true;rayHUD.textContent='CELL FLOWFIELD VECTORS (G toggles)';
 }
 window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;scpChainViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos&&typeof bad!=='undefined'&&bad){drawSCPRayGizmos(bad,targetObj?.position.x,targetObj?.position.z);}if(!scpRayGizmos)clearSCPRayViz()}});
 function buildSCPRayChain(obj,tx,tz,r=.42){
