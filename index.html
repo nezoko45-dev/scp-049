@@ -12,10 +12,13 @@ const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({c
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
+const SCP_SCORE_MEMORY='scp049-facility-score-memory-v1';
+function saveSCPScoreMemory(){try{if(navData?.grid)localStorage.setItem(SCP_SCORE_MEMORY,JSON.stringify({width:navData.width,height:navData.height,cellSize:navData.cellSize,origin:navData.origin,grid:navData.grid}))}catch(e){console.warn('SCP score memory save failed',e)}}
+function restoreSCPScoreMemory(){try{const m=JSON.parse(localStorage.getItem(SCP_SCORE_MEMORY)||'null');if(m&&m.grid&&m.width===navData.width&&m.height===navData.height&&m.cellSize===navData.cellSize&&m.origin?.x===navData.origin.x&&m.origin?.z===navData.origin.z&&m.grid.length===navData.height)navData.grid=m.grid.map(row=>row.slice());}catch(e){console.warn('SCP score memory restore failed',e)}}
 function buildNavigation(){
  const size=400,cellSize=1,origin=-200;
  navData={format:'facility-score-map-v1',cellSize:facilityJSON?.cellSize||cellSize,width:facilityJSON?.width||size,height:facilityJSON?.height||size,origin:facilityJSON?.origin||{x:origin,z:origin},grid:facilityJSON?.scores?.map(row=>row.slice())||Array.from({length:size},()=>Array(size).fill(1)),revision:0};
- rebuildFacilityScoreMap();
+ restoreSCPScoreMemory();rebuildFacilityScoreMap();saveSCPScoreMemory();
  navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';
  console.info('Facility JSON score map initialized: 1=unblocked, 0=blocked');
 }
@@ -276,7 +279,7 @@ function makeFacilityChunk(cx,cz){
   if(Math.random()<.5){let z=cz+8+Math.random()*24,gap=cx+8+Math.random()*24;wall(cx+(gap-cx-4)/2,z,gap-cx-4,1);wall(gap+4+(cx+40-gap-4)/2,z,cx+40-gap-4,1)}
   else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
  }
- scanGeneratedMap(cx,cz,40);
+ scanGeneratedMap(cx,cz,40);saveSCPScoreMemory();
  // Lamps and props.
  let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);fetch('http://127.0.0.1:8766/chunk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chunk:{x:cx,z:cz,size:40},walls:chunkWalls})}).catch(()=>{});
 }
