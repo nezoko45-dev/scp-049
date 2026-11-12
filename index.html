@@ -11,7 +11,12 @@ const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({c
 // The fixed starter map is removed; the entire facility is generated from streamed chunks.
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
-function buildNavigation(){navData=null;navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';console.info('Live facility scoring enabled: 1=open, 0=solid collider');}
+function buildNavigation(){
+ const size=400,origin=-200;
+ navData={cellSize:1,width:size,height:size,origin:{x:origin,z:origin},grid:Array.from({length:size},()=>Array(size).fill(1))};
+ navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';
+ console.info('Live grid initialized: 1=open, 0=blocked');
+}
 function cellOf(x,z){const cs=navData.cellSize||1;return {x:Math.floor((x-navData.origin.x)/cs),z:Math.floor((z-navData.origin.z)/cs)}}
 function nearestOpen(x,z){
  if(!navData?.grid)return null;let c=cellOf(x,z),W=navData.width,H=navData.height;
@@ -429,64 +434,26 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // 360-degree sphere-like ray fan: 32 horizontal rays and 16 rays each
 // on upper/lower rings. All rays inspect every direction around SCP.
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const x=obj.position.x,z=obj.position.z,dist=Math.hypot(tx-x,tz-z);
- if(dist<.05)return false;
- const cs=navData?.cellSize||1;
- const rayClear=(ax,az,bx,bz)=>{
-  const n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));
-  for(let k=1;k<=n;k++){
-   const t=k/n,px=ax+(bx-ax)*t,pz=az+(bz-az)*t;
-   if(hit(px,pz,.85))return false;
-   if(navReady&&navData?.grid){const c=cellOf(px,pz);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false;}
-  }
-  return true;
- };
  if(!navReady||!navData?.grid)return false;
- const W=navData.width,H=navData.height,goal=cellOf(tx,tz),key=goal.x+","+goal.z,ud=obj.userData||(obj.userData={});
- // Build/rebuild a ray-connected cell graph from the current SCP cell.
- // Nodes are open grid cells; edges exist only when the entire cell-to-cell ray is clear.
- const start=nearestOpen(x,z);
- if(!start)return false;
- if(ud.rayChainGoal!==key||!ud.rayChain||ud.rayChainAt===undefined||ud.rayChainAt>=ud.rayChain.length){
-  const nodes=[],index=new Map();
-  for(let iz=0;iz<H;iz++)for(let ix=0;ix<W;ix++)if(navData.grid[iz]?.[ix]){
-   const id=iz*W+ix,px=navData.origin.x+(ix+.5)*cs,pz=navData.origin.z+(iz+.5)*cs;
-   nodes.push({id,x:px,z:pz,cx:ix,cz:iz});index.set(id,nodes.length-1);
-  }
-  const sid=start.z*W+start.x,source=index.get(sid);
-  let chain=[];
-  if(source!==undefined){
-   // Dijkstra-like greedy best-first over ray-visible cell links, biased toward target.
-   const open=[source],came=new Map(),cost=new Map([[source,0]]),closed=new Set();let found=-1;
-   while(open.length&&closed.size<nodes.length){
-    open.sort((a,b)=>(cost.get(a)+Math.hypot(nodes[a].x-tx,nodes[a].z-tz))-(cost.get(b)+Math.hypot(nodes[b].x-tx,nodes[b].z-tz)));
-    const cur=open.shift();if(closed.has(cur))continue;closed.add(cur);
-    const n=nodes[cur];
-    if(Math.hypot(n.x-tx,n.z-tz)<=cs*1.25||rayClear(n.x,n.z,tx,tz)){found=cur;break;}
-    // Connect ray-clear cells in the surrounding 8-cell neighborhood.
-    for(let oz=-1;oz<=1;oz++)for(let ox=-1;ox<=1;ox++){if(!ox&&!oz)continue;
-     const cx=n.cx+ox,cz=n.cz+oz;if(cx<0||cz<0||cx>=W||cz>=H||!navData.grid[cz]?.[cx])continue;
-     const ni=index.get(cz*W+cx);if(ni===undefined||closed.has(ni))continue;
-     const nn=nodes[ni];if(!rayClear(n.x,n.z,nn.x,nn.z))continue;
-     const nc=cost.get(cur)+Math.hypot(nn.x-n.x,nn.z-n.z);
-     if(nc<(cost.get(ni)??Infinity)){cost.set(ni,nc);came.set(ni,cur);if(!open.includes(ni))open.push(ni);}
-    }
-   }
-   if(found>=0){let ids=[found];while(ids[0]!==source&&came.has(ids[0]))ids.unshift(came.get(ids[0]));chain=ids.map(i=>({x:nodes[i].x,z:nodes[i].z}));}
-  }
-  ud.rayChain=chain;ud.rayChainAt=chain.length>1?1:0;ud.rayChainGoal=key;
+ const ud=obj.userData||(obj.userData={}),cs=navData.cellSize||1;
+ let from=cellOf(obj.position.x,obj.position.z),to=cellOf(tx,tz);
+ const open=(q)=>q.x>=0&&q.z>=0&&q.x<navData.width&&q.z<navData.height&&!!navData.grid[q.z]?.[q.x];
+ if(!open(from)){const q=nearestOpen(obj.position.x,obj.position.z);if(!q)return false;from=q}
+ if(!open(to)){const q=nearestOpen(tx,tz);if(!q)return false;to=q}
+ const key=from.x+','+from.z+'>'+to.x+','+to.z;
+ if(ud.rayChainKey!==key||!ud.rayChain?.length||performance.now()-(ud.rayChainAtTime||0)>1200){
+  ud.rayChain=gridRoute(from,to).map(q=>({x:navData.origin.x+(q.x+.5)*cs,z:navData.origin.z+(q.z+.5)*cs}));
+  ud.rayChainIndex=1;ud.rayChainKey=key;ud.rayChainAtTime=performance.now();
  }
- let chain=ud.rayChain||[];
- // Advance through reached waypoints, then use the next connected cell.
- while(ud.rayChainAt<chain.length&&Math.hypot(chain[ud.rayChainAt].x-x,chain[ud.rayChainAt].z-z)<cs*.35)ud.rayChainAt++;
- let route=chain[ud.rayChainAt]||null;
- // Final target ray only after chain has brought SCP into line of sight.
- if(!route&&rayClear(x,z,tx,tz))route={x:tx,z:tz};
- if(!route)return false;
- const vx=route.x-x,vz=route.z-z,d=Math.hypot(vx,vz);if(d<.01)return false;
- const step=Math.min(speed*dt,d),mx=vx/d*step,mz=vz/d*step;
- if(hit(x+mx,z+mz,.85))return false;
- obj.position.x=x+mx;obj.position.z=z+mz;return true;
+ const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
+ while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.45)i++;
+ ud.rayChainIndex=i;drawSCPRayChain([{x:obj.position.x,z:obj.position.z},...chain.slice(Math.max(1,i-1))]);
+ let p=chain[i];
+ if(!p){if(!hit(tx,tz,.8)){p={x:tx,z:tz}}else return false}
+ const dx=p.x-obj.position.x,dz=p.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
+ const step=Math.min(speed*dt,d),x=obj.position.x+dx/d*step,z=obj.position.z+dz/d*step;
+ if(hit(x,z,.8))return false;
+ obj.position.x=x;obj.position.z=z;obj.userData.moveDir?.set(dx/d,0,dz/d);return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
