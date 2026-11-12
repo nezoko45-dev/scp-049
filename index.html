@@ -435,37 +435,46 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // 360-degree sphere-like ray fan: 32 horizontal rays and 16 rays each
 // on upper/lower rings. All rays inspect every direction around SCP.
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),now=performance.now();
- // Generate a real ground-score ray chain around live colliders (not the empty grid).
- const targetKey=Math.round(tx/3)+','+Math.round(tz/3);
- if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>11000){
-  const chain=[{x:obj.position.x,z:obj.position.z}],seen=new Set();let x=obj.position.x,z=obj.position.z,prevA=ud.moveAngle||0;
-  for(let n=0;n<180;n++){
-   if(Math.hypot(tx-x,tz-z)<1.25){chain.push({x:tx,z:tz});break}
-   let best=null,bestScore=-Infinity;
-   // Cast 72 candidate directions; only score-1 ground with collision clearance can become a node.
-   for(let k=0;k<72;k++){
-    const a=k*Math.PI/36,dx=Math.sin(a),dz=Math.cos(a),nx=x+dx*1.15,nz=z+dz*1.15;
-    if(scpGroundScore(nx,nz,.48)!==1||hit(nx,nz,.48))continue;
-    let clear=0;for(const d of [.45,.9,1.35,1.8,2.4])if(scpGroundScore(x+dx*d,z+dz*d,.4)===1&&!hit(x+dx*d,z+dz*d,.4))clear++;
-    const progress=Math.hypot(tx-x,tz-z)-Math.hypot(tx-nx,tz-nz);
-    const turn=Math.abs(Math.atan2(Math.sin(a-prevA),Math.cos(a-prevA)));
-    const repeat=seen.has(Math.round(nx*1.2)+','+Math.round(nz*1.2))?5:0;
-    const score=progress*2.5+clear*.22-turn*.65-repeat;
-    if(score>bestScore){bestScore=score;best={x:nx,z:nz,a}}
+ const ud=obj.userData||(obj.userData={}),now=performance.now(),targetKey=Math.round(tx/4)+','+Math.round(tz/4);
+ // Beam-search ray chain: branches around blockers, then keeps the best complete route.
+ if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>9000){
+  const step=.9,dirs=36,beamWidth=10,maxDepth=190,start={x:obj.position.x,z:obj.position.z,a:ud.moveAngle||0,path:[{x:obj.position.x,z:obj.position.z}],score:0};
+  let beam=[start],best=start,bestDist=Math.hypot(tx-start.x,tz-start.z),reached=false;
+  const visited=new Map();
+  for(let depth=0;depth<maxDepth&&!reached;depth++){
+   const next=[];
+   for(const node of beam){
+    const dist0=Math.hypot(tx-node.x,tz-node.z);
+    for(let k=0;k<dirs;k++){
+     const a=k*Math.PI*2/dirs,dx=Math.sin(a),dz=Math.cos(a),x=node.x+dx*step,z=node.z+dz*step;
+     // Every ray segment must remain on open ground and clear of live collision geometry.
+     if(scpGroundScore(x,z,.43)!==1||hit(x,z,.43)||scpGroundScore(node.x+dx*.45,node.z+dz*.45,.4)!==1||hit(node.x+dx*.45,node.z+dz*.45,.4))continue;
+     let clearance=0;for(const d of [.35,.7,1.05,1.4,1.8,2.2])if(scpGroundScore(node.x+dx*d,node.z+dz*d,.38)===1&&!hit(node.x+dx*d,node.z+dz*d,.38))clearance++;
+     const dist=Math.hypot(tx-x,tz-z),progress=dist0-dist,turn=Math.abs(Math.atan2(Math.sin(a-node.a),Math.cos(a-node.a)));
+     const key=Math.round(x*1.1)+','+Math.round(z*1.1),vis=visited.get(key)||0;if(vis>depth+1)continue;visited.set(key,depth+1);
+     const score=node.score+progress*3+clearance*.12-turn*.42-.025;
+     const cand={x,z,a,path:node.path.concat({x,z}),score};
+     if(dist<bestDist){best=cand;bestDist=dist}
+     if(dist<1.15){best=cand;reached=true;break}
+     next.push(cand)
+    }
+    if(reached)break
    }
-   if(!best)break;
-   x=best.x;z=best.z;prevA=best.a;seen.add(Math.round(x*1.2)+','+Math.round(z*1.2));chain.push({x,z});
+   if(reached)break;
+   next.sort((a,b)=>(b.score-Math.hypot(tx-b.x,tz-b.z)*.35)-(a.score-Math.hypot(tx-a.x,tz-a.z)*.35));
+   beam=next.slice(0,beamWidth);if(!beam.length)break;
   }
-  ud.rayChain=chain;ud.rayChainIndex=1;ud.rayChainAtTime=now;ud.rayTargetKey=targetKey;
+  // Append target only if the final segment itself is unobstructed.
+  const route=best.path.slice();if(Math.hypot(tx-best.x,tz-best.z)<1.4&&!hit(tx,tz,.4))route.push({x:tx,z:tz});
+  ud.rayChain=route;ud.rayChainIndex=1;ud.rayChainAtTime=now;ud.rayTargetKey=targetKey;
  }
  const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
- while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.7)i++;
+ while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.55)i++;
  ud.rayChainIndex=i;
- if(scpRayGizmos){rayHUD.textContent='LIVE SCORE RAY CHAIN · '+chain.length+' NODES · '+i+'/'+chain.length+'\n'+chain.slice(0,12).map((p,k)=>k+': '+p.x.toFixed(1)+','+p.z.toFixed(1)).join('\n');}
- let p=chain[i];if(!p)return false;
+ if(scpRayGizmos)rayHUD.textContent='WRAPPING RAY CHAIN · '+chain.length+' NODES · '+i+'/'+chain.length+'\n'+chain.slice(0,16).map((p,k)=>k+': '+p.x.toFixed(1)+','+p.z.toFixed(1)).join('\n');
+ const p=chain[i];if(!p)return false;
  const dx=p.x-obj.position.x,dz=p.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
- const step=Math.min(speed*dt,d),x=obj.position.x+dx/d*step,z=obj.position.z+dz/d*step;
+ const stepMove=Math.min(speed*dt,d),x=obj.position.x+dx/d*stepMove,z=obj.position.z+dz/d*stepMove;
  if(scpGroundScore(x,z,.42)!==1||hit(x,z,.42))return false;
  obj.position.x=x;obj.position.z=z;ud.moveAngle=Math.atan2(dx,dz);obj.userData.moveDir?.set(dx/d,0,dz/d);return true
 }
