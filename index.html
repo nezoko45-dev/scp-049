@@ -60,7 +60,8 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;\n if(obj===bad){const chain=buildSCPRayChain(obj,tx,tz,r);if(chain){desiredX=chain.x;desiredZ=chain.z}}
+ let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
+ if(obj===bad){const chain=buildSCPRayChain(obj,tx,tz,r);if(chain){desiredX=chain.x;desiredZ=chain.z}}
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
