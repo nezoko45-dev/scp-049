@@ -518,42 +518,58 @@ function gradientSCP(x,z){
 }
 
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- // Direct collision-bound steering: no rope, waypoints, raycasts, or grid.
- const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz)||1,targetX=dx/dist,targetZ=dz/dist;
- const step=Math.max(.02,speed*dt),radius=.48;
- // Sample candidate headings; score clear movement by target progress and clearance.
- let best=null,bestScore=-Infinity;
- const angles=[0,.18,-.18,.38,-.38,.65,-.65,.95,-.95,1.3,-1.3,Math.PI/2,-Math.PI/2,Math.PI];
- const facing=ud.steerAngle??Math.atan2(targetX,targetZ);
- for(const off of angles){
-  const a=facing+off,vx=Math.sin(a),vz=Math.cos(a);
-  let clear=0,blocked=0,reach=0;
-  for(const d of [.55,1,1.6,2.4,3.4,4.8,6]){
-   if(!hit(p.x+vx*d,p.z+vz*d,radius)){clear++;reach=d}else blocked++;
+ const ud=obj.userData||(obj.userData={}),p=obj.position;
+ if(!ud.moveDir)ud.moveDir=new T.Vector3();
+ // Collision-gradient steering: target attraction + repulsion from solid bounds.
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz)||1;
+ let gx=dx/dist,gz=dz/dist;
+ const influence=4.2,radius=.48;
+ for(const o of solid){
+  const hx=o.w/2+radius,hz=o.d/2+radius;
+  const qx=Math.max(o.x-hx,Math.min(p.x,o.x+hx));
+  const qz=Math.max(o.z-hz,Math.min(p.z,o.z+hz));
+  let ax=p.x-qx,az=p.z-qz,d=Math.hypot(ax,az);
+  if(d<influence){
+   if(d<.001){ // inside expanded bounds: push toward the nearest exit edge
+    const ex=hx-Math.abs(p.x-o.x),ez=hz-Math.abs(p.z-o.z);
+    if(ex<ez){ax=(p.x>=o.x?1:-1);az=0}else{ax=0;az=(p.z>=o.z?1:-1)}
+    d=1;
+   }
+   const strength=2.8*Math.pow((influence-d)/influence,2)/(Math.max(.22,d));
+   gx+=ax/d*strength;gz+=az/d*strength;
   }
-  // Ensure the actual next step and intermediate samples are collision-free.
-  let safe=true;for(let k=1;k<=5;k++){const d=step*k/5;if(hit(p.x+vx*d,p.z+vz*d,radius)){safe=false;break}}
-  if(!safe)continue;
-  const toward=vx*targetX+vz*targetZ;
-  const side=Math.abs(vx*targetZ-vz*targetX);
-  const score=toward*18+clear*2.4+reach*.3-blocked*4-side*1.8-Math.abs(off)*.12;
-  if(score>bestScore){bestScore=score;best={vx,vz,a,score}}
  }
- if(!best){
-  // Escape from nearby bounding boxes by choosing the safest free direction.
-  let escape=null,es=-Infinity;
-  for(let deg=0;deg<360;deg+=5){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);if(hit(p.x+vx*Math.min(step,.25),p.z+vz*Math.min(step,.25),radius))continue;let free=0;for(const d of [.5,1,1.5,2.5,3.5])if(!hit(p.x+vx*d,p.z+vz*d,radius))free++;const s=free*4+vx*targetX+vz*targetZ;if(s>es){es=s;escape={vx,vz,a}}}
-  if(!escape){ud.moveDir.set(0,0,0);return false}best=escape;
+ // Normalize the summed potential gradient.
+ let gl=Math.hypot(gx,gz);
+ if(gl<.001){gx=dx/dist;gz=dz/dist;gl=1}
+ gx/=gl;gz/=gl;
+ const step=Math.max(.02,speed*dt);
+ // A short bound-only safety check prevents the gradient from stepping into a collider.
+ let vx=gx,vz=gz;
+ let safe=true;
+ for(let k=1;k<=5;k++){const d=step*k/5;if(hit(p.x+vx*d,p.z+vz*d,radius)){safe=false;break}}
+ if(!safe){
+  // Local gradient escape: test nearby directions, preferring gradient alignment and open space.
+  let best=null,bscore=-Infinity;
+  for(let deg=-180;deg<180;deg+=12){
+   const a=Math.atan2(gx,gz)+deg*Math.PI/180,cx=Math.sin(a),cz=Math.cos(a);
+   let clear=true;for(let k=1;k<=5;k++){const d=step*k/5;if(hit(p.x+cx*d,p.z+cz*d,radius)){clear=false;break}}
+   if(!clear)continue;
+   let open=0;for(const d of [.6,1.2,2,3])if(!hit(p.x+cx*d,p.z+cz*d,radius))open++;
+   const score=(cx*gx+cz*gz)*5+open*1.3-Math.abs(deg)*.002;
+   if(score>bscore){bscore=score;best={x:cx,z:cz,a}}
+  }
+  if(!best){ud.moveDir.set(0,0,0);return false}
+  vx=best.x;vz=best.z;
  }
- // Turn smoothly while moving only through bound-tested free space.
- let delta=Math.atan2(Math.sin(best.a-facing),Math.cos(best.a-facing)),turn=Math.max(-dt*2.8,Math.min(dt*2.8,delta)),a=facing+turn;
- let vx=Math.sin(a),vz=Math.cos(a),mx=vx*step,mz=vz*step;
- if(hit(p.x+mx,p.z+mz,radius)){vx=best.vx;vz=best.vz;mx=vx*step;mz=vz*step;a=best.a}
+ const desired=Math.atan2(vx,vz),facing=ud.steerAngle??desired;
+ let delta=Math.atan2(Math.sin(desired-facing),Math.cos(desired-facing));
+ const a=facing+Math.max(-dt*3,Math.min(dt*3,delta));
+ let mx=Math.sin(a)*step,mz=Math.cos(a)*step;
+ if(hit(p.x+mx,p.z+mz,radius)){mx=vx*step;mz=vz*step}
  if(hit(p.x+mx,p.z+mz,radius)){ud.moveDir.set(0,0,0);return false}
- p.x+=mx;p.z+=mz;ud.steerAngle=a;ud.moveDir.set(vx,0,vz);
- obj.rotation.y=Math.atan2(vx,vz);
- // Keep any old rope data cleared so no rope is generated or followed.
+ p.x+=mx;p.z+=mz;ud.steerAngle=a;ud.moveDir.set(mx/step,0,mz/step);
+ obj.rotation.y=Math.atan2(mx,mz);
  ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;
  return true
 }
