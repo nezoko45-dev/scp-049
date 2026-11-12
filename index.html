@@ -517,26 +517,28 @@ function gradientSCP(x,z){
  return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
 }
 function generateSCPRope(obj,tx,tz){
- // Collision-aware particle rope: waypoint particles test solid bounds (no raycasts).
- const p=obj.position,dx=tx-p.x,dz=tz-p.z,len=Math.hypot(dx,dz)||1,nx=-dz/len,nz=dx/len,spacing=.62,count=Math.max(2,Math.min(160,Math.ceil(len/spacing))),points=[{x:p.x,z:p.z}];
- let side=1;
- for(let i=1;i<count;i++){
-  const t=i/count,x=p.x+dx*t,z=p.z+dz*t;
-  if(hit(x,z,.62)){
-   // Push this rope particle around the nearest blocking object's edge.
-   const block=solid.find(o=>Math.abs(x-o.x)<o.w/2+.62&&Math.abs(z-o.z)<o.d/2+.62);
-   if(block){
-    const edgeX=block.w/2+.9,edgeZ=block.d/2+.9;
-    const candidates=[
-     {x:block.x+edgeX,z:z},{x:block.x-edgeX,z:z},
-     {x:x,z:block.z+edgeZ},{x:x,z:block.z-edgeZ},
-     {x:x+nx*1.5*side,z:z+nz*1.5*side},{x:x-nx*1.5*side,z:z-nz*1.5*side}
-    ].filter(q=>!hit(q.x,q.z,.48));
-    if(candidates.length){candidates.sort((a,b)=>Math.hypot(a.x-(p.x+dx*(t+.025)),a.z-(p.z+dz*(t+.025)))-Math.hypot(b.x-(p.x+dx*(t+.025)),b.z-(p.z+dz*(t+.025))));const q=candidates[0];points.push({x:q.x,z:q.z});side*=-1}
-   }
-  }else points.push({x,z});
+ // Loose collision-aware particle rope: particles fan around obstacle corners with slack.
+ const p=obj.position,dx=tx-p.x,dz=tz-p.z,len=Math.hypot(dx,dz)||1,spacing=.62,count=Math.max(2,Math.min(160,Math.ceil(len/spacing))),points=[{x:p.x,z:p.z}];
+ const obstacles=solid.filter(o=>{const t=((o.x-p.x)*dx+(o.z-p.z)*dz)/(len*len);if(t<=0||t>=1)return false;const qx=p.x+dx*t,qz=p.z+dz*t;return Math.abs(qx-o.x)<o.w/2+1.5&&Math.abs(qz-o.z)<o.d/2+1.5});
+ // Insert corner anchors with extra slack so rope bows loosely around bounds.
+ for(const o of obstacles){
+  const pad=1.05, corners=[
+   {x:o.x-o.w/2-pad,z:o.z-o.d/2-pad},{x:o.x+o.w/2+pad,z:o.z-o.d/2-pad},
+   {x:o.x+o.w/2+pad,z:o.z+o.d/2+pad},{x:o.x-o.w/2-pad,z:o.z+o.d/2+pad}
+  ];
+  const valid=corners.filter(q=>!hit(q.x,q.z,.48));
+  if(valid.length){valid.sort((a,b)=>Math.hypot(a.x-(p.x+dx*.5),a.z-(p.z+dz*.5))-Math.hypot(b.x-(p.x+dx*.5),b.z-(p.z+dz*.5)));points.push(valid[0]);}
  }
- points.push({x:tx,z:tz});return points
+ points.push({x:tx,z:tz});
+ // Sort anchors along route progression, then add smooth bowed particles between anchors.
+ points.sort((a,b)=>((a.x-p.x)*dx+(a.z-p.z)*dz)-((b.x-p.x)*dx+(b.z-p.z)*dz));
+ const anchors=points.slice(),loose=[anchors[0]];
+ for(let a=1;a<anchors.length;a++){
+  const A=anchors[a-1],B=anchors[a],d=Math.hypot(B.x-A.x,B.z-A.z),n=Math.max(1,Math.ceil(d/spacing),);for(let k=1;k<n;k++){const t=k/n;loose.push({x:A.x+(B.x-A.x)*t,z:A.z+(B.z-A.z)*t})}loose.push(B)
+ }
+ // Offset particles outward from nearby obstacle faces to create slack/bowing.
+ for(let i=1;i<loose.length-1;i++){const q=loose[i],o=solid.find(b=>Math.abs(q.x-b.x)<b.w/2+1.25&&Math.abs(q.z-b.z)<b.d/2+1.25);if(o){const dxq=q.x-o.x,dzq=q.z-o.z;if(Math.abs(dxq/(o.w/2+1))>Math.abs(dzq/(o.d/2+1)))q.x+=Math.sign(dxq||1)*.38;else q.z+=Math.sign(dzq||1)*.38}}
+ return loose
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
