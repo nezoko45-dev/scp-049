@@ -37,10 +37,12 @@ function scpGroundScore(x,z,r=.42){
 }
 let scpRayGizmos=false;
 const scpRayGroup=new T.Group();scene.add(scpRayGroup);
+window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayGroup.visible=scpRayGizmos;document.querySelector('#msg').textContent=scpRayGizmos?'SCP GRID RAY GIZMO: ON':'SCP GRID RAY GIZMO: OFF'}});
 function drawSCPRayChain(points){
- // Breadcrumb navigation is data-only: no particle meshes/gizmos are rendered.
+ // Grid route rays: each segment connects consecutive walkable cell centers.
  while(scpRayGroup.children.length){const o=scpRayGroup.children.pop();o.geometry?.dispose();o.material?.dispose()}
- scpRayGroup.visible=false;
+ if(points?.length>1){const verts=[];for(let i=1;i<points.length;i++){verts.push(points[i-1].x,.12,points[i-1].z,points[i].x,.12,points[i].z)}const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpRayGroup.add(new T.LineSegments(geo,new T.LineBasicMaterial({color:0x39e8ff,transparent:true,opacity:.9})));}
+ scpRayGroup.visible=scpRayGizmos;
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
@@ -533,7 +535,7 @@ function frame(now){
   // SCP chases its current target freely; track movement to drive walk animation.
   let scpMoved=false;
   if(!scpTarget||now>=scpTargetUntil){let pool=[{kind:'player',obj:ctl.getObject(),index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject(),index:-1};scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
-  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{scpMoved=scoreDirectionMove(bad,targetObj.position.x,targetObj.position.z,3.2,dt,.42)}
+  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{scpMoved=sphereRaySteerSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt)}
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
