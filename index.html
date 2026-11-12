@@ -84,7 +84,21 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
  let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
- if(obj===bad){const chain=buildSCPRayChain(obj,tx,tz,r);if(chain){desiredX=chain.x;desiredZ=chain.z}}
+ if(obj===bad){
+  buildSCPRayChain(obj,tx,tz,r);
+  const route=ud.gpsRoute||[];
+  if(ud.gpsFollowRouteAt!==ud.gpsAt){ud.gpsFollowRouteAt=ud.gpsAt;ud.gpsWaypointIndex=1}
+  let wi=ud.gpsWaypointIndex||1;
+  while(wi<route.length&&Math.hypot(route[wi].x-p.x,route[wi].z-p.z)<.48)wi++;
+  ud.gpsWaypointIndex=wi;const wp=route[wi];
+  if(wp){const wx=wp.x-p.x,wz=wp.z-p.z,wd=Math.hypot(wx,wz);
+   if(wd>.01){const step=Math.min(speed*dt,wd),vx=wx/wd,vz=wz/wd,nx=p.x+vx*step,nz=p.z+vz*step;let safe=true;
+    for(let k=1;k<=5;k++){const t=k/5;if(scpGroundScore(p.x+vx*step*t,p.z+vz*step*t,r)!==1||hit(p.x+vx*step*t,p.z+vz*step*t,r)){safe=false;break}}
+    if(safe){p.x=nx;p.z=nz;ud.moveDir?.set(vx,0,vz);obj.rotation.y=Math.atan2(vx,vz);ud.scoreSteerX=vx;ud.scoreSteerZ=vz;return true}
+    ud.gpsRoute=null;ud.gpsAt=0;ud.gpsWaypointIndex=1;
+   }
+  }
+ }
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
