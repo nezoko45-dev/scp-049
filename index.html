@@ -41,29 +41,14 @@ function scpGroundScore(x,z,r=.42){
  return 1
 }
 let scpRayGizmos=false;
-const rayOverlay=document.createElement('canvas');rayOverlay.id='scpRayOverlay';rayOverlay.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:99999;pointer-events:none;display:none';document.body.appendChild(rayOverlay);
-const rayCtx=rayOverlay.getContext('2d');
-function paintRayOverlay(sx,sy,tx,ty){
- rayOverlay.width=innerWidth*devicePixelRatio;rayOverlay.height=innerHeight*devicePixelRatio;rayCtx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
- rayCtx.clearRect(0,0,innerWidth,innerHeight);
- rayCtx.strokeStyle='#00ffff';rayCtx.lineWidth=7;rayCtx.shadowColor='#00ffff';rayCtx.shadowBlur=22;rayCtx.beginPath();rayCtx.moveTo(sx,sy);rayCtx.lineTo(tx,ty);rayCtx.stroke();
- rayCtx.fillStyle='#ffea00';rayCtx.shadowColor='#ffea00';rayCtx.beginPath();rayCtx.arc(sx,sy,12,0,Math.PI*2);rayCtx.fill();rayCtx.beginPath();rayCtx.arc(tx,ty,16,0,Math.PI*2);rayCtx.fill();
- rayCtx.font='bold 20px monospace';rayCtx.fillText('SCP RAY → TARGET',Math.min(sx,tx)+18,Math.min(sy,ty)-18);
-}
-
-const scpRayGroup=new T.Group();scene.add(scpRayGroup);
-const rayHUD=document.createElement('div');rayHUD.id='rayHUD';rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:20;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font: bold 14px monospace;display:none;pointer-events:none;text-shadow:0 0 8px #00ffff';rayHUD.textContent='GIZMO ACTIVE · WAITING FOR SCP ROUTE';document.body.appendChild(rayHUD);
-window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayGroup.visible=scpRayGizmos;rayOverlay.style.display=scpRayGizmos?'block':'none';rayHUD.style.display=scpRayGizmos?'block':'none';rayHUD.textContent=scpRayGizmos?'GIZMO ACTIVE · SCREEN-SPACE TARGET BEAM':'GIZMO OFF'}});
+const rayHUD=document.createElement('div');rayHUD.id='rayHUD';rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:20;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:none;pointer-events:none;text-shadow:0 0 8px #00ffff';document.body.appendChild(rayHUD);
+window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';rayHUD.textContent=scpRayGizmos?'RAY CHAIN ON · GROUND ROUTE':'RAY CHAIN OFF'}});
 function drawSCPRayChain(points){
- while(scpRayGroup.children.length){const o=scpRayGroup.children[0];scpRayGroup.remove(o);o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose()}
- if(points?.length>1){
-  const verts=[];for(let i=1;i<points.length;i++)verts.push(points[i-1].x,1.35,points[i-1].z,points[i].x,1.35,points[i].z);
-  const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(verts,3));
-  scpRayGroup.add(new T.LineSegments(geo,new T.LineBasicMaterial({color:0x00ffff,depthTest:false,transparent:true,opacity:1})));
-  const markGeo=new T.SphereGeometry(.24,10,8),markMat=new T.MeshBasicMaterial({color:0xffee44,depthTest:false});
-  for(let i=1;i<points.length;i+=Math.max(1,Math.floor(points.length/24))){const m=new T.Mesh(markGeo,markMat);m.position.set(points[i].x,1.45,points[i].z);scpRayGroup.add(m)}
- }
- scpRayGroup.visible=scpRayGizmos;
+ // Actual route chain: each waypoint is a coordinate node connected in order.
+ if(!scpRayGizmos)return;
+ rayHUD.textContent='ACTUAL RAY CHAIN · '+(points?.length||0)+' WAYPOINTS';
+ rayHUD.style.whiteSpace='pre';
+ rayHUD.textContent+='\n'+(points||[]).slice(0,18).map((p,i)=>i+': '+p.x.toFixed(1)+', '+p.z.toFixed(1)).join('\n');
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
@@ -450,9 +435,8 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // 360-degree sphere-like ray fan: 32 horizontal rays and 16 rays each
 // on upper/lower rings. All rays inspect every direction around SCP.
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- // Always draw a visible target beam, even while the precomputed grid is loading.
- if(scpRayGizmos){drawSCPRayChain([{x:obj.position.x,z:obj.position.z},{x:tx,z:tz}]);const a=obj.position.clone(),b=new T.Vector3(tx,1.4,tz);a.y=1.4;a.project(cam);b.project(cam);paintRayOverlay((a.x*.5+.5)*innerWidth,(-a.y*.5+.5)*innerHeight,(b.x*.5+.5)*innerWidth,(-b.y*.5+.5)*innerHeight);}
- if(!navReady||!navData?.grid){if(scpRayGizmos)rayHUD.textContent='GIZMO ACTIVE · GRID NOT READY · DIRECT TARGET BEAM';return false;}
+ // G displays the actual cached grid-route chain as coordinate breadcrumbs.
+ if(!navReady||!navData?.grid){if(scpRayGizmos)rayHUD.textContent='RAY CHAIN ON · NAV GRID WAITING';return false;}
  const ud=obj.userData||(obj.userData={}),cs=navData.cellSize||1;
  let from=cellOf(obj.position.x,obj.position.z),to=cellOf(tx,tz);
  const open=(q)=>q.x>=0&&q.z>=0&&q.x<navData.width&&q.z<navData.height&&!!navData.grid[q.z]?.[q.x];
@@ -465,7 +449,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  }
  const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
  while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.45)i++;
- ud.rayChainIndex=i;const visibleChain=[{x:obj.position.x,z:obj.position.z},...chain.slice(Math.max(1,i-1))];if(visibleChain.length<2)visibleChain.push({x:tx,z:tz});drawSCPRayChain(visibleChain);if(scpRayGizmos)rayHUD.textContent='GIZMO ACTIVE · '+visibleChain.length+' RAY NODES · ROUTE '+(i)+'/'+chain.length;
+ ud.rayChainIndex=i;const visibleChain=[{x:obj.position.x,z:obj.position.z},...chain.slice(Math.max(1,i-1))];if(visibleChain.length<2)visibleChain.push({x:tx,z:tz});if(scpRayGizmos)drawSCPRayChain(visibleChain);if(scpRayGizmos)rayHUD.textContent='ACTUAL RAY CHAIN · '+visibleChain.length+' COORDINATES · '+i+'/'+chain.length;
  let p=chain[i];
  if(!p){if(!hit(tx,tz,.8)){p={x:tx,z:tz}}else return false}
  const dx=p.x-obj.position.x,dz=p.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
