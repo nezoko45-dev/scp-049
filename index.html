@@ -11,7 +11,7 @@ const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({c
 // The fixed starter map is removed; the entire facility is generated from streamed chunks.
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
-async function buildNavigation(){try{const res=await fetch('./scp-nav.json',{cache:'no-store'});if(!res.ok)throw Error('SCP nav HTTP '+res.status);const data=await res.json();if(data.format!=='scp-nav-v1'||!Array.isArray(data.walkableRows)||data.walkableRows.length!==data.height)throw Error('Invalid SCP nav format');const grid=Array.from({length:data.height},()=>Array(data.width).fill(0));data.walkableRows.forEach((spans,z)=>spans.forEach(([a,b])=>{for(let x=Math.max(0,a);x<=Math.min(data.width-1,b);x++)grid[z][x]=1}));navData={version:1,cellSize:data.cellSize,origin:data.origin,width:data.width,height:data.height,grid};navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';console.info('SCP-readable navigation loaded',navData.width,navData.height)}catch(e){navReady=false;document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='NAV DATA FAILED — RELOAD';console.error('SCP nav load failed',e);document.querySelector('#msg').textContent='SCP navigation data failed to load'}}
+function buildNavigation(){navData=null;navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';console.info('Live facility scoring enabled: 1=open, 0=solid collider');}
 function cellOf(x,z){const cs=navData.cellSize||1;return {x:Math.floor((x-navData.origin.x)/cs),z:Math.floor((z-navData.origin.z)/cs)}}
 function nearestOpen(x,z){
  if(!navData?.grid)return null;let c=cellOf(x,z),W=navData.width,H=navData.height;
@@ -30,12 +30,8 @@ function nearestOpen(x,z){
 // multi-sample ground-score steering as FPE: open=1, solid=0, direction-driven.
 function findNavPath(){return []}
 function scpGroundScore(x,z,r=.42){
- // Walls and every solid collider are explicitly score 0; clear ground is 1.
- // Check the live facility grid first (0=blocked, 1=open), then exact wall boxes.
- if(navData?.grid&&navData.origin&&navData.cellSize){
-  const cs=navData.cellSize,ix=Math.floor((x-navData.origin.x)/cs),iz=Math.floor((z-navData.origin.z)/cs);
-  if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||navData.grid[iz]?.[ix]===0)return 0;
- }
+ // Score the CURRENT generated facility, not a file: solid[] is populated
+ // immediately as live wall/prop meshes are created. Clear ground=1.
  for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0;
  return 1
 }
@@ -244,10 +240,7 @@ function streamFacility(now){
  if(!navReady)return;
  const p=ctl.getObject().position,chunkX=Math.floor(p.x/40)*40,chunkZ=Math.floor(p.z/40)*40;makeFacilityChunk(chunkX,chunkZ);
  // Grow A* data as the player crosses the current grid borders.
- while(p.z<navData.origin.z+20){growNav('N');streamedNorth-=40}
- while(p.z>navData.origin.z+navData.height-20){growNav('S');streamedSouth+=40}
- while(p.x<navData.origin.x+20){growNav('W');streamedWest-=40}
- while(p.x>navData.origin.x+navData.width-20){growNav('E');streamedEast+=40}
+ // The live facility has no fixed JSON grid bounds; chunks expand around the player.
  // Build connected rooms and hallways in every direction around the player.
  for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)makeFacilityChunk(chunkX+dx*40,chunkZ+dz*40);
  // Keep current paths fresh against the expanded navigation grid.
@@ -301,7 +294,7 @@ function spawnZombie(){
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);if(Math.random()<.03)spawnZombie();if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;function fallback(){let a=new T.Mesh(new T.CapsuleGeometry(.45,1.3,5,10),mats[2]);a.position.y=1.3;let b=new T.Mesh(new T.CylinderGeometry(.5,.7,1.5,12),mats[2]);b.position.y=.8;let h=new T.Mesh(new T.SphereGeometry(.3),mats[1]);h.position.y=2.3;bad.add(a,b,h);loaded=true}new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true},undefined,fallback);setTimeout(()=>!loaded&&fallback(),7000);
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayGroup.children.forEach(o=>o.visible=scpRayGizmos)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady||!navData?.grid){document.querySelector('#msg').textContent='Waiting for facility-navdata.json';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayGroup.children.forEach(o=>o.visible=scpRayGizmos)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 function hit(x,z,r=.5){return solid.some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
 function moveColliding(obj,dx,dz,r=.4){let x=obj.position.x,z=obj.position.z,moved=false;if(!hit(x+dx,z,r)){obj.position.x=x+dx;moved=true}if(!hit(obj.position.x,z+dz,r)){obj.position.z=z+dz;moved=true}return moved}
 /* JSON-grid ray steering: sample the baked/live facility grid along the intended move.
