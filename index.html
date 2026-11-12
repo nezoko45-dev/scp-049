@@ -502,30 +502,39 @@ function gradientSCP(x,z){
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- const now=performance.now(),toX=tx-p.x,toZ=tz-p.z,len=Math.hypot(toX,toZ)||1;
- // Target-directed ray. If obstructed, bend its waypoint around the hit surface (octopus-like wrapping).
- if(!ud.wrapRay||now>=(ud.wrapRayAt||0)||Math.hypot((ud.wrapWaypoint?.x||p.x)-p.x,(ud.wrapWaypoint?.z||p.z)-p.z)<1.15){
-  const dir=new T.Vector3(toX/len,0,toZ/len),origin=new T.Vector3(p.x,1.05,p.z);
+ const now=performance.now(),toX=tx-p.x,toZ=tz-p.z,len=Math.hypot(toX,toZ)||1,target={x:toX/len,z:toZ/len};
+ // Cast the target ray. If it hits a wall, use the wall's tangent as a rail to follow.
+ if(!ud.wallRay||now>=(ud.wallRayAt||0)){
+  const origin=new T.Vector3(p.x,1.05,p.z),dir=new T.Vector3(target.x,0,target.z);
   scpRaycaster.set(origin,dir);scpRaycaster.near=0;scpRaycaster.far=len;
   const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
-  if(!hits.length){ud.wrapWaypoint={x:tx,z:tz};ud.wrapRay={x:dir.x,z:dir.z};}
+  if(!hits.length){ud.wallRay={x:target.x,z:target.z};ud.wallNormal=null;ud.wallPoint=null;ud.wallFollow=false}
   else{
-   const h=hits[0],nx=h.face? h.face.normal.x: -dir.x,nz=h.face?h.face.normal.z:-dir.z;
-   // Test both surface tangents; choose the one that bends toward the target.
-   const t1={x:-nz,z:nx},t2={x:nz,z:-nx},remain={x:tx-h.point.x,z:tz-h.point.z};
-   const side=(t1.x*remain.x+t1.z*remain.z)>=(t2.x*remain.x+t2.z*remain.z)?t1:t2;
-   const wp={x:h.point.x+nx*.85+side.x*2.4,z:h.point.z+nz*.85+side.z*2.4};
-   ud.wrapWaypoint=wp;const wx=wp.x-p.x,wz=wp.z-p.z,wl=Math.hypot(wx,wz)||1;ud.wrapRay={x:wx/wl,z:wz/wl};
+   const h=hits[0],n=h.face?h.face.normal.clone():new T.Vector3(-target.x,0,-target.z);
+   n.y=0;if(n.lengthSq()<.001)n.set(-target.x,0,-target.z);n.normalize();
+   // Project target direction onto the wall tangent; choose the direction that progresses toward target.
+   const t1=new T.Vector3(-n.z,0,n.x),t2=t1.clone().negate();
+   const remain=new T.Vector3(tx-h.point.x,0,tz-h.point.z);
+   const tangent=t1.dot(remain)>=t2.dot(remain)?t1:t2;
+   ud.wallRay={x:tangent.x,z:tangent.z};ud.wallNormal={x:n.x,z:n.z};
+   ud.wallPoint={x:h.point.x+n.x*.72,z:h.point.z+n.z*.72};ud.wallFollow=true;
   }
-  ud.wrapRayAt=now+180;
+  ud.wallRayAt=now+140;
  }
- const ray=ud.wrapRay;if(!ray){ud.moveDir.set(0,0,0);return false}
- // Follow the generated wrap ray, not direct target pursuit.
- const desired=Math.atan2(ray.x,ray.z),current=obj.rotation.y;
+ const ray=ud.wallRay;if(!ray){ud.moveDir.set(0,0,0);return false}
+ // Follow the wall tangent ray; gently maintain clearance from the wall surface.
+ let dx=ray.x,dz=ray.z;
+ if(ud.wallFollow&&ud.wallNormal&&ud.wallPoint){
+  const nx=ud.wallNormal.x,nz=ud.wallNormal.z,offset=(p.x-ud.wallPoint.x)*nx+(p.z-ud.wallPoint.z)*nz;
+  const correction=Math.max(-.45,Math.min(.45,(.72-offset)*.9));
+  dx+=nx*correction;dz+=nz*correction;const m=Math.hypot(dx,dz)||1;dx/=m;dz/=m;
+ }
+ const desired=Math.atan2(dx,dz),current=obj.rotation.y;
  let delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
  obj.rotation.y=current+delta*Math.min(1,dt*8);
- const dx=Math.sin(obj.rotation.y),dz=Math.cos(obj.rotation.y),move=speed*dt,nx=p.x+dx*move,nz=p.z+dz*move;
- if(!scpRayClearSegment(p.x,p.z,nx,nz,.42)){ud.wrapRay=null;ud.wrapRayAt=0;ud.moveDir.set(0,0,0);return false}
+ dx=Math.sin(obj.rotation.y);dz=Math.cos(obj.rotation.y);
+ const move=speed*dt,nx=p.x+dx*move,nz=p.z+dz*move;
+ if(!scpRayClearSegment(p.x,p.z,nx,nz,.42)){ud.wallRay=null;ud.wallRayAt=0;ud.moveDir.set(0,0,0);return false}
  p.x=nx;p.z=nz;ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
