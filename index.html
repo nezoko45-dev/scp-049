@@ -42,7 +42,8 @@ function scpGroundScore(x,z,r=.42){
 }
 let scpRayGizmos=false;
 const scpRayGroup=new T.Group();scene.add(scpRayGroup);
-window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayGroup.visible=scpRayGizmos;document.querySelector('#msg').textContent=scpRayGizmos?'SCP GRID RAY GIZMO: ON':'SCP GRID RAY GIZMO: OFF';if(scpRayGizmos)document.querySelector('#msg').textContent='RAY GIZMO ON · CYAN ROUTE / YELLOW WAYPOINTS'}});
+const rayHUD=document.createElement('div');rayHUD.id='rayHUD';rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:20;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font: bold 14px monospace;display:none;pointer-events:none;text-shadow:0 0 8px #00ffff';rayHUD.textContent='GIZMO ACTIVE · WAITING FOR SCP ROUTE';document.body.appendChild(rayHUD);
+window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayGroup.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';rayHUD.textContent=scpRayGizmos?'GIZMO ACTIVE · CYAN RAY CHAIN / YELLOW WAYPOINTS':'GIZMO OFF'}});
 function drawSCPRayChain(points){
  while(scpRayGroup.children.length){const o=scpRayGroup.children.pop();o.geometry?.dispose();o.material?.dispose()}
  if(points?.length>1){
@@ -452,7 +453,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  }
  const chain=ud.rayChain||[];let i=ud.rayChainIndex||1;
  while(i<chain.length&&Math.hypot(chain[i].x-obj.position.x,chain[i].z-obj.position.z)<.45)i++;
- ud.rayChainIndex=i;drawSCPRayChain([{x:obj.position.x,z:obj.position.z},...chain.slice(Math.max(1,i-1))]);
+ ud.rayChainIndex=i;const visibleChain=[{x:obj.position.x,z:obj.position.z},...chain.slice(Math.max(1,i-1))];if(visibleChain.length<2)visibleChain.push({x:tx,z:tz});drawSCPRayChain(visibleChain);if(scpRayGizmos)rayHUD.textContent='GIZMO ACTIVE · '+visibleChain.length+' RAY NODES · ROUTE '+(i)+'/'+chain.length;
  let p=chain[i];
  if(!p){if(!hit(tx,tz,.8)){p={x:tx,z:tz}}else return false}
  const dx=p.x-obj.position.x,dz=p.z-obj.position.z,d=Math.hypot(dx,dz);if(d<.01)return false;
