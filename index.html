@@ -530,27 +530,23 @@ function gradientSCP(x,z){
 }
 
 function buildSCPFlowField(tx,tz){
- const cs=1.25,N=72,half=N/2,ox=tx-half*cs,oz=tz-half*cs,total=N*N,blocked=new Uint8Array(total),cost=new Float32Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total);
- const id=(x,z)=>z*N+x;
- for(let z=0;z<N;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=hit(wx,wz,.48)?1:0;cost[id(x,z)]=Infinity}
- const sx=Math.max(0,Math.min(N-1,Math.floor((tx-ox)/cs))),sz=Math.max(0,Math.min(N-1,Math.floor((tz-oz)/cs))),start=id(sx,sz);
- blocked[start]=0;cost[start]=0;
- // Binary min-heap Dijkstra builds a cost-to-target field around the selected victim.
- const heap=[],push=(node,val)=>{let i=heap.length;heap.push([node,val]);while(i){let p=(i-1)>>1;if(heap[p][1]<=val)break;heap[i]=heap[p];i=p}heap[i]=[node,val]},pop=()=>{const top=heap[0],last=heap.pop();if(heap.length){let i=0;while(true){let l=i*2+1,r=l+1;if(l>=heap.length)break;let q=r<heap.length&&heap[r][1]<heap[l][1]?r:l;if(heap[q][1]>=last[1])break;heap[i]=heap[q];i=q}heap[i]=last}return top};
- push(start,0);const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
- while(heap.length){const [u,du]=pop();if(du!==cost[u])continue;const x=u%N,z=(u/N)|0;
-  for(const [dx,dz] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=N||nz>=N)continue;const v=id(nx,nz);if(blocked[v])continue;
-   if(dx&&dz&&(blocked[id(x+dx,z)]||blocked[id(x,z+dz)]))continue;
-   const nd=du+(dx&&dz?1.4142:1)*cs;if(nd<cost[v]){cost[v]=nd;push(v,nd)}
-  }
+ // Custom vector flow field: no Dijkstra, heap, A*, or distance propagation.
+ const cs=1.25,N=72,half=N/2,ox=tx-half*cs,oz=tz-half*cs,total=N*N;
+ const blocked=new Uint8Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total),id=(x,z)=>z*N+x;
+ for(let z=0;z<N;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=hit(wx,wz,.48)?1:0}
+ // Seed each open cell with target attraction plus repulsion from nearby blocked cells.
+ for(let z=0;z<N;z++)for(let x=0;x<N;x++){const u=id(x,z);if(blocked[u])continue;const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;let vx=tx-wx,vz=tz-wz;
+  for(let dz=-2;dz<=2;dz++)for(let dx=-2;dx<=2;dx++){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=N||nz>=N||!blocked[id(nx,nz)])continue;const d2=dx*dx+dz*dz;if(!d2||d2>5)continue;const w=1/(d2*d2);vx-=dx*w*2.8;vz-=dz*w*2.8}
+  const l=Math.hypot(vx,vz)||1;dirX[u]=vx/l;dirZ[u]=vz/l;
  }
- // Convert distance values into a downhill direction at every reachable cell.
- for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++){const u=id(x,z);if(blocked[u]||!Number.isFinite(cost[u]))continue;let bx=0,bz=0,best=cost[u];for(const [dx,dz] of dirs){const v=id(x+dx,z+dz);if(cost[v]<best){best=cost[v];bx=dx;bz=dz}}const l=Math.hypot(bx,bz);if(l){dirX[u]=bx/l;dirZ[u]=bz/l}}
- return {cs,N,ox,oz,cost,dirX,dirZ,blocked,targetX:tx,targetZ:tz,solidCount:solid.length,builtAt:performance.now()};
+ // Smooth neighboring open-cell vectors repeatedly so the field bends around bounds.
+ const ax=new Float32Array(total),az=new Float32Array(total),dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+ for(let pass=0;pass<18;pass++){for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++){const u=id(x,z);if(blocked[u]){ax[u]=az[u]=0;continue}let vx=dirX[u]*1.8,vz=dirZ[u]*1.8;for(const [dx,dz] of dirs){const v=id(x+dx,z+dz);if(blocked[v])continue;vx+=dirX[v];vz+=dirZ[v]}const l=Math.hypot(vx,vz)||1;ax[u]=vx/l;az[u]=vz/l}dirX.set(ax);dirZ.set(az)}
+ return {cs,N,ox,oz,dirX,dirZ,blocked,targetX:tx,targetZ:tz,solidCount:solid.length,builtAt:performance.now()};
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- // Flow field: every nearby walkable cell points along the cheapest route to the target.
+ // Flow field: every nearby walkable cell points along the custom vector flow to the target.
  let f=ud.flowField;
  if(!f||f.solidCount!==solid.length||Math.hypot(tx-f.targetX,tz-f.targetZ)>3||performance.now()-f.builtAt>1200){f=ud.flowField=buildSCPFlowField(tx,tz)}
  const ix=Math.floor((p.x-f.ox)/f.cs),iz=Math.floor((p.z-f.oz)/f.cs),N=f.N;
