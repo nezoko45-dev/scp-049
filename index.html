@@ -436,8 +436,8 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // on upper/lower rings. All rays inspect every direction around SCP.
 // SCP navigation is exclusively live 3D raycasting; no grid or score-map dependency.
 const scpRaycaster=new T.Raycaster();
-const scpRayObstacles=[];
-function refreshSCPObstacles(){scpRayObstacles.length=0;for(const m of navMeshes)if(m?.isMesh)scpRayObstacles.push(m)}
+const scpRayObstacles=[];let scpObstacleMeshCount=-1;
+function refreshSCPObstacles(){scpRayObstacles.length=0;for(const m of navMeshes)if(m?.isMesh)scpRayObstacles.push(m);scpObstacleMeshCount=navMeshes.length}
 function scpRayClearSegment(x,z,nx,nz,r=.42){
  const dx=nx-x,dz=nz-z,len=Math.hypot(dx,dz);if(len<.001)return true;
  const dir=new T.Vector3(dx/len,0,dz/len),side=new T.Vector3(-dir.z,0,dir.x),originY=1.05;
@@ -451,7 +451,7 @@ function scpRayClearSegment(x,z,nx,nz,r=.42){
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),now=performance.now(),targetKey=Math.round(tx/3)+','+Math.round(tz/3);
- if(!scpRayObstacles.length)refreshSCPObstacles();
+ if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
  // Build a branching chain from real horizontal ray probes. Each node fans 360°;
  // blocked rays terminate, clear rays become route branches around geometry.
  if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>5000){
