@@ -502,7 +502,6 @@ function gradientSCP(x,z){
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- drawSCPRayGizmos(obj);
  const toX=tx-p.x,toZ=tz-p.z,len=Math.hypot(toX,toZ)||1,target={x:toX/len,z:toZ/len};
  const grad=gradientSCP(p.x,p.z);let best=null,bestScore=-Infinity;
  // Each candidate heading receives binary ray scores: clear=1, blocked=0.
@@ -576,6 +575,8 @@ function frame(now){
   let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{scpMoved=sphereRaySteerSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt)}
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
+  // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
+  drawSCPRayGizmos(bad);
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
