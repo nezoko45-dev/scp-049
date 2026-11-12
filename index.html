@@ -530,19 +530,31 @@ function gradientSCP(x,z){
 }
 
 function buildSCPFlowField(tx,tz){
- // Custom vector flow field: no Dijkstra, heap, A*, or distance propagation.
- const cs=1.25,N=72,half=N/2,ox=tx-half*cs,oz=tz-half*cs,total=N*N;
- const blocked=new Uint8Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total),id=(x,z)=>z*N+x;
+ // Connected flow field: flood open cells outward from the target.
+ // Each reachable cell points to its predecessor toward the target.
+ const cs=1.25,N=72,half=N/2,ox=tx-half*cs,oz=tz-half*cs,total=N*N,id=(x,z)=>z*N+x;
+ const blocked=new Uint8Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total),distance=new Int32Array(total);distance.fill(-1);
  for(let z=0;z<N;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=hit(wx,wz,.48)?1:0}
- // Seed each open cell with target attraction plus repulsion from nearby blocked cells.
- for(let z=0;z<N;z++)for(let x=0;x<N;x++){const u=id(x,z);if(blocked[u])continue;const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;let vx=tx-wx,vz=tz-wz;
-  for(let dz=-2;dz<=2;dz++)for(let dx=-2;dx<=2;dx++){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=N||nz>=N||!blocked[id(nx,nz)])continue;const d2=dx*dx+dz*dz;if(!d2||d2>5)continue;const w=1/(d2*d2);vx-=dx*w*2.8;vz-=dz*w*2.8}
-  const l=Math.hypot(vx,vz)||1;dirX[u]=vx/l;dirZ[u]=vz/l;
+ // Find nearest open seed to target if the target itself sits in a blocked cell.
+ let sx=Math.floor((tx-ox)/cs),sz=Math.floor((tz-oz)/cs),seed=null;
+ for(let r=0;r<N&&!seed;r++)for(let dz=-r;dz<=r&&!seed;dz++)for(let dx=-r;dx<=r;dx++){
+  if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;const x=sx+dx,z=sz+dz;
+  if(x>=0&&z>=0&&x<N&&z<N&&!blocked[id(x,z)]){seed={x,z};break}
  }
- // Smooth neighboring open-cell vectors repeatedly so the field bends around bounds.
- const ax=new Float32Array(total),az=new Float32Array(total),dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
- for(let pass=0;pass<18;pass++){for(let z=1;z<N-1;z++)for(let x=1;x<N-1;x++){const u=id(x,z);if(blocked[u]){ax[u]=az[u]=0;continue}let vx=dirX[u]*1.8,vz=dirZ[u]*1.8;for(const [dx,dz] of dirs){const v=id(x+dx,z+dz);if(blocked[v])continue;vx+=dirX[v];vz+=dirZ[v]}const l=Math.hypot(vx,vz)||1;ax[u]=vx/l;az[u]=vz/l}dirX.set(ax);dirZ.set(az)}
- return {cs,N,ox,oz,dirX,dirZ,blocked,targetX:tx,targetZ:tz,solidCount:solid.length,builtAt:performance.now()};
+ if(seed){
+  const queue=new Int32Array(total);let head=0,tail=0;const start=id(seed.x,seed.z);queue[tail++]=start;distance[start]=0;
+  const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+  while(head<tail){const u=queue[head++],x=u%N,z=(u/N)|0;
+   for(const [dx,dz] of dirs){const nx=x+dx,nz=z+dz;if(nx<1||nz<1||nx>=N-1||nz>=N-1)continue;const v=id(nx,nz);if(blocked[v]||distance[v]>=0)continue;
+    // Prevent diagonal corner-cutting between two blocked orthogonal cells.
+    if(dx&&dz&&(blocked[id(x+dx,z)]||blocked[id(x,z+dz)]))continue;
+    distance[v]=distance[u]+1;dirX[v]=-dx;dirZ[v]=-dz;queue[tail++]=v;
+   }
+  }
+ }
+ // Normalize predecessor directions for smooth, stable movement.
+ for(let i=0;i<total;i++){if(blocked[i]||distance[i]<=0)continue;const l=Math.hypot(dirX[i],dirZ[i])||1;dirX[i]/=l;dirZ[i]/=l}
+ return {cs,N,ox,oz,dirX,dirZ,blocked,distance,targetX:tx,targetZ:tz,solidCount:solid.length,builtAt:performance.now()};
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,radius=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
