@@ -483,36 +483,49 @@ function scpRayClearSegment(x,z,nx,nz,r=.42){
  return true;
 }
 // SCP navigates directly from remembered JSON occupancy scores. No A*, no waypoint route.
-function scoreSCPDirection(x,z,dx,dz){
- const cs=navData?.cellSize||1,ox=navData?.origin.x||0,oz=navData?.origin.z||0,g=navData?.grid;
- let score=0;
- for(const dist of [1.5,3,5,7]){
-  const px=x+dx*dist,pz=z+dz*dist;
-  if(hit(px,pz,.48))return -100;
-  if(g){const ix=Math.floor((px-ox)/cs),iz=Math.floor((pz-oz)/cs);if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||g[iz]?.[ix]!==1)return -100}
-  score+=1/(dist+1);
+// Gradient sampling over the remembered JSON score field (1=open, 0=blocked).
+// Samples several radii; open space pulls the gradient, blocked cells repel it.
+function sampleSCPScore(x,z){
+ const cs=navData?.cellSize||1,g=navData?.grid;if(!g)return 1;
+ const ix=Math.floor((x-navData.origin.x)/cs),iz=Math.floor((z-navData.origin.z)/cs);
+ if(ix<0||iz<0||ix>=navData.width||iz>=navData.height)return 0;
+ return g[iz]?.[ix]===1?1:0
+}
+function gradientSCP(x,z){
+ let gx=0,gz=0,weight=0;
+ for(let k=0;k<32;k++){
+  const a=k*Math.PI/16,dx=Math.sin(a),dz=Math.cos(a);
+  let openness=0;
+  for(const d of [1,2,3,5,7])openness+=sampleSCPScore(x+dx*d,z+dz*d)/(d*.7+1);
+  const w=openness;gx+=dx*w;gz+=dz*w;weight+=w;
  }
- return score
+ return {x:gx/(weight||1),z:gz/(weight||1)}
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
  drawSCPRayGizmos(obj);
- const toX=tx-p.x,toZ=tz-p.z,targetLen=Math.hypot(toX,toZ)||1,txd=toX/targetLen,tzd=toZ/targetLen;
- let best=null,bestScore=-Infinity;
- // Score 24 compass directions using the remembered JSON cells and live collision geometry.
- for(let k=0;k<24;k++){
-  const a=k*Math.PI/12,dx=Math.sin(a),dz=Math.cos(a),open=scoreSCPDirection(p.x,p.z,dx,dz);
-  if(open<0)continue;
-  const alignment=dx*txd+dz*tzd,turn=ud.moveDir.lengthSq()>.001?(dx*ud.moveDir.x+dz*ud.moveDir.z):alignment;
-  const score=alignment*3.2+open*.65+turn*.45;
+ const toX=tx-p.x,toZ=tz-p.z,len=Math.hypot(toX,toZ)||1,target={x:toX/len,z:toZ/len};
+ const grad=gradientSCP(p.x,p.z);let best=null,bestScore=-Infinity;
+ // Continuous gradient-guided angular sampling: target attraction + score-field gradient + inertia.
+ for(let k=0;k<72;k++){
+  const a=k*Math.PI/36,dx=Math.sin(a),dz=Math.cos(a);
+  let clearance=0,blocked=false;
+  for(const d of [.8,1.5,2.5,4,6]){
+   const px=p.x+dx*d,pz=p.z+dz*d;
+   if(hit(px,pz,.44)||sampleSCPScore(px,pz)===0){blocked=true;break}
+   clearance+=1/(d+1)
+  }
+  if(blocked)continue;
+  const targetPull=dx*target.x+dz*target.z,gradientPull=dx*grad.x+dz*grad.z;
+  const inertia=ud.moveDir.lengthSq()>.001?dx*ud.moveDir.x+dz*ud.moveDir.z:targetPull;
+  const score=targetPull*2.8+gradientPull*1.35+clearance*.35+inertia*.55;
   if(score>bestScore){bestScore=score;best={x:dx,z:dz}}
  }
  if(!best){ud.moveDir.set(0,0,0);return false}
- // Smoothly rotate toward the chosen score direction, then move along it.
  const desired=Math.atan2(best.x,best.z),current=obj.rotation.y;
  let delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
- obj.rotation.y=current+delta*Math.min(1,dt*7);
+ obj.rotation.y=current+delta*Math.min(1,dt*8);
  const dx=Math.sin(obj.rotation.y),dz=Math.cos(obj.rotation.y),move=speed*dt,nx=p.x+dx*move,nz=p.z+dz*move;
  if(!scpRayClearSegment(p.x,p.z,nx,nz,.42)){ud.moveDir.set(0,0,0);return false}
  p.x=nx;p.z=nz;ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);return true
