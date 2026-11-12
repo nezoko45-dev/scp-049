@@ -75,7 +75,17 @@ const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),s
 const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.textContent='G = toggle SCP RAY GIZMOS | CYAN = steering/target | RED = wall contact';
 const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
-function drawSCPRayChain(points){while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}if(!Array.isArray(points)||points.length<2){scpChainViz.visible=false;return}for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],dx=b.x-a.x,dz=b.z-a.z,len=Math.hypot(dx,dz);if(len<.02)continue;const dir=new T.Vector3(dx/len,0,dz/len),origin=new T.Vector3(a.x,1.35,a.z),arrow=new T.ArrowHelper(dir,origin,len,0xffd400,Math.min(.35,len*.22),Math.min(.22,len*.12));arrow.line.material=scpChainMat;arrow.cone.material=scpChainMat;scpChainViz.add(arrow)}scpChainViz.visible=scpRayGizmos}
+function drawSCPRayChain(points){
+ while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}
+ if(!Array.isArray(points)||points.length<2){scpChainViz.visible=false;return}
+ // A visible particle rope: waypoint particles plus a thin connecting strand.
+ const verts=[];for(const p of points)verts.push(p.x,1.35,p.z);
+ const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));
+ const line=new T.Line(g,scpChainMat);scpChainViz.add(line);
+ const pg=new T.BufferGeometry();pg.setAttribute('position',new T.Float32BufferAttribute(verts.slice(),3));
+ const pm=new T.PointsMaterial({color:0xffd400,size:.16,sizeAttenuation:true,depthTest:false});
+ scpChainViz.add(new T.Points(pg,pm));scpChainViz.visible=scpRayGizmos
+}
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
@@ -506,45 +516,29 @@ function gradientSCP(x,z){
  }
  return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
 }
-function generateSCPRope(obj,tx,tz,r=.48){
- const p=obj.position,points=[{x:p.x,z:p.z}],step=1.05,max=42;
- let x=p.x,z=p.z,heading=Math.atan2(tx-x,tz-z),last=null;
- for(let i=0;i<max&&Math.hypot(tx-x,tz-z)>step;i++){
-  const direct=Math.atan2(tx-x,tz-z),candidates=[direct];
-  // If direct ray is blocked, fan a small local arc; each chosen segment
-  // becomes the next rope link, so the route bends and wraps around corners.
-  for(let k=1;k<=8;k++){candidates.push(direct+k*Math.PI/12,direct-k*Math.PI/12)}
-  let chosen=null,best=-1e9;
-  for(const a of candidates){const nx=x+Math.sin(a)*step,nz=z+Math.cos(a)*step;
-   if(!scpRayClearSegment(x,z,nx,nz,r))continue;
-   const remain=Math.hypot(tx-nx,tz-nz),turn=last?Math.abs(Math.atan2(Math.sin(a-last),Math.cos(a-last))):0;
-   // favor target progress and smooth rope bends
-   const score=(Math.hypot(tx-x,tz-z)-remain)*2-turn*.22;
-   if(score>best){best=score;chosen={x:nx,z:nz,a}}
-  }
-  if(!chosen)break;x=chosen.x;z=chosen.z;last=chosen.a;points.push({x,z});
- }
- if(Math.hypot(tx-x,tz-z)<step*1.4&&scpRayClearSegment(x,z,tx,tz,r))points.push({x:tx,z:tz});
- return points
+function generateSCPRope(obj,tx,tz){
+ // Particle waypoint rope: straight interpolation, deliberately no raycasts.
+ const p=obj.position,dx=tx-p.x,dz=tz-p.z,len=Math.hypot(dx,dz),spacing=.62,count=Math.max(2,Math.min(160,Math.ceil(len/spacing)));
+ const points=[];for(let i=0;i<=count;i++){const t=i/count;points.push({x:p.x+dx*t,z:p.z+dz*t})}return points
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- const now=performance.now();
- // Regenerate the rope route periodically, not every animation frame.
- if(!ud.ropeChain||now>=(ud.ropeAt||0)){
-  ud.ropeChain=generateSCPRope(obj,tx,tz);ud.ropeAt=now+420;
-  ud.ropeTarget={x:tx,z:tz};drawSCPRayChain(ud.ropeChain)
+ const now=performance.now(),target=ud.ropeTarget;
+ // Rebuild particles only when target changes meaningfully or rope is exhausted.
+ if(!ud.ropeChain||!target||Math.hypot(tx-target.x,tz-target.z)>1.0||ud.ropeChain.length<2){
+  ud.ropeChain=generateSCPRope(obj,tx,tz);ud.ropeTarget={x:tx,z:tz};drawSCPRayChain(ud.ropeChain)
  }
- let chain=ud.ropeChain||[],next=chain[1];
- // Skip rope knots SCP has already reached.
- while(chain.length>2&&Math.hypot(chain[1].x-p.x,chain[1].z-p.z)<.65){chain.shift();next=chain[1]}
- let dx=next?next.x-p.x:tx-p.x,dz=next?next.z-p.z:tz-p.z,m=Math.hypot(dx,dz)||1;dx/=m;dz/=m;
+ const chain=ud.ropeChain;
+ // Consume the rope behind SCP: each reached particle is removed, shortening it.
+ while(chain.length>1&&Math.hypot(chain[0].x-p.x,chain[0].z-p.z)<.7)chain.shift();
+ const next=chain[0]||{x:tx,z:tz};let dx=next.x-p.x,dz=next.z-p.z,m=Math.hypot(dx,dz)||1;dx/=m;dz/=m;
  const desired=Math.atan2(dx,dz),current=obj.rotation.y,delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
  obj.rotation.y=current+delta*Math.min(1,dt*8);dx=Math.sin(obj.rotation.y);dz=Math.cos(obj.rotation.y);
- const move=speed*dt,nx=p.x+dx*move,nz=p.z+dz*move;
- if(!scpRayClearSegment(p.x,p.z,nx,nz,.42)){ud.ropeAt=0;ud.moveDir.set(0,0,0);return false}
- p.x=nx;p.z=nz;ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);return true
+ const move=speed*dt;p.x+=dx*move;p.z+=dz*move;ud.moveAngle=obj.rotation.y;ud.moveDir.set(dx,0,dz);
+ // Keep the remaining waypoint rope attached to SCP's current position.
+ if(chain.length){chain[0].x=p.x;chain[0].z=p.z}
+ if(scpRayGizmos)drawSCPRayChain(chain);
+ return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
