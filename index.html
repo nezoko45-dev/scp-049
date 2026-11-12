@@ -37,24 +37,36 @@ function scpGroundScore(x,z,r=.42){
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);if(dist<.08)return false;
  const desired=Math.atan2(dx,dz),yaw=obj.rotation.y,candidates=[];
+ // Score every degree from actual ground samples. A direction is only viable
+ // when its whole forward corridor is open; wall tangents are not a fallback.
  for(let deg=0;deg<360;deg++){
-  const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,firstBlocked=99;
-  for(const d of [.35,.7,1.05,1.4,1.8,2.3,2.9,3.6,4.4,5.2,5.8]){
-   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1)open++;
+  const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,firstBlocked=99,continuous=0;
+  for(const d of [.25,.5,.75,1,1.25,1.5,1.8,2.2,2.7,3.3,4,4.8,5.6]){
+   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;if(firstBlocked===99)continuous=d}
    else{blocked++;if(firstBlocked===99)firstBlocked=d}
   }
-  const progress=Math.max(-5.8,Math.min(5.8,dx/dist*vx*5.8+dz/dist*vz*5.8));
-  const score=open*2.35-blocked*2.8+Math.min(5.8,firstBlocked===99?5.8:firstBlocked)*1.25+progress*1.65+(Math.cos(a-desired)+1)*.45+(Math.cos(a-yaw)+1)*.1;
-  if(scpGroundScore(p.x+vx*.18,p.z+vz*.18,r)===1)candidates.push({a,score})
+  const progress=(dx/dist*vx+dz/dist*vz);
+  const targetBias=(Math.cos(a-desired)+1)*.35;
+  const headingBias=(Math.cos(a-yaw)+1)*.08;
+  // Reward long uninterrupted open ground, strongly reject directions that
+  // graze obstacles, and prefer a clean escape corridor over wall-parallel drift.
+  const score=open*1.8-blocked*3.4+(firstBlocked===99?7:firstBlocked*2.1)+progress*4.2+targetBias+headingBias;
+  if(scpGroundScore(p.x+vx*.2,p.z+vz*.2,r)===1)candidates.push({a,score,open,blocked,clear:firstBlocked===99?5.6:firstBlocked});
  }
  if(!candidates.length)return false;candidates.sort((a,b)=>b.score-a.score);
- let chosen=candidates[0].a;
- for(const q of candidates.slice(0,45)){const vx=Math.sin(q.a),vz=Math.cos(q.a);let ok=true;for(let k=1;k<=4;k++){if(scpGroundScore(p.x+vx*speed*dt*k/4,p.z+vz*speed*dt*k/4,r)===0){ok=false;break}}if(ok){chosen=q.a;break}}
- const vx=Math.sin(chosen),vz=Math.cos(chosen),step=speed*dt,nx=p.x+vx*step,nz=p.z+vz*step;
- if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){p.x=nx;p.z=nz;obj.rotation.y=chosen;obj.userData.moveDir?.set(vx,0,vz);return true}
- return false
+ let chosen=null;
+ // Try the best scored headings, but reject any direction whose movement
+ // corridor collides. This prevents the old "slide along wall" fallback.
+ for(const q of candidates.slice(0,90)){
+  const vx=Math.sin(q.a),vz=Math.cos(q.a),step=Math.max(.12,speed*dt);
+  let ok=true;for(let k=1;k<=6;k++){const d=step*k/6;if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===0||hit(p.x+vx*d,p.z+vz*d,r)){ok=false;break}}
+  if(ok){chosen=q;break}
+ }
+ if(!chosen){obj.userData.moveDir?.set(0,0,0);return false}
+ const vx=Math.sin(chosen.a),vz=Math.cos(chosen.a),step=speed*dt,nx=p.x+vx*step,nz=p.z+vz*step;
+ if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){p.x=nx;p.z=nz;obj.rotation.y=chosen.a;obj.userData.moveDir?.set(vx,0,vz);return true}
+ obj.userData.moveDir?.set(0,0,0);return false
 }
-
 document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
 // Infinite facility streaming: add 40m corridor chunks ahead and extend the A* grid.
 const facilityChunks=new Set();let streamedNorth=-95,streamedSouth=25,streamedWest=-39,streamedEast=39;
