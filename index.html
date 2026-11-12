@@ -26,24 +26,33 @@ function nearestOpen(x,z){
  }}
  return best;
 }
-function findNavPath(sx,sz,tx,tz){
- if(!navReady||!navData?.grid)return [];
- const start=nearestOpen(sx,sz),goal=nearestOpen(tx,tz);if(!start||!goal)return [];
- const raw=gridRoute(start,goal);if(!raw.length)return [];
- const cs=navData.cellSize||1,point=c=>({x:navData.origin.x+(c.x+.5)*cs,z:navData.origin.z+(c.z+.5)*cs});
- const clearLine=(a,b)=>{
-  const dx=b.x-a.x,dz=b.z-a.z,n=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.2)));
-  for(let i=0;i<=n;i++){const t=i/n,c=cellOf(a.x+dx*t,a.z+dz*t);
-   if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x]||hit(a.x+dx*t,a.z+dz*t,.18))return false;
-  }return true;
- };
- // Roblox-like waypoint path: route on the JSON walkability map, then smooth
- // the route by skipping intermediate cells whenever a clear segment exists.
- const nodes=raw.map(point),waypoints=[];let anchor=0;
- while(anchor<nodes.length-1){let far=anchor+1;for(let j=nodes.length-1;j>anchor;j--){if(clearLine(nodes[anchor],nodes[j])){far=j;break}}
-  waypoints.push(nodes[far]);anchor=far;
+// Graph/A* waypoint routing removed. AI movement uses the same 360-degree
+// multi-sample ground-score steering as FPE: open=1, solid=0, direction-driven.
+function findNavPath(){return []}
+function scpGroundScore(x,z,r=.42){
+ // Physical collider boxes are authoritative; no graph, nodes, or route.
+ for(const o of solid){if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0}
+ return 1
+}
+function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
+ const p=obj.position,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);if(dist<.08)return false;
+ const desired=Math.atan2(dx,dz),yaw=obj.rotation.y,candidates=[];
+ for(let deg=0;deg<360;deg++){
+  const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,firstBlocked=99;
+  for(const d of [.35,.7,1.05,1.4,1.8,2.3,2.9,3.6,4.4,5.2,5.8]){
+   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1)open++;
+   else{blocked++;if(firstBlocked===99)firstBlocked=d}
+  }
+  const progress=Math.max(-5.8,Math.min(5.8,dx/dist*vx*5.8+dz/dist*vz*5.8));
+  const score=open*2.35-blocked*2.8+Math.min(5.8,firstBlocked===99?5.8:firstBlocked)*1.25+progress*1.65+(Math.cos(a-desired)+1)*.45+(Math.cos(a-yaw)+1)*.1;
+  if(scpGroundScore(p.x+vx*.18,p.z+vz*.18,r)===1)candidates.push({a,score})
  }
- return waypoints;
+ if(!candidates.length)return false;candidates.sort((a,b)=>b.score-a.score);
+ let chosen=candidates[0].a;
+ for(const q of candidates.slice(0,45)){const vx=Math.sin(q.a),vz=Math.cos(q.a);let ok=true;for(let k=1;k<=4;k++){if(scpGroundScore(p.x+vx*speed*dt*k/4,p.z+vz*speed*dt*k/4,r)===0){ok=false;break}}if(ok){chosen=q.a;break}}
+ const vx=Math.sin(chosen),vz=Math.cos(chosen),step=speed*dt,nx=p.x+vx*step,nz=p.z+vz*step;
+ if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){p.x=nx;p.z=nz;obj.rotation.y=chosen;obj.userData.moveDir?.set(vx,0,vz);return true}
+ return false
 }
 
 document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
@@ -336,13 +345,8 @@ function frame(now){
   });
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
-   let p=ctl.getObject().position,dx=p.x-z.position.x,dz=p.z-z.position.z,d=Math.hypot(dx,dz);
-   if(navReady){
-    // SCP movement is explicitly driven by EXE grid A*: refresh blocked/empty routes promptly.
-    if(!z.userData.path.length||now-z.userData.pathAt>900){z.userData.pathAt=now;{let path=findNavPath(z.position.x,z.position.z,p.x,p.z);z.userData.path=path;z.userData.pathIndex=path.length>1?1:0}}
-    let t=z.userData.path[z.userData.pathIndex];if(!t&&d>1){let q=nearestOpen(p.x,p.z);if(q)t={x:navData.origin.x+q.x+.5,z:navData.origin.z+q.z+.5};}
-    if(t){let vx=t.x-z.position.x,vz=t.z-z.position.z,vl=Math.hypot(vx,vz);if(vl<.4){z.userData.pathIndex++;t=z.userData.path[z.userData.pathIndex];if(t){vx=t.x-z.position.x;vz=t.z-z.position.z;vl=Math.hypot(vx,vz)}}if(t&&vl>.01){let step=Math.min(1.1*dt,vl),mx=vx/vl*step,mz=vz/vl*step;if(!jsonSteerMove(z,mx,mz,.4)){z.userData.path=[];z.userData.pathIndex=0;z.userData.pathAt=0;/* Replan immediately next frame and try safe axis sliding this frame. *//* blocked: hold position and replan route, no lateral target-following slide */}}}
-   }else if(d>1){z.position.x+=dx/d*1.1*dt;z.position.z+=dz/d*1.1*dt}
+   const p=ctl.getObject().position,d=Math.hypot(p.x-z.position.x,p.z-z.position.z);
+   if(d>1)scoreDirectionMove(z,p.x,p.z,1.1,dt,.4);
    if(d<=1){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}
   });
   zombies=zombies.filter(z=>{if(z.userData.hp<=0){scene.remove(z);return false}return true});
@@ -360,8 +364,9 @@ function frame(now){
   // SCP chases its current target freely; track movement to drive walk animation.
   let scpMoved=false;
   if(!scpTarget||now>=scpTargetUntil){let pool=[{kind:'player',obj:ctl.getObject(),index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject(),index:-1};scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
-  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{let bx=targetObj.position.x-bad.position.x,bz=targetObj.position.z-bad.position.z,bd=Math.hypot(bx,bz);if(bd>.01){const step=Math.min(3.2*dt,bd);const direct=scpTargetLOS(bad.position.x,bad.position.z,targetObj.position.x,targetObj.position.z);if(direct){bad.userData.rayChain=[];bad.userData.rayChainAt=0;scpMoved=moveSCPWithJSONRay(bad,bx/bd*step,bz/bd*step,.42)||liveGridAvoidStep(bad,targetObj.position.x,targetObj.position.z,3.2)}else{scpMoved=sphereRaySteerSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt)||liveGridAvoidStep(bad,targetObj.position.x,targetObj.position.z,3.2)}}}
-  if(scpTarget){let aimObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(aimObj){scpTarget.x=aimObj.position.x;scpTarget.z=aimObj.position.z;}}const desiredYaw=Math.atan2((scpTarget?.x??p.x)-bad.position.x,(scpTarget?.z??p.z)-bad.position.z);let yawDelta=Math.atan2(Math.sin(desiredYaw-bad.rotation.y),Math.cos(desiredYaw-bad.rotation.y));bad.rotation.y+=yawDelta*Math.min(1,dt*7);
+  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{scpMoved=scoreDirectionMove(bad,targetObj.position.x,targetObj.position.z,3.2,dt,.42)}
+  // Face the selected movement heading, not the moving target's position.
+if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
