@@ -42,10 +42,9 @@ function scpGroundScore(x,z,r=.42){
 let scpRayGizmos=false;
 const scpRayGroup=new T.Group();scene.add(scpRayGroup);
 function drawSCPRayChain(points){
- // Particle GPS: each route waypoint is a glowing particle marker.
- while(scpRayGroup.children.length<points.length){const m=new T.Mesh(new T.SphereGeometry(.095,6,5),new T.MeshBasicMaterial({color:0x35eaff,transparent:true,opacity:.88}));scpRayGroup.add(m)}
- while(scpRayGroup.children.length>points.length){const o=scpRayGroup.children.pop();o.geometry.dispose();o.material.dispose()}
- for(let i=0;i<scpRayGroup.children.length;i++){const particle=scpRayGroup.children[i],p=points[i];particle.position.set(p.x,.28,p.z);particle.visible=scpRayGizmos}
+ // Breadcrumb navigation is data-only: no particle meshes/gizmos are rendered.
+ while(scpRayGroup.children.length){const o=scpRayGroup.children.pop();o.geometry?.dispose();o.material?.dispose()}
+ scpRayGroup.visible=false;
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
@@ -78,7 +77,12 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
   next.sort((a,b)=>a.score-b.score);frontier=next.slice(0,12);
   if(!frontier.length)break;
  }
- if(cached&&oldIndex<cached.length-1){const candidateEnd=bestRoute[bestRoute.length-1],tailEnd=cached[cached.length-1],candidateProgress=Math.hypot(tx-candidateEnd.x,tz-candidateEnd.z),tailProgress=Math.hypot(tx-tailEnd.x,tz-tailEnd.z);if(candidateProgress>tailProgress+1.25)bestRoute=cached}drawSCPRayChain(bestRoute);ud.gpsRoute=bestRoute;ud.gpsAt=now;ud.gpsTx=tx;ud.gpsTz=tz;ud.gpsX=p.x;ud.gpsZ=p.z;
+ if(cached&&oldIndex<cached.length-1){const candidateEnd=bestRoute[bestRoute.length-1],tailEnd=cached[cached.length-1],candidateProgress=Math.hypot(tx-candidateEnd.x,tz-candidateEnd.z),tailProgress=Math.hypot(tx-tailEnd.x,tz-tailEnd.z);if(candidateProgress>tailProgress+1.25)bestRoute=cached}
+ // Remove any breadcrumb that falls on a blocked/object cell; route positions must be walkable.
+ bestRoute=bestRoute.filter(q=>scpGroundScore(q.x,q.z,r)===1&&!hit(q.x,q.z,r));
+ // Add target as the final breadcrumb only when the target's ground point is clear.
+ if(Math.hypot(tx-bestRoute[bestRoute.length-1].x,tz-bestRoute[bestRoute.length-1].z)<step*1.35&&scpGroundScore(tx,tz,r)===1&&!hit(tx,tz,r))bestRoute.push({x:tx,z:tz});
+ drawSCPRayChain(bestRoute);ud.gpsRoute=bestRoute;ud.gpsAt=now;ud.gpsTx=tx;ud.gpsTz=tz;ud.gpsX=p.x;ud.gpsZ=p.z;
  return bestRoute.length>1?{x:(bestRoute[1].x-p.x)/step,z:(bestRoute[1].z-p.z)/step}:null;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
