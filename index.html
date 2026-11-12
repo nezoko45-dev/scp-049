@@ -529,10 +529,10 @@ function gradientSCP(x,z){
  return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
 }
 
-function buildSCPFlowField(tx,tz){
- // Connected flow field: flood open cells outward from the target.
- // Each reachable cell points to its predecessor toward the target.
- const cs=1.25,N=128,half=N/2,ox=tx-half*cs,oz=tz-half*cs,total=N*N,id=(x,z)=>z*N+x;
+function buildSCPFlowField(tx,tz,startX=tx,startZ=tz){
+ // Recenter the field between SCP and its target so neither actor falls
+ // outside the vector map. This remains target-seeded vector navigation.
+ const cs=1.25,N=192,half=N/2,cx=(tx+startX)/2,cz=(tz+startZ)/2,ox=cx-half*cs,oz=cz-half*cs,total=N*N,id=(x,z)=>z*N+x;
  const blocked=new Uint8Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total),distance=new Int32Array(total);distance.fill(-1);
  for(let z=0;z<N;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=hit(wx,wz,.48)?1:0}
  // Find nearest open seed to target if the target itself sits in a blocked cell.
@@ -559,7 +559,7 @@ function buildSCPFlowField(tx,tz){
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,radius=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  let f=ud.flowField;
- if(!f||f.solidCount!==solid.length||Math.hypot(tx-f.targetX,tz-f.targetZ)>3||performance.now()-f.builtAt>1200)f=ud.flowField=buildSCPFlowField(tx,tz);
+ if(!f||f.solidCount!==solid.length||Math.hypot(tx-f.targetX,tz-f.targetZ)>3||performance.now()-f.builtAt>1200)f=ud.flowField=buildSCPFlowField(tx,tz,p.x,p.z);
  const N=f.N,ix=Math.floor((p.x-f.ox)/f.cs),iz=Math.floor((p.z-f.oz)/f.cs),cell=(x,z)=>z*N+x,inside=(x,z)=>x>=1&&z>=1&&x<N-1&&z<N-1;
  // Follow the field as a discrete sequence: current cell -> lowest-distance
  // adjacent cell -> that cell's next lower-distance neighbor, one step at a time.
@@ -607,7 +607,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  let candidates=[[Math.sin(angle),Math.cos(angle)],[vx,vz]];
  if(next){for(const [dx,dz] of dirs){const x=cx+dx,z=cz+dz;if(!inside(x,z))continue;const u=cell(x,z);if(f.blocked[u]||f.distance[u]<0||f.distance[u]>=current)continue;if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;const ax=f.ox+(x+.5)*f.cs-p.x,az=f.oz+(z+.5)*f.cs-p.z,al=Math.hypot(ax,az)||1;candidates.push([ax/al,az/al])}}
  let mx=0,mz=0,chosen=null;for(const [dx,dz] of candidates){const x=dx*step,z=dz*step;if(!hit(p.x+x,p.z+z,radius)){mx=x;mz=z;chosen=[dx,dz];break}}
- if(!chosen){const u=inside(ix,iz)?cell(ix,iz):-1;if(u>=0){f.blocked[u]=1;f.distance[u]=-1;f.dirX[u]=f.dirZ[u]=0}ud.flowStall=(ud.flowStall||0)+1;ud.flowField=buildSCPFlowField(tx,tz);ud.moveDir.set(0,0,0);return false}
+ if(!chosen){const u=inside(ix,iz)?cell(ix,iz):-1;if(u>=0){f.blocked[u]=1;f.distance[u]=-1;f.dirX[u]=f.dirZ[u]=0}ud.flowStall=(ud.flowStall||0)+1;ud.flowField=buildSCPFlowField(tx,tz,p.x,p.z);ud.moveDir.set(0,0,0);return false}
  p.x+=mx;p.z+=mz;ud.steerAngle=Math.atan2(chosen[0],chosen[1]);ud.moveDir.set(chosen[0],0,chosen[1]);obj.rotation.y=Math.atan2(mx,mz);
  ud.flowSequenceCell=next?cell(next.x,next.z):cell(cx,cz);
  ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;return true
