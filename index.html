@@ -69,11 +69,11 @@ function scpGroundScore(x,z,r=.42){
  for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0;
  return 1
 }
-let scpRayGizmos=false;
-const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
+let scpRayGizmos=true;
+const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=true;
 const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),scpRayMatHit=new T.LineBasicMaterial({color:0xff2222,depthTest:false});
-const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:30;color:#00ffff;background:#00151ddd;border:1px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:none;pointer-events:none';document.body.appendChild(rayHUD);
-const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=false;
+const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.textContent='G = toggle SCP RAY GIZMOS | CYAN = steering/target | RED = wall contact';
+const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
 function drawSCPRayChain(points){while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}if(!Array.isArray(points)||points.length<2){scpChainViz.visible=false;return}for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],dx=b.x-a.x,dz=b.z-a.z,len=Math.hypot(dx,dz);if(len<.02)continue;const dir=new T.Vector3(dx/len,0,dz/len),origin=new T.Vector3(a.x,1.35,a.z),arrow=new T.ArrowHelper(dir,origin,len,0xffd400,Math.min(.35,len*.22),Math.min(.22,len*.12));arrow.line.material=scpChainMat;arrow.cone.material=scpChainMat;scpChainViz.add(arrow)}scpChainViz.visible=scpRayGizmos}
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
