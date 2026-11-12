@@ -42,11 +42,16 @@ function scpGroundScore(x,z,r=.42){
 }
 let scpRayGizmos=false;
 const scpRayGroup=new T.Group();scene.add(scpRayGroup);
-window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayGroup.visible=scpRayGizmos;document.querySelector('#msg').textContent=scpRayGizmos?'SCP GRID RAY GIZMO: ON':'SCP GRID RAY GIZMO: OFF'}});
+window.addEventListener('keydown',e=>{if(e.code==='KeyG'&&!e.repeat){scpRayGizmos=!scpRayGizmos;scpRayGroup.visible=scpRayGizmos;document.querySelector('#msg').textContent=scpRayGizmos?'SCP GRID RAY GIZMO: ON':'SCP GRID RAY GIZMO: OFF';if(scpRayGizmos)document.querySelector('#msg').textContent='RAY GIZMO ON · CYAN ROUTE / YELLOW WAYPOINTS'}});
 function drawSCPRayChain(points){
- // Grid route rays: each segment connects consecutive walkable cell centers.
  while(scpRayGroup.children.length){const o=scpRayGroup.children.pop();o.geometry?.dispose();o.material?.dispose()}
- if(points?.length>1){const verts=[];for(let i=1;i<points.length;i++){verts.push(points[i-1].x,.12,points[i-1].z,points[i].x,.12,points[i].z)}const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpRayGroup.add(new T.LineSegments(geo,new T.LineBasicMaterial({color:0x39e8ff,transparent:true,opacity:.9})));}
+ if(points?.length>1){
+  const verts=[];for(let i=1;i<points.length;i++)verts.push(points[i-1].x,.65,points[i-1].z,points[i].x,.65,points[i].z);
+  const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(verts,3));
+  scpRayGroup.add(new T.LineSegments(geo,new T.LineBasicMaterial({color:0x00ffff,depthTest:false,transparent:true,opacity:1})));
+  const markGeo=new T.SphereGeometry(.12,8,6),markMat=new T.MeshBasicMaterial({color:0xffee44,depthTest:false});
+  for(let i=1;i<points.length;i+=Math.max(1,Math.floor(points.length/24))){const m=new T.Mesh(markGeo,markMat);m.position.set(points[i].x,.75,points[i].z);scpRayGroup.add(m)}
+ }
  scpRayGroup.visible=scpRayGizmos;
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
