@@ -88,23 +88,6 @@ function buildSCPRayChain(obj,tx,tz,r=.42){
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
  let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
- if(obj===bad){
-  // Breadcrumb watchdog: rebuild a stale trail from SCP's current position.
-  const gpsNow=performance.now();if(!ud.gpsProgressAt)ud.gpsProgressAt=gpsNow;const gpsMoved=Math.hypot(p.x-(ud.gpsProgressX??p.x),p.z-(ud.gpsProgressZ??p.z));if(gpsMoved>.12){ud.gpsProgressAt=gpsNow;ud.gpsProgressX=p.x;ud.gpsProgressZ=p.z}else if(gpsNow-ud.gpsProgressAt>900){ud.gpsRoute=null;ud.gpsAt=0;ud.gpsWaypointIndex=1;ud.gpsProgressAt=gpsNow;ud.gpsProgressX=p.x;ud.gpsProgressZ=p.z}
-  buildSCPRayChain(obj,tx,tz,r);
-  const route=ud.gpsRoute||[];
-  if(ud.gpsFollowRouteAt===undefined)ud.gpsWaypointIndex=1;ud.gpsFollowRouteAt=ud.gpsAt
-  let wi=ud.gpsWaypointIndex||1;
-  while(wi<route.length&&Math.hypot(route[wi].x-p.x,route[wi].z-p.z)<.48)wi++;
-  ud.gpsWaypointIndex=wi;const wp=route[wi];
-  if(wp){const wx=wp.x-p.x,wz=wp.z-p.z,wd=Math.hypot(wx,wz);
-   if(wd>.01){const step=Math.min(speed*dt,wd),vx=wx/wd,vz=wz/wd,nx=p.x+vx*step,nz=p.z+vz*step;let safe=true;
-    for(let k=1;k<=5;k++){const t=k/5;if(scpGroundScore(p.x+vx*step*t,p.z+vz*step*t,r)!==1||hit(p.x+vx*step*t,p.z+vz*step*t,r)){safe=false;break}}
-    if(safe){p.x=nx;p.z=nz;ud.moveDir?.set(vx,0,vz);obj.rotation.y=Math.atan2(vx,vz);ud.scoreSteerX=vx;ud.scoreSteerZ=vz;return true}
-    let bypass=-1;for(let j=wi+1;j<route.length;j++){const q=route[j],qx=q.x-p.x,qz=q.z-p.z,qd=Math.hypot(qx,qz),n=Math.ceil(qd/.16);if(qd<.05)continue;let clear=true;for(let k=1;k<=n;k++){const t=k/n,sx=p.x+qx*t,sz=p.z+qz*t;if(scpGroundScore(sx,sz,r)!==1||hit(sx,sz,r)){clear=false;break}}if(clear){bypass=j;break}}if(bypass>=0){ud.gpsWaypointIndex=bypass;ud.gpsProgressAt=performance.now();ud.gpsProgressX=p.x;ud.gpsProgressZ=p.z}else{ud.gpsRoute=null;ud.gpsAt=0;ud.gpsWaypointIndex=1;ud.gpsProgressAt=performance.now();ud.gpsProgressX=p.x;ud.gpsProgressZ=p.z}
-   }
-  }
- }
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
