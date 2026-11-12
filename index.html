@@ -66,7 +66,16 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   // Reward forward target progress, and strongly reward open wall-edge lanes
   // that carry SCP along the obstacle toward its target.
   const progress=vx*desiredX+vz*desiredZ;
-  const score=open*1.7+reach*.22-blocked*8+edge*2.8+edgeToward*9+progress*32;
+  // Repulsion/attraction field: every score-1 sample pulls this heading
+  // forward; every score-0 sample pushes it away. Near samples weigh most.
+  let attraction=0,repulsion=0;
+  for(const d of [.45,.9,1.5,2.4,3.6,5.2,7.5,10]){
+   const ground=scpGroundScore(p.x+vx*d,p.z+vz*d,r);
+   const weight=1/(.35+d*.22);
+   if(ground===1)attraction+=weight;
+   else repulsion+=weight;
+  }
+  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+progress*32;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
