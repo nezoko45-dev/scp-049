@@ -47,29 +47,37 @@ function drawSCPRayChain(points){
  for(let i=0;i<scpRayGroup.children.length;i++){const line=scpRayGroup.children[i];line.geometry.setFromPoints([new T.Vector3(points[i].x,.22,points[i].z),new T.Vector3(points[i+1].x,.22,points[i+1].z)]);line.visible=scpRayGizmos}
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
- const p=obj.position,points=[{x:p.x,z:p.z}],step=1.1,maxSegments=260;let x=p.x,z=p.z,prevX=0,prevZ=1;
- const visited=[];
- for(let chain=0;chain<maxSegments;chain++){let best=null,bestScore=-1e9;
-  for(let deg=0;deg<360;deg+=2){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
-   if(scpGroundScore(x+vx*.32,z+vz*.32,r)!==1||hit(x+vx*.32,z+vz*.32,r))continue;
-   let open=0,clear=0,blockedAhead=0;for(const d of [.45,.8,1.2,1.7,2.3,3]){if(scpGroundScore(x+vx*d,z+vz*d,r)===1&&!hit(x+vx*d,z+vz*d,r)){open++;clear=d}else blockedAhead++}
-   const td=Math.hypot(tx-x,tz-z),toward=td>0?((tx-x)*vx+(tz-z)*vz)/td:0,smooth=vx*prevX+vz*prevZ;
-   const progress=td-Math.hypot(tx-(x+vx*step),tz-(z+vz*step));
-   // Wall contour: reward a clear lane beside a blocked side, with a persistent
-   // tangent direction so the chain bends around corners instead of terminating.
-   const px=-vz,pz=vx;let contour=0;
-   for(const d of [.7,1.3,2,2.8]){const left=scpGroundScore(x+vx*d+px*r*2.3,z+vz*d+pz*r*2.3,r),right=scpGroundScore(x+vx*d-px*r*2.3,z+vz*d-pz*r*2.3,r);
-    if(left===0&&right===1)contour+=2.2;if(right===0&&left===1)contour+=2.2;
+ const p=obj.position,step=1.1,maxSegments=260,points=[{x:p.x,z:p.z}];
+ // GPS-style ray routing: explore a branching set of open-ground routes,
+ // score whole routes by target distance, clearance and smoothness.
+ let frontier=[{x:p.x,z:p.z,dx:0,dz:1,path:points,score:0,depth:0}],bestRoute=points,bestDistance=Math.hypot(tx-p.x,tz-p.z);
+ const visited=new Map();let reached=false;
+ for(let layer=0;layer<maxSegments&&!reached;layer++){
+  const next=[];
+  for(const node of frontier){
+   const td=Math.hypot(tx-node.x,tz-node.z);
+   if(td<step*.8){bestRoute=node.path;reached=true;break}
+   // Sweep candidate directions across 360 degrees; rays only extend on score-1 ground.
+   for(let deg=0;deg<360;deg+=6){
+    const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a),nx=node.x+vx*step,nz=node.z+vz*step;
+    if(scpGroundScore(node.x+vx*.35,node.z+vz*.35,r)!==1||hit(node.x+vx*.35,node.z+vz*.35,r)||scpGroundScore(nx,nz,r)!==1||hit(nx,nz,r))continue;
+    let clear=0;for(const d of [.5,1,1.6,2.3,3.2])if(scpGroundScore(node.x+vx*d,node.z+vz*d,r)===1&&!hit(node.x+vx*d,node.z+vz*d,r))clear++;
+    const nd=Math.hypot(tx-nx,tz-nz),turn=node.depth?1-(vx*node.dx+vz*node.dz):1;
+    const key=Math.round(nx*1.5)+","+Math.round(nz*1.5),old=visited.get(key);
+    const cost=(node.depth+1)*.12+turn*.16-clear*.035+nd*.035;
+    if(old!==undefined&&old<=cost)continue;visited.set(key,cost);
+    const path=node.path.concat([{x:nx,z:nz}]),routeScore=nd+turn*.5-clear*.12;
+    if(nd<bestDistance){bestDistance=nd;bestRoute=path}
+    next.push({x:nx,z:nz,dx:vx,dz:vz,path,depth:node.depth+1,score:routeScore});
    }
-   let revisit=0;for(const q of visited)if(Math.hypot(x+vx*step-q.x,z+vz*step-q.z)<1.1){revisit=8;break}
-   const score=open*2.2+clear*.6+toward*5.5+smooth*2.8+progress*3.5+contour*2.4-blockedAhead*.35-revisit;
-   if(score>bestScore){bestScore=score;best={vx,vz}}
   }
-  if(!best){for(let deg=0;deg<360;deg+=2){const a=deg*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);if(scpGroundScore(x+vx*.32,z+vz*.32,r)!==1||hit(x+vx*.32,z+vz*.32,r))continue;let open=0,clear=0;for(const d of [.5,1,1.5,2.2,3,4.5])if(scpGroundScore(x+vx*d,z+vz*d,r)===1&&!hit(x+vx*d,z+vz*d,r)){open++;clear=d}const td=Math.hypot(tx-x,tz-z),toward=td?((tx-x)*vx+(tz-z)*vz)/td:0,smooth=vx*prevX+vz*prevZ,score=open*3+clear*.8+toward*4+smooth*2;if(score>bestScore){bestScore=score;best={vx,vz}}}}
-  if(!best)break;visited.push({x,z});x+=best.vx*step;z+=best.vz*step;prevX=best.vx;prevZ=best.vz;points.push({x,z});if(Math.hypot(tx-x,tz-z)<step*.45)break;
+  // Beam search keeps several promising branches, allowing corner routes
+  // to survive instead of committing to one locally attractive direction.
+  next.sort((a,b)=>a.score-b.score);frontier=next.slice(0,36);
+  if(!frontier.length)break;
  }
- drawSCPRayChain(points);
- return points.length>1?{x:(points[1].x-p.x)/step,z:(points[1].z-p.z)/step}:null;
+ drawSCPRayChain(bestRoute);
+ return bestRoute.length>1?{x:(bestRoute[1].x-p.x)/step,z:(bestRoute[1].z-p.z)/step}:null;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
