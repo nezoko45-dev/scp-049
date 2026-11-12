@@ -449,8 +449,9 @@ function scpRayClearSegment(x,z,nx,nz,r=.42){
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),now=performance.now(),targetKey=Math.round(tx/3)+','+Math.round(tz/3);
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- // Build a branching chain from real horizontal ray probes. Each node fans 360°;
- // blocked rays terminate, clear rays become route branches around geometry.
+ // Build a target-directed branching chain from real horizontal ray probes.
+ // Each node shoots toward the target first, then fans around that bearing;
+ // blocked rays terminate and clear rays form detours around geometry.
  if(ud.rayTargetKey!==targetKey||!ud.rayChain?.length||now-(ud.rayChainAtTime||0)>5000){
   const step=1.05,dirs=48,beamWidth=14,maxDepth=220;
   const start={x:obj.position.x,z:obj.position.z,a:ud.moveAngle||0,path:[{x:obj.position.x,z:obj.position.z}],score:0};
@@ -461,7 +462,8 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
    for(const node of beam){
     const d0=Math.hypot(tx-node.x,tz-node.z);
     for(let k=0;k<dirs;k++){
-     const a=k*Math.PI*2/dirs,vx=Math.sin(a),vz=Math.cos(a),x=node.x+vx*step,z=node.z+vz*step;
+     // Aim the ray fan directly at the target first, then fan outward around that bearing.
+     const bearing=Math.atan2(tx-node.x,tz-node.z),offset=((k+dirs/2)%dirs-dirs/2)*Math.PI*2/dirs,a=bearing+offset,vx=Math.sin(a),vz=Math.cos(a),x=node.x+vx*step,z=node.z+vz*step;
      if(!scpRayClearSegment(node.x,node.z,x,z,.43))continue;
      // Reject branches that immediately point back into the same obstacle.
      let clearance=0;for(const d of [.5,1,1.5,2,2.8])if(scpRayClearSegment(node.x,node.z,node.x+vx*d,node.z+vz*d,.38))clearance++;
