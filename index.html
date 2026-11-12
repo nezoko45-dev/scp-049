@@ -12,10 +12,25 @@ const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({c
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
 function buildNavigation(){
- const size=400,origin=-200;
- navData={cellSize:1,width:size,height:size,origin:{x:origin,z:origin},grid:Array.from({length:size},()=>Array(size).fill(1))};
+ const size=400,cellSize=1,origin=-200;
+ navData={format:'facility-score-map-v1',cellSize,width:size,height:size,origin:{x:origin,z:origin},grid:Array.from({length:size},()=>Array(size).fill(1)),revision:0};
+ rebuildFacilityScoreMap();
  navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';
- console.info('Live grid initialized: 1=open, 0=blocked');
+ console.info('Facility JSON score map initialized: 1=unblocked, 0=blocked');
+}
+// Rebuild the score map from the actual facility geometry (solid[]). This is a
+// compact JSON-style occupancy grid consumed directly by SCP's GPS ray chain.
+let facilityScoreSolidCount=-1;
+function rebuildFacilityScoreMap(){
+ if(!navData?.grid)return;
+ const g=navData.grid,cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,W=navData.width,H=navData.height;
+ for(let z=0;z<H;z++)g[z].fill(1);
+ for(const o of solid){
+  const minX=Math.max(0,Math.floor((o.x-o.w/2)/cs-ox/cs)),maxX=Math.min(W-1,Math.floor((o.x+o.w/2)/cs-ox/cs));
+  const minZ=Math.max(0,Math.floor((o.z-o.d/2)/cs-oz/cs)),maxZ=Math.min(H-1,Math.floor((o.z+o.d/2)/cs-oz/cs));
+  for(let z=minZ;z<=maxZ;z++)for(let x=minX;x<=maxX;x++)g[z][x]=0;
+ }
+ navData.revision=(navData.revision||0)+1;facilityScoreSolidCount=solid.length;
 }
 function cellOf(x,z){const cs=navData.cellSize||1;return {x:Math.floor((x-navData.origin.x)/cs),z:Math.floor((z-navData.origin.z)/cs)}}
 function nearestOpen(x,z){
@@ -256,6 +271,8 @@ function makeFacilityChunk(cx,cz){
 }
 let backendGridSyncAt=0,backendGridOnline=false;async function syncGridBackend(now){if(now-backendGridSyncAt<250)return;backendGridSyncAt=now;try{let r=await fetch('http://127.0.0.1:8766/map.json?refresh='+now,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let g=await r.json();if(!g.grid||!g.width||!g.height)throw Error('Invalid grid');const changed=!navData||navData.width!==g.width||navData.height!==g.height||navData.origin?.x!==g.origin?.x||navData.origin?.z!==g.origin?.z;navData=g;navReady=true;backendGridOnline=true;if(changed){navPath=[];navPathAt=0;allies.forEach(a=>{a.userData.path=[];a.userData.pathIndex=0});zombies.forEach(z=>{z.userData.path=[];z.userData.pathIndex=0});}document.querySelector('#head').textContent='LAST SHIFT / GRID EXE ONLINE · AI USING LIVE GRID';}catch(e){backendGridOnline=false;document.querySelector('#head').textContent='LAST SHIFT / GRID EXE OFFLINE · AI USING FALLBACK';}}
 function streamFacility(now){
+ // New chunks add solids; refresh score JSON once the facility geometry changes.
+ if(navReady&&facilityScoreSolidCount!==solid.length)rebuildFacilityScoreMap();
  if(!navReady)return;
  const p=ctl.getObject().position,chunkX=Math.floor(p.x/40)*40,chunkZ=Math.floor(p.z/40)*40;makeFacilityChunk(chunkX,chunkZ);
  // Grow A* data as the player crosses the current grid borders.
