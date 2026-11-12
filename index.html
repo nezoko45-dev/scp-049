@@ -218,8 +218,17 @@ function scheduleRecastRebuild(){
  },450);
 }
 async function recastMove(obj,tx,tz,speed,now){return liveGridAvoidStep(obj,tx,tz,speed)}
+function expandNavToChunk(cx,cz){
+ if(!navData?.grid)return;const cs=navData.cellSize||1,g=navData.grid;
+ const minX=Math.floor((cx-navData.origin.x)/cs),minZ=Math.floor((cz-navData.origin.z)/cs),maxX=Math.ceil((cx+40-navData.origin.x)/cs),maxZ=Math.ceil((cz+40-navData.origin.z)/cs);
+ const left=Math.max(0,-minX),top=Math.max(0,-minZ),right=Math.max(0,maxX-navData.width),bottom=Math.max(0,maxZ-navData.height);
+ if(left){g.forEach(row=>row.unshift(...Array(left).fill(1)));navData.width+=left;navData.origin.x-=left*cs}
+ if(right){g.forEach(row=>row.push(...Array(right).fill(1)));navData.width+=right}
+ if(top){g.unshift(...Array.from({length:top},()=>Array(navData.width).fill(1)));navData.height+=top;navData.origin.z-=top*cs}
+ if(bottom){g.push(...Array.from({length:bottom},()=>Array(navData.width).fill(1)));navData.height+=bottom}
+}
 function makeFacilityChunk(cx,cz){
- const key=cx+','+cz;if(facilityChunks.has(key))return;facilityChunks.add(key);
+ const key=cx+','+cz;if(facilityChunks.has(key))return;facilityChunks.add(key);expandNavToChunk(cx,cz);
  const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);navMeshes.push(floor);
  // Boundary walls; leave openings for connected hallways on each side.
  const openN=Math.random()<.72,openS=Math.random()<.72,openW=Math.random()<.72,openE=Math.random()<.72;
