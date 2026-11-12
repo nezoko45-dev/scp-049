@@ -42,9 +42,10 @@ function scpGroundScore(x,z,r=.42){
 let scpRayGizmos=false;
 const scpRayGroup=new T.Group();scene.add(scpRayGroup);
 function drawSCPRayChain(points){
- while(scpRayGroup.children.length<points.length-1){scpRayGroup.add(new T.Line(new T.BufferGeometry(),new T.LineBasicMaterial({color:0x35eaff,transparent:true,opacity:.9})))}
- while(scpRayGroup.children.length>points.length-1){const o=scpRayGroup.children.pop();o.geometry.dispose();o.material.dispose()}
- for(let i=0;i<scpRayGroup.children.length;i++){const line=scpRayGroup.children[i];line.geometry.setFromPoints([new T.Vector3(points[i].x,.22,points[i].z),new T.Vector3(points[i+1].x,.22,points[i+1].z)]);line.visible=scpRayGizmos}
+ // Particle GPS: each route waypoint is a glowing particle marker.
+ while(scpRayGroup.children.length<points.length){const m=new T.Mesh(new T.SphereGeometry(.095,6,5),new T.MeshBasicMaterial({color:0x35eaff,transparent:true,opacity:.88}));scpRayGroup.add(m)}
+ while(scpRayGroup.children.length>points.length){const o=scpRayGroup.children.pop();o.geometry.dispose();o.material.dispose()}
+ for(let i=0;i<scpRayGroup.children.length;i++){const particle=scpRayGroup.children[i],p=points[i];particle.position.set(p.x,.28,p.z);particle.visible=scpRayGizmos}
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
@@ -155,7 +156,12 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
    const value=clear*12+toward*4;
    if(value>escapeScore){escapeScore=value;escape={vx,vz}}
   }
-  if(!escape){ud.moveDir?.set(0,0,0);return false}
+  if(!escape){
+  // Hard-stuck recovery: re-seat SCP at the nearest valid open grid cell.
+  const q=nearestOpen(p.x,p.z);
+  if(q&&navData?.grid){const cs=navData.cellSize||1,nx=navData.origin.x+(q.x+.5)*cs,nz=navData.origin.z+(q.z+.5)*cs;
+   if(!hit(nx,nz,r)){p.x=nx;p.z=nz;ud.gpsRoute=null;ud.gpsAt=0;ud.scoreSteerX=0;ud.scoreSteerZ=1;ud.moveDir?.set(0,0,1);return true}}
+  ud.moveDir?.set(0,0,0);return false}
   const step=Math.min(speed*dt,.22),nx=p.x+escape.vx*step,nz=p.z+escape.vz*step;
   if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){
    ud.scoreSteerX=escape.vx;ud.scoreSteerZ=escape.vz;p.x=nx;p.z=nz;
