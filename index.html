@@ -482,24 +482,22 @@ function scpRayClearSegment(x,z,nx,nz,r=.42){
  }
  return true;
 }
-// SCP navigates directly from remembered JSON occupancy scores. No A*, no waypoint route.
-// Gradient sampling over the remembered JSON score field (1=open, 0=blocked).
-// Samples several radii; open space pulls the gradient, blocked cells repel it.
-function sampleSCPScore(x,z){
- const cs=navData?.cellSize||1,g=navData?.grid;if(!g)return 1;
- const ix=Math.floor((x-navData.origin.x)/cs),iz=Math.floor((z-navData.origin.z)/cs);
- if(ix<0||iz<0||ix>=navData.width||iz>=navData.height)return 0;
- return g[iz]?.[ix]===1?1:0
-}
+// SCP uses continuous ground-level gradient sampling against real facility geometry.
+// No navigation cells, JSON scores, grid lookups, or A*: nearby physical obstacles
+// shorten sampled rays; longer clear ground rays pull SCP toward open space.
 function gradientSCP(x,z){
- let gx=0,gz=0,weight=0;
- for(let k=0;k<32;k++){
-  const a=k*Math.PI/16,dx=Math.sin(a),dz=Math.cos(a);
-  let openness=0;
-  for(const d of [1,2,3,5,7])openness+=sampleSCPScore(x+dx*d,z+dz*d)/(d*.7+1);
-  const w=openness;gx+=dx*w;gz+=dz*w;weight+=w;
+ if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
+ let gx=0,gz=0,total=0;const originY=1.05,maxReach=8;
+ for(let k=0;k<48;k++){
+  const a=k*Math.PI/24,dx=Math.sin(a),dz=Math.cos(a);
+  scpRaycaster.set(new T.Vector3(x,originY,z),new T.Vector3(dx,0,dz));
+  scpRaycaster.near=0;scpRaycaster.far=maxReach;
+  const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
+  const distance=hits.length?Math.max(0,hits[0].distance-.5):maxReach;
+  const openness=distance/maxReach,weight=openness*openness;
+  gx+=dx*weight;gz+=dz*weight;total+=weight;
  }
- return {x:gx/(weight||1),z:gz/(weight||1)}
+ return {x:gx/(total||1),z:gz/(total||1)}
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
@@ -507,19 +505,18 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  drawSCPRayGizmos(obj);
  const toX=tx-p.x,toZ=tz-p.z,len=Math.hypot(toX,toZ)||1,target={x:toX/len,z:toZ/len};
  const grad=gradientSCP(p.x,p.z);let best=null,bestScore=-Infinity;
- // Continuous gradient-guided angular sampling: target attraction + score-field gradient + inertia.
+ // Sample 72 physical directions; rays measure real wall clearance, never grid cells.
  for(let k=0;k<72;k++){
-  const a=k*Math.PI/36,dx=Math.sin(a),dz=Math.cos(a);
-  let clearance=0,blocked=false;
+  const a=k*Math.PI/36,dx=Math.sin(a),dz=Math.cos(a);let clearance=0,blocked=false;
   for(const d of [.8,1.5,2.5,4,6]){
    const px=p.x+dx*d,pz=p.z+dz*d;
-   if(hit(px,pz,.44)||sampleSCPScore(px,pz)===0){blocked=true;break}
+   if(hit(px,pz,.44)||!scpRayClearSegment(p.x,p.z,px,pz,.42)){blocked=true;break}
    clearance+=1/(d+1)
   }
   if(blocked)continue;
   const targetPull=dx*target.x+dz*target.z,gradientPull=dx*grad.x+dz*grad.z;
   const inertia=ud.moveDir.lengthSq()>.001?dx*ud.moveDir.x+dz*ud.moveDir.z:targetPull;
-  const score=targetPull*2.8+gradientPull*1.35+clearance*.35+inertia*.55;
+  const score=targetPull*2.8+gradientPull*2.0+clearance*.35+inertia*.55;
   if(score>bestScore){bestScore=score;best={x:dx,z:dz}}
  }
  if(!best){ud.moveDir.set(0,0,0);return false}
