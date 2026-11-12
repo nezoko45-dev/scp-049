@@ -545,7 +545,7 @@ function buildSCPFlowField(tx,tz){
  return {cs,N,ox,oz,dirX,dirZ,blocked,targetX:tx,targetZ:tz,solidCount:solid.length,builtAt:performance.now()};
 }
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),p=obj.position;if(!ud.moveDir)ud.moveDir=new T.Vector3();
+ const ud=obj.userData||(obj.userData={}),p=obj.position,radius=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
  // Flow field: every nearby walkable cell points along the custom vector flow to the target.
  let f=ud.flowField;
  if(!f||f.solidCount!==solid.length||Math.hypot(tx-f.targetX,tz-f.targetZ)>3||performance.now()-f.builtAt>1200){f=ud.flowField=buildSCPFlowField(tx,tz)}
@@ -567,7 +567,7 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
  if(Math.hypot(rx,rz)>.001){const l=Math.hypot(rx,rz);gx=rx/l;gz=rz/l}
  // Preserve the flow's direction, but never advance into a ray-blocked segment.
 
- const step=Math.max(.02,speed*dt),radius=.48;
+ const step=Math.max(.02,speed*dt);
  let vx=gx,vz=gz,safe=scpRayClearSegment(p.x,p.z,p.x+vx*step,p.z+vz*step,radius);
  if(!safe){
   // Minimal local escape if a streamed obstacle invalidates the current field direction.
