@@ -49,7 +49,7 @@ function drawSCPRayChain(points){
 }
 function buildSCPRayChain(obj,tx,tz,r=.42){
  const p=obj.position,ud=obj.userData,now=performance.now(),step=1.1,maxSegments=90,points=[{x:p.x,z:p.z}];
- const cached=ud.gpsRoute,oldIndex=ud.gpsWaypointIndex||1; if(cached && oldIndex<cached.length-1 && now-(ud.gpsAt||0)<1400 && Math.hypot(tx-(ud.gpsTx??tx),tz-(ud.gpsTz??tz))<3.5 && Math.hypot(p.x-(ud.gpsX??p.x),p.z-(ud.gpsZ??p.z))<7) return {x:(cached[oldIndex].x-p.x)/step,z:(cached[oldIndex].z-p.z)/step};
+ const cached=ud.gpsRoute,oldIndex=ud.gpsWaypointIndex||1; if(cached && oldIndex<cached.length-1) return {x:(cached[oldIndex].x-p.x)/step,z:(cached[oldIndex].z-p.z)/step};
  // GPS-style ray routing: explore a branching set of open-ground routes,
  // score whole routes by target distance, clearance and smoothness.
  let frontier=[{x:p.x,z:p.z,dx:0,dz:1,path:points,score:0,depth:0}],bestRoute=points,bestDistance=Math.hypot(tx-p.x,tz-p.z);
