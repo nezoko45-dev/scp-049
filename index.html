@@ -578,12 +578,23 @@ function sphereRaySteerSCP(obj,tx,tz,speed,dt){
   if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;
   next={x,z};bestDistance=d;
  }
- // The waypoint is the center of the next cell in the descending-distance sequence.
- let wx,wz;if(next){wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs}
- else{wx=tx;wz=tz}
+ // SCP never steers toward a target coordinate. The target only seeds the
+ // field; movement is exclusively from the field's offered vector sequence.
+ let wx,wz;
+ if(next){wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs}
+ else if(inside(cx,cz)&&f.distance[cell(cx,cz)]>=0){
+  const u=cell(cx,cz),dx=f.dirX[u],dz=f.dirZ[u];
+  if(Math.hypot(dx,dz)>.01){wx=p.x+dx*f.cs;wz=p.z+dz*f.cs}
+  else{wx=p.x;wz=p.z}
+ }else{wx=p.x;wz=p.z}
  let vx=wx-p.x,vz=wz-p.z,len=Math.hypot(vx,vz);
  if(len<.12&&next){ud.flowSequenceCell=cell(next.x,next.z);wx=f.ox+(next.x+.5)*f.cs;wz=f.oz+(next.z+.5)*f.cs;vx=wx-p.x;vz=wz-p.z;len=Math.hypot(vx,vz)}
- if(len<.05){ud.moveDir.set(0,0,0);return false}
+ if(len<.05){
+  // At a field sink/edge, select an open adjacent vector cell; never fall back
+  // to target coordinates. If no vector is available, rebuild field next tick.
+  const choices=[];for(const [dx,dz] of dirs){const x=cx+dx,z=cz+dz;if(!inside(x,z))continue;const u=cell(x,z);if(f.blocked[u]||f.distance[u]<0)continue;if(dx&&dz&&(f.blocked[cell(cx+dx,cz)]||f.blocked[cell(cx,cz+dz)]))continue;choices.push({x,z,d:f.distance[u]})}
+  choices.sort((a,b)=>a.d-b.d);if(choices.length){const q=choices[0];wx=f.ox+(q.x+.5)*f.cs;wz=f.oz+(q.z+.5)*f.cs;vx=wx-p.x;vz=wz-p.z;len=Math.hypot(vx,vz)}else{ud.moveDir.set(0,0,0);return false}
+ }
  vx/=len;vz/=len;
  const step=Math.max(.02,speed*dt),desired=Math.atan2(vx,vz),facing=ud.steerAngle??desired,delta=Math.atan2(Math.sin(desired-facing),Math.cos(desired-facing)),angle=facing+Math.max(-dt*3,Math.min(dt*3,delta));
  // Walk the offered flow vector first; if its turn is obstructed, test alternate
