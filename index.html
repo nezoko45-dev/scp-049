@@ -591,15 +591,8 @@ function frame(now){
    z.userData.animT=(z.userData.animT||0)+dt;const moving=d>1;
    z.userData.attackT=Math.max(0,(z.userData.attackT||0)-dt);
    if(moving){
-    // Each zombie follows its own cached target-seeded cell flowfield.
-    const f=z.userData.flowField;
-    if(!f||Math.hypot(tp.x-z.userData.flowTargetX,tp.z-z.userData.flowTargetZ)>2||(f.revision!==(navData?.revision||0))){
-      z.userData.flowField=buildSCPFlowField(tp.x,tp.z,z.position.x,z.position.z);z.userData.flowTargetX=tp.x;z.userData.flowTargetZ=tp.z;
-    }
-    const field=z.userData.flowField,cs=field?.cs||1,x=Math.floor((z.position.x-(field?.ox??-200))/cs),zz=Math.floor((z.position.z-(field?.oz??-200))/cs);
-    let vx=0,vz=0;if(field&&x>=0&&zz>=0&&x<field.N&&zz<field.H){const ii=zz*field.N+x;vx=field.dirX[ii];vz=field.dirZ[ii]}
-    if(Math.hypot(vx,vz)>.01){const ll=Math.hypot(vx,vz),stride=Math.min(1.1*dt,Math.max(.04,1.1*dt));vx/=ll;vz/=ll;const mx=vx*stride,mz=vz*stride;if(!hit(z.position.x+mx,z.position.z+mz,.4)){z.position.x+=mx;z.position.z+=mz;z.rotation.y=Math.atan2(vx,vz)}else scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4)}
-    else scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4)
+    // Zombies use local direction scoring; no cached flowfield/BFS.
+    scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4);
    }
    const t=z.userData.animT,arms=z.userData.limbs||[],torso=z.userData.torso;
    // Procedural run cycle follows the chosen target; attack lunge triggers on any selected victim.
