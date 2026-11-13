@@ -537,50 +537,33 @@ function gradientSCP(x,z){
  return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
 }
 
-function buildSCPFlowField(tx,tz,startX=tx,startZ=tz){
- // Whole-facility vector field: use the complete generated navigation map,
- // not a small bubble around SCP/target. Every reachable open cell gets
- // a downhill direction from a target-seeded BFS.
- const cs=navReady&&navData?.grid?navData.cellSize:1,N=navReady&&navData?.grid?navData.width:400,H=navReady&&navData?.grid?navData.height:400;
- const ox=navReady&&navData?.grid?navData.origin.x:-200,oz=navReady&&navData?.grid?navData.origin.z:-200,total=N*H,id=(x,z)=>z*N+x;
- const blocked=new Uint8Array(total),dirX=new Float32Array(total),dirZ=new Float32Array(total),distance=new Int32Array(total);distance.fill(-1);
- for(let z=0;z<H;z++)for(let x=0;x<N;x++){const wx=ox+(x+.5)*cs,wz=oz+(z+.5)*cs;blocked[id(x,z)]=((navData?.grid&&!navData.grid[z]?.[x])||hit(wx,wz,.48))?1:0}
- // Target seeds the global field; if it lands on an occupied cell, choose nearest open cell.
- let sx=Math.floor((tx-ox)/cs),sz=Math.floor((tz-oz)/cs),seed=null;
- for(let r=0;r<Math.max(N,H)&&!seed;r++)for(let dz=-r;dz<=r&&!seed;dz++)for(let dx=-r;dx<=r;dx++){
-  if(Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;const x=sx+dx,z=sz+dz;
-  if(x>=1&&z>=1&&x<N-1&&z<H-1&&!blocked[id(x,z)]){seed={x,z};break}
- }
- if(seed){
-  const queue=new Int32Array(total);let head=0,tail=0;const root=id(seed.x,seed.z);queue[tail++]=root;distance[root]=0;
-  const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
-  while(head<tail){const u=queue[head++],x=u%N,z=(u/N)|0;
-   for(const [dx,dz] of dirs){const nx=x+dx,nz=z+dz;if(nx<1||nz<1||nx>=N-1||nz>=H-1)continue;const v=id(nx,nz);if(blocked[v]||distance[v]>=0)continue;
-    if(dx&&dz&&(blocked[id(x+dx,z)]||blocked[id(x,z+dz)]))continue;
-    distance[v]=distance[u]+1;dirX[v]=-dx;dirZ[v]=-dz;queue[tail++]=v;
-   }
-  }
- }
- for(let i=0;i<total;i++){if(blocked[i]||distance[i]<=0)continue;const l=Math.hypot(dirX[i],dirZ[i])||1;dirX[i]/=l;dirZ[i]/=l}
- return {cs,N,H,ox,oz,dirX,dirZ,blocked,distance,targetX:tx,targetZ:tz,solidCount:solid.length,revision:navData?.revision||0,builtAt:performance.now()};
-}
+// Persistent curved-vector SCP steering. No flowfield, BFS, A*, Dijkstra, or raycasts.
 function sphereRaySteerSCP(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48;if(!ud.moveDir)ud.moveDir=new T.Vector3();
- const cs=navReady&&navData?.grid?navData.cellSize:1,N=navReady&&navData?.grid?navData.width:400,H=navReady&&navData?.grid?navData.height:400,ox=navReady&&navData?.grid?navData.origin.x:-200,oz=navReady&&navData?.grid?navData.origin.z:-200;
- const step=Math.max(.025,speed*dt);
- // Rebuild target-seeded cell flowfield when target or map changes.
- const f=ud.flowField,needs=!f||f.N!==N||f.H!==H||f.cs!==cs||Math.hypot(tx-f.targetX,tz-f.targetZ)>cs*2||f.revision!==(navData?.revision||0);
- if(needs)ud.flowField=buildSCPFlowField(tx,tz,p.x,p.z);
- const field=ud.flowField,x=Math.floor((p.x-ox)/cs),z=Math.floor((p.z-oz)/cs);
- let dx=0,dz=0;
- if(field&&x>=1&&z>=1&&x<N-1&&z<H-1){const i=z*N+x;dx=field.dirX[i];dz=field.dirZ[i]}
- // If SCP is off-field/unreachable, snap to nearest reachable vector cell.
- if(Math.hypot(dx,dz)<.01&&field){let bd=Infinity;for(let rr=1;rr<12;rr++){for(let zz=-rr;zz<=rr;zz++)for(let xx=-rr;xx<=rr;xx++){if(Math.max(Math.abs(xx),Math.abs(zz))!==rr)continue;const nx=x+xx,nz=z+zz;if(nx<1||nz<1||nx>=N-1||nz>=H-1)continue;const i=nz*N+nx;if(field.distance[i]<0||field.blocked[i])continue;const d=xx*xx+zz*zz;if(d<bd){bd=d;dx=field.dirX[i];dz=field.dirZ[i]}}if(bd<Infinity)break}}
- const len=Math.hypot(dx,dz);if(len<.01){ud.moveDir.set(0,0,0);return false}dx/=len;dz/=len;
- let stride=step,mx=dx*stride,mz=dz*stride;while(stride>.025&&hit(p.x+mx,p.z+mz,r)){stride*=.5;mx=dx*stride;mz=dz*stride}
- if(hit(p.x+mx,p.z+mz,r)){ud.moveDir.set(0,0,0);return false}
- p.x+=mx;p.z+=mz;ud.moveDir.set(dx,0,dz);obj.rotation.y=Math.atan2(dx,dz);
- ud.groundFlowVector={x:dx,z:dz,sampledAt:performance.now()};ud.groundFlowStall=0;ud.ropeChain=null;ud.ropeTarget=null;ud.gpsRoute=null;return true
+ const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48;
+ if(!ud.moveDir)ud.moveDir=new T.Vector3();
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);if(dist<.15)return false;
+ const desired=new T.Vector3(dx/dist,0,dz/dist),step=Math.min(speed*dt,.5);
+ let best=null,bestScore=-Infinity;
+ // Score 32 candidate directions using live solid-bound collision checks.
+ for(let k=0;k<32;k++){
+  const angle=k*Math.PI*2/32,v=new T.Vector3(Math.sin(angle),0,Math.cos(angle));
+  const nx=p.x+v.x*step,nz=p.z+v.z*step;
+  let clear=true;for(let q=1;q<=5;q++){const f=q/5;if(hit(p.x+(nx-p.x)*f,p.z+(nz-p.z)*f,r)){clear=false;break}}
+  if(!clear)continue;
+  let clearance=2.5;
+  for(const o of solid){const gap=Math.hypot(Math.max(0,Math.abs(nx-o.x)-o.w/2),Math.max(0,Math.abs(nz-o.z)-o.d/2));if(gap<clearance)clearance=gap}
+  const progress=dist-Math.hypot(tx-nx,tz-nz);
+  const score=v.dot(desired)*2.3+progress*2+Math.min(clearance,2)*.55;
+  if(score>bestScore){bestScore=score;best=v}
+ }
+ if(!best){ud.curvedVector=ud.curvedVector||ud.moveDir.clone();return false}
+ let heading=ud.curvedVector;
+ if(!heading||heading.lengthSq()<.01)heading=ud.moveDir.lengthSq()>.01?ud.moveDir.clone():desired.clone();
+ heading=heading.clone().setY(0).normalize().lerp(best,1-Math.exp(-Math.min(dt,.1)*4.2)).normalize();
+ let nx=p.x+heading.x*speed*dt,nz=p.z+heading.z*speed*dt;
+ if(hit(nx,nz,r)){heading=best.clone();nx=p.x+heading.x*speed*dt;nz=p.z+heading.z*speed*dt;if(hit(nx,nz,r))return false}
+ for(let q=1;q<=4;q++){const f=q/4;if(hit(p.x+(nx-p.x)*f,p.z+(nz-p.z)*f,r))return false}
+ p.x=nx;p.z=nz;ud.curvedVector=heading.clone();ud.moveDir.set(heading.x,0,heading.z);obj.rotation.y=Math.atan2(heading.x,heading.z);ud.steerStall=0;return true
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
