@@ -609,7 +609,6 @@ function frame(now){
    }
    const target=z.userData.targetObj||null;
    const tp=target?.position,d=tp?Math.hypot(tp.x-z.position.x,tp.z-z.position.z):Infinity;
-   const targetMoving=!!target&&(target.userData?.scpMovingNow===true||target===ctl.getObject());
    let zombieMoved=false;
    if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
     zombieMoved=followSCPParticleVelocity(z,tp.x,tp.z,2.35,dt);
@@ -660,8 +659,9 @@ function frame(now){
   // Choose a new moving target on a fixed 11-second timer, not when
   // the per-frame movement sample briefly reports a pause.
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  const currentInvalid=!currentObj||(scpTarget?.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead));
-  if(!scpTarget||currentInvalid||now>=scpTargetUntil){
+  const hasCurrentTarget=!!scpTarget;
+  const currentInvalid=hasCurrentTarget&&(!currentObj||(scpTarget?.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
+  if((!hasCurrentTarget&&now>=scpTargetUntil)||currentInvalid||now>=scpTargetUntil){
    const choices=movingPool.filter(t=>t.obj!==currentObj);
    const pick=choices[Math.floor(Math.random()*choices.length)]||movingPool[0]||null;
    scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;
