@@ -637,10 +637,20 @@ function buildSCPFlowField(){
  const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
  const push=(k,v)=>{let i=heap.length;heap.push(k);costs.push(v);while(i>0){let p=(i-1)>>1;if(costs[p]<=v)break;heap[i]=heap[p];costs[i]=costs[p];i=p;heap[i]=k;costs[i]=v}};
  const pop=()=>{const k=heap[0],v=costs[0],lk=heap.pop(),lv=costs.pop();if(heap.length){let i=0;heap[0]=lk;costs[0]=lv;for(;;){let l=i*2+1,r=l+1,b=i;if(l<heap.length&&costs[l]<costs[b])b=l;if(r<heap.length&&costs[r]<costs[b])b=r;if(b===i)break;[heap[i],heap[b]]=[heap[b],heap[i]];[costs[i],costs[b]]=[costs[b],costs[i]];i=b}}return [k,v]};
- let seedRow=-1;
- for(let z=H-1;z>=0&&seedRow<0;z--)for(let x=0;x<W;x++)if(g[z]?.[x]){seedRow=z;break}
- if(seedRow<0)return null;
- for(let x=0;x<W;x++)if(g[seedRow]?.[x]){const k=seedRow*W+x;distance[k]=0;push(k,0)}
+ // Label every connected walkable island. Streamed facility chunks can have
+ // mismatched doorway openings, so a single far-edge seed can leave SCP's room
+ // completely unreachable. Each component gets a source along its own +Z edge.
+ const component=new Int32Array(N);component.fill(-1);const componentMaxZ=[],queue=new Int32Array(N);let componentCount=0;
+ for(let z=0;z<H;z++)for(let x=0;x<W;x++){
+  const start=z*W+x;if(!g[z]?.[x]||component[start]!==-1)continue;
+  const id=componentCount++;let head=0,tail=0,maxZ=z;queue[tail++]=start;component[start]=id;
+  while(head<tail){const k=queue[head++],cx=k%W,cz=Math.floor(k/W);if(cz>maxZ)maxZ=cz;
+   for(const [dx,dz] of dirs){const nx=cx+dx,nz=cz+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[cz]?.[nx]||!g[nz]?.[cx]))continue;const nk=nz*W+nx;if(component[nk]!==-1)continue;component[nk]=id;queue[tail++]=nk}
+  }
+  componentMaxZ[id]=maxZ;
+ }
+ if(!componentCount)return null;
+ for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x,id=component[k];if(id>=0&&z===componentMaxZ[id]){distance[k]=0;push(k,0)}}
  while(heap.length){const [k,d]=pop();if(d!==distance[k])continue;const x=k%W,z=Math.floor(k/W);
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
  }
@@ -648,7 +658,7 @@ function buildSCPFlowField(){
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx]+c;if(nd<best){best=nd;bx=dx;bz=dz}}
   const len=Math.hypot(bx,bz);if(len){dirX[k]=bx/len;dirZ[k]=bz/len}
  }
- const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,seedRow,revision,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
+ const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,componentCount,revision,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
 }
 function sampleSCPFlow(obj){
  const f=buildSCPFlowField();if(!f)return null;
