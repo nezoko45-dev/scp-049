@@ -68,6 +68,7 @@ function setAIFOVVisible(value){
 makeAIFOV(bad,0x42d9ff);
 
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
+const heatNumberGroup=new T.Group();scene.add(heatNumberGroup);heatNumberGroup.visible=false;const heatNumberTextures=new Map();let heatNumberRefreshAt=0,heatNumberFieldKey='';
 const scpObservedMotion=new WeakMap();
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
 const SCP_SCORE_MEMORY='scp049-facility-score-memory-v1';
@@ -452,7 +453,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyV'||e.code==='KeyG'){scpRayGizmos=!aiFOVVisible;setAIFOVVisible(scpRayGizmos);scpChainViz.visible=false;scpSteeringViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPRayGizmos(bad);else{clearSCPRayViz();scpRayViz.visible=false}}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){heatNumbersVisible=!heatNumbersVisible;heatNumberGroup.visible=heatNumbersVisible;if(heatNumbersVisible)refreshHeatNumbers(true)}if(e.code==='KeyV'){scpRayGizmos=!scpRayGizmos;setAIFOVVisible(scpRayGizmos);scpChainViz.visible=false;scpSteeringViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPRayGizmos(bad);else{clearSCPRayViz();scpRayViz.visible=false}}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -674,13 +675,14 @@ function drawSCPSteeringVectors(obj){
  scpSteeringViz.visible=true;rayHUD.textContent='34 STEERING VECTORS · GREEN = CLEAR · RED = BLOCKED · ORANGE = SELECTED (G)';
 }
 
+const scpFlowCache=new Map();
 function buildSCPFlowField(goalX=null,goalZ=null){
  if(!navReady||!navData?.grid||!navData.origin)return null;
  const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,revision=navData.revision||0,now=performance.now();
  // When a victim is selected, build the field backward from that victim.
  // With no victim, retain the map-wide exploration field.
- const goal=Number.isFinite(goalX)&&Number.isFinite(goalZ)?nearestOpen(goalX,goalZ):null,goalKey=goal?(goal.x+','+goal.z):'explore',old=bad.userData.flowField;
- if(old&&old.revision===revision&&old.W===W&&old.H===H&&old.goalKey===goalKey)return old;
+ const goal=Number.isFinite(goalX)&&Number.isFinite(goalZ)?nearestOpen(goalX,goalZ):null,goalKey=goal?(goal.x+','+goal.z):'explore',cacheKey=revision+':'+goalKey,old=scpFlowCache.get(cacheKey);
+ if(old&&old.W===W&&old.H===H)return old;
  const distance=new Float32Array(N);distance.fill(Infinity);
  const dirX=new Float32Array(N),dirZ=new Float32Array(N),heap=[],costs=[];
  const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
@@ -699,9 +701,9 @@ function buildSCPFlowField(goalX=null,goalZ=null){
   componentMaxZ[id]=maxZ;
  }
  if(!componentCount)return null;
- const scpCell=nearestOpen(bad.position.x,bad.position.z),scpComponent=scpCell?component[scpCell.z*W+scpCell.x]:-1,goalComponent=goal?component[goal.z*W+goal.x]:-1;
- if(goal&&goalComponent>=0&&goalComponent===scpComponent){const k=goal.z*W+goal.x;distance[k]=0;push(k,0)}
- else for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x,id=component[k];if(id>=0&&z===componentMaxZ[id]){distance[k]=0;push(k,0)}}
+ const goalComponent=goal?component[goal.z*W+goal.x]:-1;
+ if(goal&&goalComponent>=0){const k=goal.z*W+goal.x;distance[k]=0;push(k,0)}
+ else if(!goal)for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x,id=component[k];if(id>=0&&z===componentMaxZ[id]){distance[k]=0;push(k,0)}}
  while(heap.length){const [k,d]=pop();if(d!==distance[k])continue;const x=k%W,z=Math.floor(k/W);
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
  }
@@ -712,7 +714,7 @@ function buildSCPFlowField(goalX=null,goalZ=null){
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx];if(nd<best-1e-4){best=nd;bx=dx;bz=dz}}
   const len=Math.hypot(bx,bz);if(len){dirX[k]=bx/len;dirZ[k]=bz/len}
  }
- const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,componentCount,revision,goalKey,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
+ const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,componentCount,revision,goalKey,distance,dirX,dirZ,builtAt:now};scpFlowCache.set(cacheKey,field);while(scpFlowCache.size>8)scpFlowCache.delete(scpFlowCache.keys().next().value);return field;
 }
 function sampleSCPFlow(obj,goalX=null,goalZ=null){
  const f=buildSCPFlowField(goalX,goalZ);if(!f)return null;
@@ -732,64 +734,49 @@ function sampleSCPFlow(obj,goalX=null,goalZ=null){
   if(best)return best;
  }
  return null;
+} 
+function heatTexture(label){
+ const key=String(label);if(heatNumberTextures.has(key))return heatNumberTextures.get(key);
+ const c=document.createElement('canvas');c.width=128;c.height=64;const ctx=c.getContext('2d');
+ ctx.fillStyle=key==='1'?'rgba(150,25,25,.88)':key==='0'?'rgba(20,150,75,.92)':'rgba(8,18,25,.78)';
+ ctx.beginPath();ctx.roundRect(5,5,118,54,10);ctx.fill();ctx.font='bold 34px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';ctx.fillText(key,64,33);
+ const tex=new T.CanvasTexture(c);tex.needsUpdate=true;heatNumberTextures.set(key,tex);return tex;
 }
+function refreshHeatNumbers(force=false){
+ if(!heatNumbersVisible||!navReady||!navData?.grid)return;
+ const now=performance.now();if(!force&&now-heatNumberRefreshAt<450)return;heatNumberRefreshAt=now;
+ const target=scpTarget?.kind==='player'?ctl.getObject():scpTarget?.kind==='survivor'?allies[scpTarget.index]:null;
+ const field=buildSCPFlowField(target?.position.x,target?.position.z);
+ if(!field)return;
+ const p=bad.position,centerX=Math.floor((p.x-field.ox)/field.cs),centerZ=Math.floor((p.z-field.oz)/field.cs),radius=15;
+ const nextKey=field.revision+':'+field.goalKey+':'+centerX+':'+centerZ;
+ if(!force&&nextKey===heatNumberFieldKey)return;heatNumberFieldKey=nextKey;
+ for(const child of heatNumberGroup.children){child.material?.dispose()}heatNumberGroup.clear();
+ for(let z=Math.max(0,centerZ-radius);z<=Math.min(field.H-1,centerZ+radius);z++)for(let x=Math.max(0,centerX-radius);x<=Math.min(field.W-1,centerX+radius);x++){
+  const k=z*field.W+x,open=!!navData.grid[z]?.[x],d=field.distance[k];
+  const value=!open?'1':d===0?'0':Number.isFinite(d)?String(Math.max(2,Math.round(d)+1)):'999';
+  const sprite=new T.Sprite(new T.SpriteMaterial({map:heatTexture(value),transparent:true,depthTest:true,depthWrite:false}));
+  sprite.position.set(field.ox+(x+.5)*field.cs,.16,field.oz+(z+.5)*field.cs);sprite.scale.set(.72,.36,1);heatNumberGroup.add(sprite);
+ }
+}
+
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
- // Target direction is only a slowly changing guide. Momentum remains the movement source.
- const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=obj===bad?sampleSCPFlow(obj,tx,tz):null,targetX=flow?flow.x:(obj===bad||losBlocked||dist<=.001?steering.x:dx/dist),targetZ=flow?flow.z:(obj===bad||losBlocked||dist<=.001?steering.z:dz/dist);
- const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-7.5*Math.max(0,dt));
+ // The distance-field heatmap is the navigation authority for SCP and zombies.
+ const flow=sampleSCPFlow(obj,tx,tz),dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
+ if(!flow&&navReady){velocity.multiplyScalar(Math.exp(-7*Math.max(dt,.001)));moveDir.copy(velocity);return false}
+ const targetX=flow?flow.x:(dist>.001?dx/dist:steering.x),targetZ=flow?flow.z:(dist>.001?dz/dist:steering.z);
+ const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-9*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
- const vLen=Math.hypot(velocity.x,velocity.z),heading=vLen>.12?new T.Vector3(velocity.x/vLen,0,velocity.z/vLen):steering.clone().setY(0).normalize();
- // Geometric FOV steering: only objects detected inside the 120-degree
- // vision cone are considered when scoring possible movement directions.
- const rayLength=AI_FOV_RANGE,candidates=[],visibleObstacles=scanAIFOVObstacles(obj);
- let best=null,bestScore=-Infinity;
- for(let i=0;i<34;i++){
-  const angle=(i/33-.5)*Math.PI*1.72,ca=Math.cos(angle),sa=Math.sin(angle);
-  const vx=heading.x*ca-heading.z*sa,vz=heading.x*sa+heading.z*ca;
-  let clearDistance=rayLength;
-  // Test the swept body path against each visible obstacle's expanded AABB.
-  // This is pure geometry: no Three.Raycaster or navigation-grid query.
-  for(const o of visibleObstacles){
-   const minX=o.x-o.w/2-r,maxX=o.x+o.w/2+r,minZ=o.z-o.d/2-r,maxZ=o.z+o.d/2+r;
-   let tMin=0,tMax=rayLength;
-   if(Math.abs(vx)<1e-6){if(p.x<minX||p.x>maxX)continue}
-   else{let a=(minX-p.x)/vx,b=(maxX-p.x)/vx;if(a>b){const t=a;a=b;b=t}tMin=Math.max(tMin,a);tMax=Math.min(tMax,b)}
-   if(Math.abs(vz)<1e-6){if(p.z<minZ||p.z>maxZ)continue}
-   else{let a=(minZ-p.z)/vz,b=(maxZ-p.z)/vz;if(a>b){const t=a;a=b;b=t}tMin=Math.max(tMin,a);tMax=Math.min(tMax,b)}
-   if(tMax>=tMin&&tMax>=0&&tMin<clearDistance)clearDistance=Math.max(0,tMin);
-  }
-  const guideAlign=vx*guide.x+vz*guide.z,momentum=vx*heading.x+vz*heading.z,continuity=vx*steering.x+vz*steering.z;
-  const obstacleUrgency=Math.max(0,(AI_FOV_RANGE-clearDistance)/AI_FOV_RANGE);
-  // FOV contact repulsion applies even when an obstacle is beside (not
-  // directly intersecting) this candidate's swept path.
-  let contactPenalty=0;
-  for(const o of visibleObstacles){
-   const ox=Math.max(o.x-o.w/2,Math.min(p.x,o.x+o.w/2))-p.x;
-   const oz=Math.max(o.z-o.d/2,Math.min(p.z,o.z+o.d/2))-p.z;
-   const od=Math.hypot(ox,oz);if(od<.001||od>=AI_FOV_RANGE)continue;
-   const toward=(vx*ox+vz*oz)/od;
-   if(toward>0){
-    const proximity=Math.pow(1-od/AI_FOV_RANGE,.55);
-    contactPenalty+=proximity*34*toward*toward;
-   }
-  }
-  const score=continuity*1.0+momentum*.6+guideAlign*(obj===bad?13.5:6.8)+(clearDistance/rayLength)*.35-obstacleUrgency*13.0-contactPenalty;
-  const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:clearDistance>=rayLength-.01,score,selected:false};candidates.push(c);
-  if(score>bestScore){bestScore=score;best=c}
- }
- if(best)best.selected=true;ud.steeringCandidates=candidates;
- // Smoothly turn persistent steering toward the best ray, never teleport the heading.
- const desiredX=best?.x??guide.x,desiredZ=best?.z??guide.z,turnRate=(obj===bad?5.2:3.6)+Math.max(0,AI_FOV_RANGE-(best?.length||0))*.12,blend=1-Math.exp(-turnRate*Math.max(0,dt));
- steering.x+=(desiredX-steering.x)*blend;steering.z+=(desiredZ-steering.z)*blend;
+ const turnRate=6.5,blend=1-Math.exp(-turnRate*Math.max(0,dt));
+ steering.x+=(guide.x-steering.x)*blend;steering.z+=(guide.z-steering.z)*blend;
  const sl=Math.hypot(steering.x,steering.z);if(sl>.0001){steering.x/=sl;steering.z/=sl}
- // Continuous acceleration: preserve forward velocity and only curve it as steering changes.
+ // Continuous acceleration follows the heatmap's decreasing values.
  const acceleration=5.0,desiredVX=steering.x*speed,desiredVZ=steering.z*speed;let ax=desiredVX-velocity.x,az=desiredVZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;
  if(change>maxChange&&change>.0001){ax*=maxChange/change;az*=maxChange/change}velocity.x+=ax;velocity.z+=az;
  const nx=p.x+velocity.x*dt,nz=p.z+velocity.z*dt;
- // Physical collision is independent of FOV: sweep the full SCP body segment
- // against EVERY solid AABB so momentum cannot carry him through a wall.
+ // Final swept-AABB collision is a safety guard; route choice comes from the heatmap, not FOV.
  const segmentClear=(x0,z0,x1,z1)=>{
   const dx=x1-x0,dz=z1-z0;
   for(const o of solid){
@@ -816,7 +803,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
   ud.steeringWallSliding=true;
  }
  moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- if(obj===bad&&scpRayGizmos&&performance.now()-(ud.flowGizmoAt||0)>700){ud.flowGizmoAt=performance.now();drawSCPRayGizmos(obj,tx,tz)}
+ 
  return velocity.lengthSq()>.0025;
 }
 function scpTargetLOS(ax,az,bx,bz){
@@ -833,6 +820,7 @@ function frame(now){
  let dt=Math.min(.05,(now-last)/1000);last=now;frameDelta=dt;
  if(active&&!dead){
   streamFacility(now);
+  if(heatNumbersVisible)refreshHeatNumbers();
   allies.forEach(a=>{if(a.userData.hp<=0){if(!a.userData.respawnAt)a.userData.respawnAt=now+6000;if(now>=a.userData.respawnAt){a.userData.hp=150;a.userData.dead=false;a.visible=true;a.position.set((Math.random()-.5)*18,0,12+Math.random()*12);a.userData.path=[];a.userData.respawnAt=0;}else{a.userData.dead=true;a.visible=false;return;}}
    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
    a.rotation.y=Math.atan2(dx,dz);
@@ -845,7 +833,6 @@ function frame(now){
    // Zombies select a victim on an 11-second interval and use SCP's exact
    // sequential steering-route + persistent-velocity wall-sliding controller.
    const nowZombie=now;
-   scanAIFOVObstacles(z);
    const existing=z.userData.targetObj||null;
    // Target acquisition is global and independent of FOV/range. FOV is reserved
    // exclusively for nearby obstacle sensing and directional clearance scoring.
@@ -915,7 +902,6 @@ function frame(now){
    const distance=Math.hypot(q.x-bad.position.x,q.z-bad.position.z);
    if(prev&&moveSpeed>.32)movingPool.push({...candidate,moveSpeed,distance});
   }
-  scanAIFOVObstacles(bad);
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
   const currentMotion=currentObj?movingPool.find(t=>t.obj===currentObj):null;
@@ -939,7 +925,7 @@ function frame(now){
    // Initialize the persistent heading before reading it. On the first frame
    // without a moving target, steeringVector may not exist yet.
    const idleHeading=bad.userData.steeringVector||(bad.userData.steeringVector=new T.Vector3(0,0,1));
-   // No moving victim is available: keep momentum and use the FOV obstacle steering.
+   // No moving victim is available: follow the map-wide exploration heatmap.
    scpMoved=followSCPVelocity(bad,bad.position.x+idleHeading.x*12,bad.position.z+idleHeading.z*12,3.2,dt,true);
   }
   // Face the selected movement heading, not the moving target's position.
