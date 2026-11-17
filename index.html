@@ -349,7 +349,7 @@ new GLTFLoader().load('./headcrab_zombie.glb',g=>{
  const findClip=(re)=>g.animations.find(c=>re.test(c.name));
  zombieClips.idle=findClip(/idle|stand/i)||null;
  zombieClips.walk=findClip(/walk/i)||null;
- zombieClips.attack=findClip(/^attackd$/i)||findClip(/attackd/i)||null;
+ zombieClips.attack=g.animations.find(c=>c.name==='AttackD')||findClip(/^attackd$/i)||findClip(/attackd/i)||null;
  zombieModelReady=true;
  console.info('Zombie GLB ready; embedded animations:',g.animations.map(c=>c.name));
 },undefined,e=>console.error('headcrab_zombie.glb failed to load',e));
@@ -366,14 +366,15 @@ function spawnZombie(){
  for(const [key,clip] of Object.entries(zombieClips))if(clip)actions[key]=mixer.clipAction(clip);
  const initial=actions.idle||actions.walk||actions.attack;
  if(initial)initial.reset().fadeIn(.15).play();
- g.userData.hp=100;g.userData.mixer=mixer;g.userData.actions=actions;g.userData.currentAction=initial||null;
- g.userData.targetObj=null;g.userData.targetUntil=0;g.userData.attackT=0;
+ g.userData.hp=15;g.userData.mixer=mixer;g.userData.actions=actions;g.userData.currentAction=initial||null;
+ for(const [key,action] of Object.entries(actions)){action.setLoop(T.LoopRepeat,Infinity);action.clampWhenFinished=false}
+ g.userData.targetObj=null;g.userData.targetUntil=0;g.userData.attackT=0;g.userData.lastNearbyDamage=0;
  scene.add(g);zombies.push(g);
 }
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);if(Math.random()<.03)spawnZombie();if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;function fallback(){let a=new T.Mesh(new T.CapsuleGeometry(.45,1.3,5,10),mats[2]);a.position.y=1.3;let b=new T.Mesh(new T.CylinderGeometry(.5,.7,1.5,12),mats[2]);b.position.y=.8;let h=new T.Mesh(new T.SphereGeometry(.3),mats[1]);h.position.y=2.3;bad.add(a,b,h);loaded=true}new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true},undefined,fallback);setTimeout(()=>!loaded&&fallback(),7000);
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpChainViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPParticleGizmos(bad)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp-=55});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpChainViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPParticleGizmos(bad)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 function hit(x,z,r=.5){return solid.some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
 function moveColliding(obj,dx,dz,r=.4){let x=obj.position.x,z=obj.position.z,moved=false;if(!hit(x+dx,z,r)){obj.position.x=x+dx;moved=true}if(!hit(obj.position.x,z+dz,r)){obj.position.z=z+dz;moved=true}return moved}
 /* JSON-grid ray steering: sample the baked/live facility grid along the intended move.
@@ -591,31 +592,45 @@ function frame(now){
    a.rotation.y=Math.atan2(dx,dz);
    // Survivors roam continuously; grid A* is advisory, never a movement prerequisite.
    if(now-(a.userData.roamAt||0)>3000){a.userData.roamAt=now;a.userData.roamX=a.position.x+(Math.random()-.5)*12;a.userData.roamZ=a.position.z+(Math.random()-.5)*12}let ax=a.userData.roamX-a.position.x,az=a.userData.roamZ-a.position.z,ad=Math.hypot(ax,az);if(ad>.5){liveGridAvoidStep(a,a.userData.roamX,a.userData.roamZ,a.userData.speed)};
-   if(now-lastVolley>900){if(d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);zombies.forEach(z=>{if(Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<2.5)z.userData.hp-=12});}
+   if(now-lastVolley>900&&d<2.3&&bossHP>0&&!a.userData.dead)bossDamage(8);
   });
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
-   // SCP-style target selection: randomly switch between the player and living survivors.
-   if(!z.userData.targetObj||performance.now()>=z.userData.targetUntil||z.userData.targetObj.userData?.hp<=0||z.userData.targetObj.userData?.dead){
+   // Zombies select a victim on an 11-second interval and use SCP's exact
+   // sequential particle-route + persistent-velocity wall-sliding controller.
+   const nowZombie=now;
+   if(!z.userData.targetObj||nowZombie>=z.userData.targetUntil||z.userData.targetObj.userData?.hp<=0||z.userData.targetObj.userData?.dead){
     const pool=[{kind:'player',obj:ctl.getObject()},...allies.filter(a=>a.userData.hp>0&&!a.userData.dead).map(a=>({kind:'survivor',obj:a}))];
-    const pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject()};
-    z.userData.targetKind=pick.kind;z.userData.targetObj=pick.obj;z.userData.targetUntil=performance.now()+6000+Math.random()*7000;
+    const previous=z.userData.targetObj;
+    const choices=pool.filter(t=>t.obj!==previous);
+    const pick=choices[Math.floor(Math.random()*choices.length)]||pool[0]||null;
+    z.userData.targetKind=pick?.kind||'player';z.userData.targetObj=pick?.obj||null;z.userData.targetUntil=nowZombie+11000;
+    z.userData.particleRoute=null;z.userData.particleIndex=1;
    }
-   const target=z.userData.targetObj||ctl.getObject(),tp=target.position,d=Math.hypot(tp.x-z.position.x,tp.z-z.position.z);
-   z.userData.animT=(z.userData.animT||0)+dt;const moving=d>1;
-   z.userData.attackT=Math.max(0,(z.userData.attackT||0)-dt);
-   if(moving){
-    // Zombies use local direction scoring; no cached flowfield/BFS.
-    scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4);
+   const target=z.userData.targetObj||null;
+   const tp=target?.position,d=tp?Math.hypot(tp.x-z.position.x,tp.z-z.position.z):Infinity;
+   const targetMoving=!!target&&(target.userData?.scpMovingNow===true||target===ctl.getObject());
+   let zombieMoved=false;
+   if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
+    zombieMoved=followSCPParticleVelocity(z,tp.x,tp.z,2.35,dt);
+    if(z.userData.moveDir?.lengthSq()>.001)z.rotation.y=Math.atan2(z.userData.moveDir.x,z.userData.moveDir.z);
+   }else{
+    z.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
    }
-   // Imported GLB animations: attackd while striking, walk while moving, idle at rest.
-   const wanted=d<=1.15?'attack':(moving?'walk':'idle');
+   // Imported GLB: exact AttackD clip while attacking, Walk while travelling, Idle at rest.
+   const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
    const next=z.userData.actions?.[wanted]||z.userData.actions?.idle||z.userData.actions?.walk;
    if(next&&next!==z.userData.currentAction){
     next.reset().fadeIn(.18).play();z.userData.currentAction?.fadeOut(.18);z.userData.currentAction=next;
    }
    z.userData.mixer?.update(dt);
-   if(d<=1){if(z.userData.attackT<=0)z.userData.attackT=.72;if(z.userData.targetKind==='player'){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}else target.userData.hp=Math.max(0,target.userData.hp-18*dt)}
+   // Nearby player/survivors wear zombies down for 1 HP per second.
+   const nearPlayer=Math.hypot(ctl.getObject().position.x-z.position.x,ctl.getObject().position.z-z.position.z)<2.6;
+   const nearSurvivor=allies.some(a=>a.userData.hp>0&&!a.userData.dead&&Math.hypot(a.position.x-z.position.x,a.position.z-z.position.z)<2.6);
+   if((nearPlayer||nearSurvivor)&&nowZombie-(z.userData.lastNearbyDamage||0)>=1000){
+    z.userData.lastNearbyDamage=nowZombie;z.userData.hp=Math.max(0,z.userData.hp-1);
+   }
+   if(d<=1){if(z.userData.attackT<=0)z.userData.attackT=.72;if(z.userData.targetKind==='player'){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}else if(target)target.userData.hp=Math.max(0,target.userData.hp-18*dt)}
   });
   zombies=zombies.filter(z=>{if(z.userData.hp<=0){scene.remove(z);return false}return true});
   if(playerHP<=0)gameover('YOU WERE OVERRUN');
@@ -642,11 +657,11 @@ function frame(now){
   const playerObj=ctl.getObject();
   const movingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))]
    .filter(t=>(t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead))&&movingNow(t.obj));
-  // Keep chasing the current victim only while they keep moving. If they stop,
-  // immediately select another moving victim; never acquire a stationary one.
+  // Choose a new moving target on a fixed 11-second timer, not when
+  // the per-frame movement sample briefly reports a pause.
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  const currentStillMoving=!!currentObj&&movingPool.some(t=>t.obj===currentObj);
-  if(!currentStillMoving||now>=scpTargetUntil){
+  const currentInvalid=!currentObj||(scpTarget?.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead));
+  if(!scpTarget||currentInvalid||now>=scpTargetUntil){
    const choices=movingPool.filter(t=>t.obj!==currentObj);
    const pick=choices[Math.floor(Math.random()*choices.length)]||movingPool[0]||null;
    scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;
@@ -657,7 +672,8 @@ function frame(now){
   if(targetObj&&movingPool.some(t=>t.obj===targetObj)){
    scpMoved=followSCPParticleVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
   }else{
-   scpTarget=null;
+   // Retain the selected target until the 11-second decision point, but pause
+   // pursuit while that character is stationary.
    bad.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
   }
   // Face the selected movement heading, not the moving target's position.
