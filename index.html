@@ -541,11 +541,11 @@ function followSCPParticleVelocity(obj,tx,tz,speed,dt){
  const route=ud.particleRoute,oldX=ud.particleTargetX,oldZ=ud.particleTargetZ;
  if(!route?.length||Math.hypot(tx-(oldX??tx),tz-(oldZ??tz))>1.15||ud.particleRouteBlocked||ud.particleIndex>=route.length)buildSCPParticleRoute(obj,tx,tz,r);
  const path=ud.particleRoute||[];
- if(path.length<2){velocity.multiplyScalar(Math.max(0,1-dt*8));return false}
+ if(path.length<2){velocity.multiplyScalar(Math.exp(-1.8*dt));if(velocity.lengthSq()<.0004)velocity.set(0,0,0);return velocity.lengthSq()>.0025}
  let i=ud.particleIndex||1;
  while(i<path.length&&Math.hypot(path[i].x-p.x,path[i].z-p.z)<.28)i++;
  ud.particleIndex=i;
- if(i>=path.length){velocity.multiplyScalar(Math.max(0,1-dt*7));if(velocity.lengthSq()<.0025)velocity.set(0,0,0);if(performance.now()-(ud.particleRouteAt||0)>180)buildSCPParticleRoute(obj,tx,tz,r);return velocity.lengthSq()>.0025}
+ if(i>=path.length){velocity.multiplyScalar(Math.exp(-1.5*dt));if(velocity.lengthSq()<.0004)velocity.set(0,0,0);if(performance.now()-(ud.particleRouteAt||0)>180)buildSCPParticleRoute(obj,tx,tz,r);return velocity.lengthSq()>.0025}
  const w=path[i],dx=w.x-p.x,dz=w.z-p.z,dist=Math.hypot(dx,dz);if(dist<.001){ud.particleIndex++;return true}
  const acceleration=9.5,desiredSpeed=Math.min(speed,Math.sqrt(2*acceleration*Math.max(.015,dist-.13))),desiredX=dx/dist*desiredSpeed,desiredZ=dz/dist*desiredSpeed;
  let ax=desiredX-velocity.x,az=desiredZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;
@@ -553,7 +553,20 @@ function followSCPParticleVelocity(obj,tx,tz,speed,dt){
  velocity.x+=ax;velocity.z+=az;
  const nx=p.x+velocity.x*dt,nz=p.z+velocity.z*dt;let clear=true;
  for(let q=1;q<=5;q++){const t=q/5,x=p.x+(nx-p.x)*t,z=p.z+(nz-p.z)*t;if(scpGroundScore(x,z,r)!==1||hit(x,z,r)){clear=false;break}}
- if(!clear){velocity.set(0,0,0);ud.particleRouteBlocked=true;return false}
+ if(!clear){
+  // Keep momentum persistent at walls: slide along whichever axis remains clear.
+  const xOnly=p.x+velocity.x*dt,zOnly=p.z+velocity.z*dt;
+  const canX=Math.abs(velocity.x)>.001&&scpGroundScore(xOnly,p.z,r)===1&&!hit(xOnly,p.z,r);
+  const canZ=Math.abs(velocity.z)>.001&&scpGroundScore(p.x,zOnly,r)===1&&!hit(p.x,zOnly,r);
+  if(canX&&!canZ){p.x=xOnly;velocity.z*=.72}
+  else if(canZ&&!canX){p.z=zOnly;velocity.x*=.72}
+  else if(canX&&canZ){if(Math.abs(velocity.x)>=Math.abs(velocity.z)){p.x=xOnly;velocity.z*=.72}else{p.z=zOnly;velocity.x*=.72}}
+  else velocity.multiplyScalar(Math.exp(-3.2*dt));
+  if(velocity.lengthSq()<.0004)velocity.set(0,0,0);
+  moveDir.copy(velocity).setY(0);ud.particleRouteBlocked=true;
+  if(performance.now()-(ud.particleGizmoAt||0)>100){ud.particleGizmoAt=performance.now();drawSCPParticleGizmos(obj)}
+  return velocity.lengthSq()>.0025
+ }
  p.x=nx;p.z=nz;moveDir.copy(velocity).setY(0);obj.rotation.y=Math.atan2(velocity.x,velocity.z);
  if(performance.now()-(ud.particleGizmoAt||0)>100){ud.particleGizmoAt=performance.now();drawSCPParticleGizmos(obj)}
  return velocity.lengthSq()>.0025;
