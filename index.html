@@ -806,7 +806,18 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
    else if(canX)p.x=nx;
    else p.z=nz;
    if(!canX)velocity.x=0;if(!canZ)velocity.z=0;
-  }else{velocity.multiplyScalar(Math.exp(-8*Math.max(dt,.001)))}
+  }else{
+   // Both the forward step and its axis slides are blocked. Run the
+   // object-bound 360-degree escape scan even when the heatmap supplied a
+   // direction; a non-null heatmap vector is not proof that it is traversable.
+   const recovered=navReady&&scoreDirectionMove(obj,tx,tz,speed,dt,r);
+   if(recovered){
+    const sx=ud.moveDir?.x??ud.scoreSteerX??0,sz=ud.moveDir?.z??ud.scoreSteerZ??0;
+    velocity.x=sx*speed;velocity.z=sz*speed;
+    moveDir.copy(velocity).setY(0);ud.steeringWallSliding=true;return true;
+   }
+   velocity.multiplyScalar(Math.exp(-8*Math.max(dt,.001)));
+  }
   ud.steeringWallSliding=true;
  }
  moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
