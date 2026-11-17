@@ -669,7 +669,10 @@ function buildSCPFlowField(){
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
  }
  for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x;if(!g[z]?.[x]||!Number.isFinite(distance[k])||distance[k]===0)continue;let best=distance[k],bx=0,bz=0;
-  for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx]+c;if(nd<best){best=nd;bx=dx;bz=dz}}
+  // Dijkstra already includes the movement cost in each distance. Select the
+  // neighboring cell with the strictly lower accumulated distance; adding the
+  // edge cost again here cancels the gradient and leaves every direction zero.
+  for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx];if(nd<best-1e-4){best=nd;bx=dx;bz=dz}}
   const len=Math.hypot(bx,bz);if(len){dirX[k]=bx/len;dirZ[k]=bz/len}
  }
  const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,componentCount,revision,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
