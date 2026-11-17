@@ -74,20 +74,6 @@ const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),s
 const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.style.display='none';
 const scpSteeringViz=new T.Group();scene.add(scpSteeringViz);scpSteeringViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
-function drawSCPSteeringVectors(obj){
- if(!scpRayGizmos){scpSteeringViz.visible=false;return}
- const ud=obj.userData||{},route=ud.steeringRoute||[],idx=ud.steeringIndex||1;
- while(scpSteeringViz.children.length){const o=scpSteeringViz.children[0];scpSteeringViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}
- if(route.length>1){
-  const verts=[];for(const p of route)verts.push(p.x,1.35,p.z);
-  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpSteeringViz.add(new T.Line(g,scpChainMat));
-  const pg=new T.BufferGeometry();pg.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpSteeringViz.add(new T.Points(pg,new T.PointsMaterial({color:0xffd400,size:.19,sizeAttenuation:true,depthTest:false})));
-  const target=route[Math.min(idx,route.length-1)];
-  if(target){const tg=new T.BufferGeometry();tg.setAttribute('position',new T.Float32BufferAttribute([target.x,1.42,target.z],3));scpSteeringViz.add(new T.Points(tg,new T.PointsMaterial({color:0x39ff75,size:.34,sizeAttenuation:true,depthTest:false})));}
- }
- const v=ud.velocity;if(v&&v.lengthSq()>.0025){const p=obj.position,g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([p.x,1.55,p.z,p.x+v.x*.65,1.55,p.z+v.z*.65],3));scpSteeringViz.add(new T.Line(g,new T.LineBasicMaterial({color:0x00eaff,depthTest:false})));}
- scpSteeringViz.visible=scpRayGizmos;rayHUD.textContent='SCP STEERING VECTOR · GREEN = NEXT PARTICLE · CYAN = VELOCITY (G)';
-}
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
 function drawSCPRayChain(obj){drawSCPSteeringVectors(obj)}
 const drawRayChain=drawSCPRayChain;
