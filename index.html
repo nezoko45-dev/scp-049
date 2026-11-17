@@ -828,9 +828,8 @@ function frame(now){
   }else if(!scpTarget)scpTargetUntil=now+350;
   let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
   if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead))){
-   const inFOV=insideAIFOV(bad,targetObj.position);
-   bad.userData.targetLOSBlocked=!inFOV;
-   scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt,!inFOV);
+   bad.userData.targetLOSBlocked=false;
+   scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
   }else{
    bad.userData.targetLOSBlocked=true;
    // Initialize the persistent heading before reading it. On the first frame
