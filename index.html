@@ -631,10 +631,37 @@ function frame(now){
    noise=sprint?1:.15
   }else noise*=.95;
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
-  // SCP chases its current target freely; track movement to drive walk animation.
+  // A target is eligible only while its position is genuinely changing.
+  // Measure actual displacement each frame, not input keys or animation state.
+  const movingNow=(obj)=>{
+   const u=obj.userData||(obj.userData={}),q=obj.position,prev=u.scpMoveSample;
+   u.scpMoveSample={x:q.x,z:q.z};
+   if(!prev){u.scpMovingNow=false;return false}
+   const speed=Math.hypot(q.x-prev.x,q.z-prev.z)/Math.max(dt,.001);
+   u.scpMovingNow=speed>.18;
+   return u.scpMovingNow;
+  };
+  const playerObj=ctl.getObject();
+  const movingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))]
+   .filter(t=>(t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead))&&movingNow(t.obj));
+  // Keep chasing the current victim only while they keep moving. If they stop,
+  // immediately select another moving victim; never acquire a stationary one.
+  let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
+  const currentStillMoving=!!currentObj&&movingPool.some(t=>t.obj===currentObj);
+  if(!currentStillMoving||now>=scpTargetUntil){
+   const choices=movingPool.filter(t=>t.obj!==currentObj);
+   const pick=choices[Math.floor(Math.random()*choices.length)]||movingPool[0]||null;
+   scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;
+   scpTargetUntil=now+11000;
+  }
   let scpMoved=false;
-  if(!scpTarget||now>=scpTargetUntil){let pool=[{kind:'player',obj:ctl.getObject(),index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));let pick=pool[Math.floor(Math.random()*pool.length)]||{kind:'player',obj:ctl.getObject(),index:-1};scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
-  let targetObj=scpTarget.kind==='player'?ctl.getObject():allies[scpTarget.index];if(!targetObj||targetObj.userData.hp<=0){scpTarget=null}else{scpMoved=followSCPParticleVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt)}
+  const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
+  if(targetObj&&movingPool.some(t=>t.obj===targetObj)){
+   scpMoved=followSCPParticleVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+  }else{
+   scpTarget=null;
+   bad.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
+  }
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
