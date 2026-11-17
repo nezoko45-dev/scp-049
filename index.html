@@ -713,7 +713,7 @@ function sampleSCPFlow(obj,goalX=null,goalZ=null){
  return null;
 }
 function fovSteeringClearance(obj,vx,vz,maxDistance){
- const obstacles=scanAIFOVObstacles(obj),p=obj.position,r=.62,step=.3;
+ const obstacles=obj.userData.fovObstacles||[],p=obj.position,r=.62,step=.3;
  let clear=maxDistance;
  for(let d=step;d<=maxDistance;d+=step){
   const x=p.x+vx*d,z=p.z+vz*d;
