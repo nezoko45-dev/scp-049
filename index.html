@@ -612,29 +612,6 @@ function followSCPBreadcrumbVelocity(obj,tx,tz,speed,dt){
 }
 const scpSteeringViz=new T.Group();scene.add(scpSteeringViz);scpSteeringViz.visible=true;
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
-function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
-function drawSCPRayGizmos(obj,tx,tz){
- if(!scpRayGizmos)return;clearSCPRayViz();
- const ud=obj.userData||{},f=ud.flowField;
- if(f){
-  const verts=[],y=.12,step=4;
-  // Draw the actual cell-flowfield vectors across the generated facility.
-  for(let z=1;z<f.H-1;z+=step)for(let x=1;x<f.N-1;x+=step){
-   const i=z*f.N+x,dx=f.dirX[i],dz=f.dirZ[i];if((!dx&&!dz)||f.blocked[i]||f.distance[i]<0)continue;
-   const wx=f.ox+(x+.5)*f.cs,wz=f.oz+(z+.5)*f.cs,len=f.cs*.42,ex=wx+dx*len,ez=wz+dz*len;
-   verts.push(wx,y,wz,ex,y,ez,ex,y,ez,ex-dx*.22-dz*.13,y,ez-dz*.22+dx*.13,ex,y,ez,ex-dx*.22+dz*.13,y,ez-dz*.22-dx*.13);
-  }
-  if(verts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpRayViz.add(new T.LineSegments(g,scpRayMatClear))}
-  // Emphasize SCP's current cell vector so its movement direction is visible.
-  const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs),i=z*f.N+x;
-  if(x>=0&&z>=0&&x<f.N&&z<f.H&&f.dirX[i]||f.dirZ[i]){
-   const dx=f.dirX[i],dz=f.dirZ[i],px=obj.position.x,pz=obj.position.z;
-   const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([px,.28,pz,px+dx*2,.28,pz+dz*2],3));scpRayViz.add(new T.Line(g,scpRayMatClear))
-  }
- }
- scpRayViz.visible=true;rayHUD.textContent='CELL FLOWFIELD VECTORS (G toggles)';
-}
-
 // Continuous velocity + persistent steering-vector movement.
 // Target attraction and smooth AABB repulsion are blended every frame; no routes or waypoints.
 function drawSCPSteeringVectors(obj){
