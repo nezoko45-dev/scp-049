@@ -89,6 +89,7 @@ function drawSCPParticleGizmos(obj){
  scpChainViz.visible=scpRayGizmos;rayHUD.textContent='SCP PARTICLE TRAIL · GREEN = NEXT PARTICLE · CYAN = VELOCITY (G)';
 }
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
+function drawSCPRayChain(obj){drawSCPParticleGizmos(obj)}
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 function drawSCPRayGizmos(obj,tx,tz){
