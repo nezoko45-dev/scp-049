@@ -47,6 +47,7 @@ function setAIFOVVisible(value){
 makeAIFOV(bad,0x42d9ff);
 
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
+const scpObservedMotion=new WeakMap();
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
 const SCP_SCORE_MEMORY='scp049-facility-score-memory-v1';
 let scoreMemorySaveTimer=0,scoreMemoryDirty=false;function saveSCPScoreMemory(){scoreMemoryDirty=true;if(scoreMemorySaveTimer)return;scoreMemorySaveTimer=setTimeout(()=>{scoreMemorySaveTimer=0;if(!scoreMemoryDirty||!navData?.grid)return;scoreMemoryDirty=false;try{localStorage.setItem(SCP_SCORE_MEMORY,JSON.stringify({width:navData.width,height:navData.height,cellSize:navData.cellSize,origin:navData.origin,grid:navData.grid}))}catch(e){console.warn('SCP score memory save failed',e)}},2500)}
@@ -711,6 +712,17 @@ function sampleSCPFlow(obj,goalX=null,goalZ=null){
  }
  return null;
 }
+function fovSteeringClearance(obj,vx,vz,maxDistance){
+ const obstacles=scanAIFOVObstacles(obj),p=obj.position,r=.62,step=.3;
+ let clear=maxDistance;
+ for(let d=step;d<=maxDistance;d+=step){
+  const x=p.x+vx*d,z=p.z+vz*d;
+  for(const o of obstacles){
+   if(x>=o.x-o.w/2-r&&x<=o.x+o.w/2+r&&z>=o.z-o.d/2-r&&z<=o.z+o.d/2+r){clear=Math.min(clear,d-step);return Math.max(0,clear)}
+  }
+ }
+ return clear;
+}
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
@@ -719,27 +731,17 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
  const vLen=Math.hypot(velocity.x,velocity.z),heading=vLen>.12?new T.Vector3(velocity.x/vLen,0,velocity.z/vLen):steering.clone().setY(0).normalize();
- // Refresh the real facility meshes used by Three.Raycaster.
- if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- const rayLength=6.5,rayOffsets=[-r,0,r],candidates=[];
+ // Geometric FOV obstacle steering: score candidate headings against the
+ // bounding boxes SCP can currently see, rather than using flowfield arrows.
+ const rayLength=6.5,candidates=[];
+ scanAIFOVObstacles(obj);
  let best=null,bestScore=-Infinity;
- // Cast a fan of forward-looking rays around current momentum. Each candidate
- // uses three parallel rays so the body width, not just its center, clears walls.
  for(let i=0;i<34;i++){
   const angle=(i/33-.5)*Math.PI*1.72,ca=Math.cos(angle),sa=Math.sin(angle);
   const vx=heading.x*ca-heading.z*sa,vz=heading.x*sa+heading.z*ca;
-  const dir=new T.Vector3(vx,0,vz),side=new T.Vector3(-vz,0,vx);let clearDistance=rayLength;
-  for(const offset of rayOffsets){
-   scpRaycaster.set(new T.Vector3(p.x+side.x*offset,1.05,p.z+side.z*offset),dir);
-   scpRaycaster.near=.08;scpRaycaster.far=rayLength;
-   const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
-   if(hits.length)clearDistance=Math.min(clearDistance,hits[0].distance);
-  }
+  const clearDistance=fovSteeringClearance(obj,vx,vz,rayLength);
   const guideAlign=vx*guide.x+vz*guide.z,momentum=vx*heading.x+vz*heading.z,continuity=vx*steering.x+vz*steering.z;
-  // Strong continuity prevents alternating between neighboring rays; the target
-  // only gently biases the heading while ray distance deflects it around obstacles.
   const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
-  // Pursuit has priority in open space; ray clearance only becomes influential near a wall.
   const score=continuity*1.0+momentum*.6+guideAlign*(obj===bad?13.5:6.8)+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:clearDistance>=rayLength-.01,score,selected:false};candidates.push(c);
   if(score>bestScore){bestScore=score;best=c}
@@ -842,27 +844,31 @@ function frame(now){
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   const playerObj=ctl.getObject();
   const livingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));
-  const visiblePool=livingPool.filter(t=>insideAIFOV(bad,t.obj.position));
+  // Track actual displacement, not animation state: only moving people are
+  // eligible, and a newly moving person can immediately pull SCP off its old target.
+  const movingPool=[];
+  for(const candidate of livingPool){
+   const q=candidate.obj.position,prev=scpObservedMotion.get(candidate.obj);
+   scpObservedMotion.set(candidate.obj,{x:q.x,z:q.z,at:now});
+   const elapsed=prev?Math.max(.016,(now-prev.at)/1000):.016;
+   const moveSpeed=prev?Math.hypot(q.x-prev.x,q.z-prev.z)/elapsed:0;
+   const distance=Math.hypot(q.x-bad.position.x,q.z-bad.position.z);
+   if(prev&&moveSpeed>.32&&distance<85)movingPool.push({...candidate,moveSpeed,distance});
+  }
   scanAIFOVObstacles(bad);
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
-  let currentVisible=!!scpTarget&&!currentInvalid&&insideAIFOV(bad,currentObj.position);
-  if(currentVisible)bad.userData.targetLostAt=0;
-  else if(scpTarget&&!currentInvalid&&!bad.userData.targetLostAt)bad.userData.targetLostAt=now;
-  const lostTooLong=!!scpTarget&&bad.userData.targetLostAt&&now-bad.userData.targetLostAt>2400;
-  // Only acquire targets with a clear line of sight. If the current target vanishes
-  // behind cover, keep its last heading briefly, then forget it instead of chasing blindly.
-  if(currentInvalid||lostTooLong)scpTarget=null;
-  if(!scpTarget||now>=scpTargetUntil||(!currentVisible&&visiblePool.length)){
-   let pick=null,bestDistance=Infinity;
-   for(const candidate of visiblePool){
-    if(scpTarget&&candidate.obj===currentObj)continue;
-    const d=Math.hypot(candidate.obj.position.x-bad.position.x,candidate.obj.position.z-bad.position.z);
-    if(d<bestDistance){bestDistance=d;pick=candidate}
+  const currentMotion=currentObj?movingPool.find(t=>t.obj===currentObj):null;
+  if(currentInvalid)scpTarget=null;
+  const shouldSwitch=!scpTarget||now>=scpTargetUntil||(!currentMotion&&movingPool.length>0)||(currentMotion&&movingPool.some(t=>t.obj!==currentObj&&t.moveSpeed>currentMotion.moveSpeed*1.35));
+  if(shouldSwitch&&movingPool.length){
+   let pick=null,bestScore=-Infinity;
+   for(const candidate of movingPool){
+    const score=candidate.moveSpeed*2.0-candidate.distance*.035+(candidate.kind==='player'?.12:0);
+    if(score>bestScore){bestScore=score;pick=candidate}
    }
-   if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000;bad.userData.targetLostAt=0}
-   else if(!scpTarget)scpTargetUntil=now+500;
-  }
+   if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+2800}
+  }else if(!scpTarget)scpTargetUntil=now+350;
   let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
   if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead))){
    const inFOV=insideAIFOV(bad,targetObj.position);
@@ -870,8 +876,8 @@ function frame(now){
    scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt,!inFOV);
   }else{
    bad.userData.targetLOSBlocked=true;
-   // Locomotion is independent of victim detection: keep following the map-wide field.
-   scpMoved=followSCPVelocity(bad,0,0,3.2,dt,true);
+   // No moving victim is available: keep momentum and use the FOV obstacle steering.
+   scpMoved=followSCPVelocity(bad,bad.position.x+bad.userData.steeringVector.x*12,bad.position.z+bad.userData.steeringVector.z*12,3.2,dt,true);
   }
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
