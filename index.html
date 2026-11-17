@@ -662,37 +662,20 @@ function frame(now){
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   // A target is eligible only while its position is genuinely changing.
   // Measure actual displacement each frame, not input keys or animation state.
-  const movingNow=(obj)=>{
-   const u=obj.userData||(obj.userData={}),q=obj.position,prev=u.scpMoveSample;
-   u.scpMoveSample={x:q.x,z:q.z};
-   if(!prev){u.scpMovingNow=false;return false}
-   const speed=Math.hypot(q.x-prev.x,q.z-prev.z)/Math.max(dt,.001);
-   u.scpMovingNow=speed>.18;
-   return u.scpMovingNow;
-  };
+  const movingNow=(obj)=>{const u=obj.userData||(obj.userData={}),q=obj.position,prev=u.scpMoveSample;u.scpMoveSample={x:q.x,z:q.z};if(!prev){u.scpMovingNow=false;return false}const speed=Math.hypot(q.x-prev.x,q.z-prev.z)/Math.max(dt,.001);u.scpMovingNow=speed>.18;return u.scpMovingNow;};
   const playerObj=ctl.getObject();
-  const movingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))]
-   .filter(t=>(t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead))&&movingNow(t.obj));
-  // Choose a new moving target on a fixed 11-second timer, not when
-  // the per-frame movement sample briefly reports a pause.
+  const livingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));
+  const movingPool=livingPool.filter(t=>movingNow(t.obj));
+  // Prefer a moving target every 11 seconds, but never require target movement to pursue.
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  const hasCurrentTarget=!!scpTarget;
-  const currentInvalid=hasCurrentTarget&&(!currentObj||(scpTarget?.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
+  const hasCurrentTarget=!!scpTarget,currentInvalid=hasCurrentTarget&&(!currentObj||(scpTarget?.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
   if((!hasCurrentTarget&&now>=scpTargetUntil)||currentInvalid||now>=scpTargetUntil){
-   const choices=movingPool.filter(t=>t.obj!==currentObj);
-   const pick=choices[Math.floor(Math.random()*choices.length)]||movingPool[0]||null;
-   scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;
-   scpTargetUntil=now+11000;
+   const pool=movingPool.length?movingPool:livingPool,choices=pool.filter(t=>t.obj!==currentObj),pick=choices[Math.floor(Math.random()*choices.length)]||pool[0]||null;
+   scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;scpTargetUntil=now+11000;
   }
-  let scpMoved=false;
-  const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  if(targetObj&&movingPool.some(t=>t.obj===targetObj)){
-   scpMoved=followSCPParticleVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
-  }else{
-   // Retain the selected target until the 11-second decision point, but pause
-   // pursuit while that character is stationary.
-   bad.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
-  }
+  let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
+  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead)))scpMoved=followSCPParticleVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+  else bad.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
