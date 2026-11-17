@@ -74,9 +74,9 @@ const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),s
 const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.style.display='none';
 const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
-function drawSCPParticleGizmos(obj){
+function drawSCPBreadcrumbs(obj){
  if(!scpRayGizmos){scpChainViz.visible=false;return}
- const ud=obj.userData||{},route=ud.particleRoute||[],idx=ud.particleIndex||1;
+ const ud=obj.userData||{},route=ud.breadcrumbRoute||[],idx=ud.breadcrumbIndex||1;
  while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}
  if(route.length>1){
   const verts=[];for(const p of route)verts.push(p.x,1.35,p.z);
@@ -86,10 +86,10 @@ function drawSCPParticleGizmos(obj){
   if(target){const tg=new T.BufferGeometry();tg.setAttribute('position',new T.Float32BufferAttribute([target.x,1.42,target.z],3));scpChainViz.add(new T.Points(tg,new T.PointsMaterial({color:0x39ff75,size:.34,sizeAttenuation:true,depthTest:false})));}
  }
  const v=ud.velocity;if(v&&v.lengthSq()>.0025){const p=obj.position,g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([p.x,1.55,p.z,p.x+v.x*.65,1.55,p.z+v.z*.65],3));scpChainViz.add(new T.Line(g,new T.LineBasicMaterial({color:0x00eaff,depthTest:false})));}
- scpChainViz.visible=scpRayGizmos;rayHUD.textContent='SCP PARTICLE TRAIL · GREEN = NEXT PARTICLE · CYAN = VELOCITY (G)';
+ scpChainViz.visible=scpRayGizmos;rayHUD.textContent='SCP BREADCRUMB TRAIL · GREEN = NEXT PARTICLE · CYAN = VELOCITY (G)';
 }
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
-function drawSCPRayChain(obj){drawSCPParticleGizmos(obj)}
+function drawSCPRayChain(obj){drawSCPBreadcrumbs(obj)}
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 function drawSCPRayGizmos(obj,tx,tz){
@@ -125,37 +125,46 @@ function breadcrumbSegmentClear(ax,az,bx,bz,r=.48){
  for(let q=1;q<=steps;q++){const t=q/steps;if(!breadcrumbClear(ax+(bx-ax)*t,az+(bz-az)*t,r))return false}
  return true;
 }
-function buildSCPParticleRoute(obj,tx,tz,r=.48){
- const p=obj.position,step=.95,maxDepth=42,beamWidth=6;
- let frontier=[{x:p.x,z:p.z,dx:0,dz:1,path:[{x:p.x,z:p.z}],score:0}],best=frontier[0],bestDistance=Math.hypot(tx-p.x,tz-p.z);
- for(let depth=0;depth<maxDepth;depth++){
-  const next=[];
-  for(const node of frontier){
-   const remaining=Math.hypot(tx-node.x,tz-node.z);
-   if(remaining<.72){best=node;depth=maxDepth;break}
-   for(let k=0;k<16;k++){
-    const a=k*Math.PI/8,vx=Math.sin(a),vz=Math.cos(a),nx=node.x+vx*step,nz=node.z+vz*step;
-    if(!breadcrumbClear(nx,nz,r))continue;
-    const safe=breadcrumbSegmentClear(node.x,node.z,nx,nz,r);
-    if(!safe)continue;
-    if(node.depth&&vx*node.dx+vz*node.dz<-.15)continue;
-    if(node.path.some(q=>Math.hypot(q.x-nx,q.z-nz)<step*.55))continue;
-    let clearance=2.5;for(const o of nearbySolid(nx,nz,3)){const gap=Math.hypot(Math.max(0,Math.abs(nx-o.x)-o.w/2),Math.max(0,Math.abs(nz-o.z)-o.d/2));clearance=Math.min(clearance,gap)}
-    const nd=Math.hypot(tx-nx,tz-nz),turn=node.depth?1-(vx*node.dx+vz*node.dz):0,score=nd+turn*.38-Math.min(clearance,2)*.12+depth*.006;
-    const candidate={x:nx,z:nz,dx:vx,dz:vz,path:node.path.concat([{x:nx,z:nz}]),score,depth:depth+1};
-    if(nd<bestDistance){bestDistance=nd;best=candidate}next.push(candidate);
-   }
+// Simple greedy breadcrumb generation: walk toward the target and add a
+// collision-checked detour breadcrumb only when the direct segment is blocked.
+function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
+ const p=obj.position,step=.9,maxBreadcrumbs=120,route=[{x:p.x,z:p.z}],visited=[];
+ let x=p.x,z=p.z,previousX=0,previousZ=0;
+ for(let n=0;n<maxBreadcrumbs;n++){
+  const dx=tx-x,dz=tz-z,remaining=Math.hypot(dx,dz);
+  if(remaining<.32)break;
+  const ux=dx/remaining,uz=dz/remaining,distance=Math.min(step,remaining);
+  const directX=x+ux*distance,directZ=z+uz*distance;
+  if(breadcrumbClear(directX,directZ,r)&&breadcrumbSegmentClear(x,z,directX,directZ,r)){
+   x=directX;z=directZ;route.push({x,z});previousX=ux;previousZ=uz;
+   if(distance>=remaining-.001)break;
+   continue;
   }
-  if(!next.length)break;
-  next.sort((a,b)=>a.score-b.score);frontier=next.slice(0,beamWidth);
-  if(frontier[0].score<best.score)best=frontier[0];
+  let best=null,bestScore=Infinity;
+  // Try short angular offsets around the target heading; no beam search/tree.
+  for(const degrees of [25,-25,45,-45,65,-65,90,-90,115,-115,140,-140,165,-165,180]){
+   const a=Math.atan2(ux,uz)+degrees*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
+   const nx=x+vx*step,nz=z+vz*step;
+   if(!breadcrumbClear(nx,nz,r)||!breadcrumbSegmentClear(x,z,nx,nz,r))continue;
+   if(visited.some(q=>Math.hypot(q.x-nx,q.z-nz)<.62))continue;
+   const turn=previousX||previousZ?1-(vx*previousX+vz*previousZ):0;
+   let clearance=2.5;
+   for(const o of solid){
+    const gap=Math.hypot(Math.max(0,Math.abs(nx-o.x)-o.w/2),Math.max(0,Math.abs(nz-o.z)-o.d/2));
+    clearance=Math.min(clearance,gap);
+   }
+   const score=Math.hypot(tx-nx,tz-nz)+turn*.42-Math.min(clearance,2)*.1;
+   if(score<bestScore){bestScore=score;best={x:nx,z:nz,dx:vx,dz:vz}}
+  }
+  if(!best)break;
+  x=best.x;z=best.z;previousX=best.dx;previousZ=best.dz;
+  route.push({x,z});visited.push({x,z});
  }
- const route=best.path.slice(),end=route[route.length-1];
- if(Math.hypot(tx-end.x,tz-end.z)<step*1.35&&breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(end.x,end.z,tx,tz,r)){
-  route.push({x:tx,z:tz});
- }
- obj.userData.particleRoute=route;obj.userData.particleIndex=1;obj.userData.particleTargetX=tx;obj.userData.particleTargetZ=tz;obj.userData.particleRouteAt=performance.now();obj.userData.particleRouteBlocked=false;
- drawSCPParticleGizmos(obj);return route;
+ const end=route[route.length-1];
+ if(Math.hypot(tx-end.x,tz-end.z)<step*1.35&&breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(end.x,end.z,tx,tz,r))route.push({x:tx,z:tz});
+ const ud=obj.userData;
+ ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=false;
+ drawSCPBreadcrumbs(obj);return route;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
@@ -390,7 +399,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;function fallback(){let a=new T.Mesh(new T.CapsuleGeometry(.45,1.3,5,10),mats[2]);a.position.y=1.3;let b=new T.Mesh(new T.CylinderGeometry(.5,.7,1.5,12),mats[2]);b.position.y=.8;let h=new T.Mesh(new T.SphereGeometry(.3),mats[1]);h.position.y=2.3;bad.add(a,b,h);loaded=true}new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true},undefined,fallback);setTimeout(()=>!loaded&&fallback(),7000);
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpChainViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPParticleGizmos(bad)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpChainViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPBreadcrumbs(bad)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -548,19 +557,19 @@ function gradientSCP(x,z){
  return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
 }
 
-// Continuous velocity follower: SCP advances through particle waypoints in order.
+// Continuous velocity follower: SCP advances through breadcrumb waypoints in order.
 // No direct moveTo, raycasts, A*, Dijkstra, or flowfield movement.
-function followSCPParticleVelocity(obj,tx,tz,speed,dt){
+function followSCPBreadcrumbVelocity(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
- const route=ud.particleRoute,oldX=ud.particleTargetX,oldZ=ud.particleTargetZ,now=performance.now();
- if(!route?.length||Math.hypot(tx-(oldX??tx),tz-(oldZ??tz))>3.2||(ud.particleRouteBlocked&&now-(ud.particleBlockedAt||0)>.75)||ud.particleIndex>=route.length)buildSCPParticleRoute(obj,tx,tz,r);
- const path=ud.particleRoute||[];
+ const route=ud.breadcrumbRoute,oldX=ud.breadcrumbTargetX,oldZ=ud.breadcrumbTargetZ,now=performance.now();
+ if(!route?.length||Math.hypot(tx-(oldX??tx),tz-(oldZ??tz))>3.2||(ud.breadcrumbRouteBlocked&&now-(ud.breadcrumbBlockedAt||0)>.75)||ud.breadcrumbIndex>=route.length)buildSCPBreadcrumbRoute(obj,tx,tz,r);
+ const path=ud.breadcrumbRoute||[];
  if(path.length<2){velocity.multiplyScalar(Math.exp(-1.8*dt));if(velocity.lengthSq()<.0004)velocity.set(0,0,0);return velocity.lengthSq()>.0025}
- let i=ud.particleIndex||1;
+ let i=ud.breadcrumbIndex||1;
  while(i<path.length&&Math.hypot(path[i].x-p.x,path[i].z-p.z)<.28)i++;
- ud.particleIndex=i;
- if(i>=path.length){velocity.multiplyScalar(Math.exp(-1.5*dt));if(velocity.lengthSq()<.0004)velocity.set(0,0,0);if(performance.now()-(ud.particleRouteAt||0)>180)buildSCPParticleRoute(obj,tx,tz,r);return velocity.lengthSq()>.0025}
- const w=path[i],dx=w.x-p.x,dz=w.z-p.z,dist=Math.hypot(dx,dz);if(dist<.001){ud.particleIndex++;return true}
+ ud.breadcrumbIndex=i;
+ if(i>=path.length){velocity.multiplyScalar(Math.exp(-1.5*dt));if(velocity.lengthSq()<.0004)velocity.set(0,0,0);if(performance.now()-(ud.breadcrumbRouteAt||0)>180)buildSCPBreadcrumbRoute(obj,tx,tz,r);return velocity.lengthSq()>.0025}
+ const w=path[i],dx=w.x-p.x,dz=w.z-p.z,dist=Math.hypot(dx,dz);if(dist<.001){ud.breadcrumbIndex++;return true}
  const acceleration=9.5,desiredSpeed=Math.min(speed,Math.sqrt(2*acceleration*Math.max(.015,dist-.13))),desiredX=dx/dist*desiredSpeed,desiredZ=dz/dist*desiredSpeed;
  let ax=desiredX-velocity.x,az=desiredZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;
  if(change>maxChange&&change>0){ax*=maxChange/change;az*=maxChange/change}
@@ -571,7 +580,7 @@ function followSCPParticleVelocity(obj,tx,tz,speed,dt){
   for(let q=1;q<=steps;q++){const t=q/steps,x=p.x+dx*t,z=p.z+dz*t;if(scpGroundScore(x,z,r)!==1||hit(x,z,r))return false}
   return true;
  };
- if(clearStep(nx-p.x,nz-p.z)){p.x=nx;p.z=nz;ud.particleWallSliding=false;ud.particleBlockedAt=0}
+ if(clearStep(nx-p.x,nz-p.z)){p.x=nx;p.z=nz;ud.breadcrumbWallSliding=false;ud.breadcrumbBlockedAt=0}
  else{
   // Project incoming momentum onto an open wall tangent; preserve its speed.
   const vx=velocity.x,vz=velocity.z,magnitude=Math.hypot(vx,vz),base=Math.atan2(vz,vx),toX=dx/Math.max(dist,.001),toZ=dz/Math.max(dist,.001);
@@ -588,14 +597,14 @@ function followSCPParticleVelocity(obj,tx,tz,speed,dt){
    const slideSpeed=Math.max(.65,Math.min(speed,magnitude));
    velocity.x=best.ux*slideSpeed;velocity.z=best.uz*slideSpeed;
   }else velocity.multiplyScalar(Math.exp(-.8*dt));
-  ud.particleWallSliding=true;ud.particleRouteBlocked=true;
-  if(!ud.particleBlockedAt)ud.particleBlockedAt=now;
+  ud.breadcrumbWallSliding=true;ud.breadcrumbRouteBlocked=true;
+  if(!ud.breadcrumbBlockedAt)ud.breadcrumbBlockedAt=now;
   moveDir.copy(velocity).setY(0);
-  if(scpRayGizmos&&performance.now()-(ud.particleGizmoAt||0)>250){ud.particleGizmoAt=performance.now();drawSCPParticleGizmos(obj)}
+  if(scpRayGizmos&&performance.now()-(ud.breadcrumbGizmoAt||0)>250){ud.breadcrumbGizmoAt=performance.now();drawSCPBreadcrumbs(obj)}
   return velocity.lengthSq()>.0004;
  }
  moveDir.copy(velocity).setY(0);obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- if(performance.now()-(ud.particleGizmoAt||0)>100){ud.particleGizmoAt=performance.now();drawSCPParticleGizmos(obj)}
+ if(performance.now()-(ud.breadcrumbGizmoAt||0)>100){ud.breadcrumbGizmoAt=performance.now();drawSCPBreadcrumbs(obj)}
  return velocity.lengthSq()>.0025;
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
@@ -615,7 +624,7 @@ function frame(now){
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
    // Zombies select a victim on an 11-second interval and use SCP's exact
-   // sequential particle-route + persistent-velocity wall-sliding controller.
+   // sequential breadcrumb-route + persistent-velocity wall-sliding controller.
    const nowZombie=now;
    if(!z.userData.targetObj||nowZombie>=z.userData.targetUntil||z.userData.targetObj.userData?.hp<=0||z.userData.targetObj.userData?.dead){
     const pool=[{kind:'player',obj:ctl.getObject()},...allies.filter(a=>a.userData.hp>0&&!a.userData.dead).map(a=>({kind:'survivor',obj:a}))];
@@ -623,13 +632,13 @@ function frame(now){
     const choices=pool.filter(t=>t.obj!==previous);
     const pick=choices[Math.floor(Math.random()*choices.length)]||pool[0]||null;
     z.userData.targetKind=pick?.kind||'player';z.userData.targetObj=pick?.obj||null;z.userData.targetUntil=nowZombie+11000;
-    z.userData.particleRoute=null;z.userData.particleIndex=1;
+    z.userData.breadcrumbRoute=null;z.userData.breadcrumbIndex=1;
    }
    const target=z.userData.targetObj||null;
    const tp=target?.position,d=tp?Math.hypot(tp.x-z.position.x,tp.z-z.position.z):Infinity;
    let zombieMoved=false;
    if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
-    zombieMoved=followSCPParticleVelocity(z,tp.x,tp.z,2.35,dt);
+    zombieMoved=followSCPBreadcrumbVelocity(z,tp.x,tp.z,2.35,dt);
     if(z.userData.moveDir?.lengthSq()>.001)z.rotation.y=Math.atan2(z.userData.moveDir.x,z.userData.moveDir.z);
    }else{
     z.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
@@ -675,7 +684,7 @@ function frame(now){
    scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;scpTargetUntil=now+11000;
   }
   let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead)))scpMoved=followSCPParticleVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead)))scpMoved=followSCPBreadcrumbVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
   else bad.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
