@@ -3,7 +3,7 @@
 window.addEventListener('error',e=>{const m=document.querySelector('#msg');if(m)m.textContent='3D ERROR: '+(e.message||'unknown')});
 window.addEventListener('unhandledrejection',e=>{const m=document.querySelector('#msg');if(m)m.textContent='3D LOAD ERROR: '+(e.reason?.message||e.reason||'unknown')});
 </script><script type="module">
-import * as T from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';import{GLTFLoader}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';import{PointerLockControls}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
+import * as T from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';import{GLTFLoader}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';import{clone as cloneSkeleton}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js';import{PointerLockControls}from'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
 
 
 const scene=new T.Scene();scene.background=new T.Color(0x070a0d);scene.fog=new T.Fog(0x070a0d,.025);const cam=new T.PerspectiveCamera(75,innerWidth/innerHeight,.1,180);const renderer=new T.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));document.body.appendChild(renderer.domElement);const ctl=new PointerLockControls(cam,renderer.domElement);scene.add(ctl.getObject());ctl.getObject().position.set(0,1.7,16);scene.add(new T.HemisphereLight(0x9aaabb,0x17191b,1.2));const flash=new T.SpotLight(0xdceaff,90,36,Math.PI/7,.4,1);cam.add(flash);let ft=new T.Object3D();ft.position.z=-1;cam.add(ft);flash.target=ft;
@@ -343,37 +343,32 @@ function createSurvivor(){
  g.userData.hp=150;g.userData.lastSCPHit=0;g.userData.path=[];g.userData.pathIndex=0;g.userData.pathAt=Math.random()*1400;g.userData.roamAngle=Math.random()*Math.PI*2;g.userData.roamRadius=4+Math.random()*9;g.userData.roamX=(Math.random()-.5)*7;g.userData.roamZ=(Math.random()-.5)*7;g.userData.speed=2.4+Math.random()*2.2;return g;
 }
 for(let i=0;i<4;i++){let g=createSurvivor();g.position.set([-8,8,-8,8][i],0,[12,12,-12,-12][i]);scene.add(g);allies.push(g)}
+let zombieTemplate=null,zombieClips={idle:null,walk:null,attack:null},zombieModelReady=false;
+new GLTFLoader().load('./headcrab_zombie.glb',g=>{
+ zombieTemplate=g.scene;
+ const findClip=(re)=>g.animations.find(c=>re.test(c.name));
+ zombieClips.idle=findClip(/idle|stand/i)||null;
+ zombieClips.walk=findClip(/walk/i)||null;
+ zombieClips.attack=findClip(/^attackd$/i)||findClip(/attackd/i)||null;
+ zombieModelReady=true;
+ console.info('Zombie GLB ready; embedded animations:',g.animations.map(c=>c.name));
+},undefined,e=>console.error('headcrab_zombie.glb failed to load',e));
 function spawnZombie(){
- let g=new T.Group(),skin=new T.MeshStandardMaterial({color:0x59664b,roughness:.95}),dark=new T.MeshStandardMaterial({color:0x20251d,roughness:1}),bone=new T.MeshStandardMaterial({color:0xb9b7a8,roughness:.7}),eyeRed=new T.MeshStandardMaterial({color:0xff1010,emissive:0xff0000,emissiveIntensity:2.8}),pupil=new T.MeshBasicMaterial({color:0xffffff});
- function mesh(geo,mat,parent,x,y,z){let m=new T.Mesh(geo,mat);m.position.set(x,y,z);parent.add(m);return m}
- let torso=mesh(new T.CapsuleGeometry(.34,.72,4,7),skin,g,0,1.12,0);torso.rotation.x=-.16;
- mesh(new T.BoxGeometry(.48,.13,.38),dark,g,0,1.48,0);
- for(let k=0;k<3;k++){let rib=mesh(new T.TorusGeometry(.25-k*.025,.035,5,10,Math.PI),bone,g,0,1.22-k*.13,.16);rib.rotation.z=Math.PI}
- let head=mesh(new T.SphereGeometry(.28,9,7),skin,g,0,1.78,.08);head.scale.set(.9,1.1,.85);
- mesh(new T.ConeGeometry(.09,.18,5),bone,g,-.12,1.59,.24).rotation.x=.5;
- const limbs=[];
- // Four visibly segmented limbs: shoulder/hip joints, upper segments, elbow/knee,
- // lower segments, and separate hands/feet (no single conjoined capsule).
- for(const side of [-1,1]){
-  const arm=new T.Group();arm.position.set(side*.34,1.42,0);g.add(arm);
-  mesh(new T.CapsuleGeometry(.095,.28,3,6),skin,arm,0,-.17,0).rotation.z=side*.18;
-  const elbow=new T.Group();elbow.position.set(0,-.34,.025);arm.add(elbow);
-  mesh(new T.SphereGeometry(.075,7,6),dark,elbow,0,0,0);
-  mesh(new T.CapsuleGeometry(.075,.30,3,6),skin,elbow,0,-.19,.025).rotation.z=side*.12;
-  const hand=mesh(new T.BoxGeometry(.12,.14,.11),dark,elbow,0,-.38,.08);
-  for(let f=0;f<3;f++)mesh(new T.ConeGeometry(.02,.10,4),bone,elbow,(f-1)*.04,-.46,.12).rotation.x=-.5;
-  limbs.push(arm);
-  const leg=new T.Group();leg.position.set(side*.16,.68,0);g.add(leg);
-  mesh(new T.CapsuleGeometry(.105,.30,3,6),dark,leg,0,-.16,0);
-  const knee=new T.Group();knee.position.set(0,-.33,0);leg.add(knee);
-  mesh(new T.SphereGeometry(.075,7,6),skin,knee,0,0,.015);
-  mesh(new T.CapsuleGeometry(.085,.31,3,6),skin,knee,0,-.19,0);
-  mesh(new T.BoxGeometry(.20,.10,.30),dark,knee,0,-.37,.08);
-  limbs.push(leg);
- }
- for(let side of [-1,1]){mesh(new T.SphereGeometry(.075,8,6),eyeRed,g,side*.105,1.82,.315);mesh(new T.SphereGeometry(.027,8,6),pupil,g,side*.105,1.82,.378)}
+ if(!zombieModelReady||!zombieTemplate)return;
+ const model=cloneSkeleton(zombieTemplate),g=new T.Group();
+ model.updateMatrixWorld(true);
+ const height=Math.max(.01,new T.Box3().setFromObject(model).getSize(new T.Vector3()).y);
+ model.scale.setScalar(1.85/height);model.updateMatrixWorld(true);
+ const bounds=new T.Box3().setFromObject(model);model.position.y-=bounds.min.y;
+ g.add(model);
  g.position.set(bad.position.x+(Math.random()-.5)*10,0,bad.position.z+(Math.random()-.5)*10);
- g.userData.hp=100;g.userData.limbs=limbs;g.userData.torso=torso;g.userData.head=head;g.userData.animT=Math.random()*6;g.userData.attackT=0;g.userData.flowField=null;g.userData.flowTargetX=NaN;g.userData.flowTargetZ=NaN;scene.add(g);zombies.push(g)
+ const mixer=new T.AnimationMixer(model),actions={};
+ for(const [key,clip] of Object.entries(zombieClips))if(clip)actions[key]=mixer.clipAction(clip);
+ const initial=actions.idle||actions.walk||actions.attack;
+ if(initial)initial.reset().fadeIn(.15).play();
+ g.userData.hp=100;g.userData.mixer=mixer;g.userData.actions=actions;g.userData.currentAction=initial||null;
+ g.userData.targetObj=null;g.userData.targetUntil=0;g.userData.attackT=0;
+ scene.add(g);zombies.push(g);
 }
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);if(Math.random()<.03)spawnZombie();if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
@@ -613,11 +608,14 @@ function frame(now){
     // Zombies use local direction scoring; no cached flowfield/BFS.
     scoreDirectionMove(z,tp.x,tp.z,1.1,dt,.4);
    }
-   const t=z.userData.animT,arms=z.userData.limbs||[],torso=z.userData.torso;
-   // Procedural run cycle follows the chosen target; attack lunge triggers on any selected victim.
-   if(moving){arms.forEach((limb,i)=>{limb.rotation.x=Math.sin(t*10+(i%2)*Math.PI)*.62+(i<2?-.12:0)});if(torso)torso.position.y=1.12+Math.abs(Math.sin(t*10))*.07;z.userData.head&&(z.userData.head.rotation.x=Math.sin(t*10)*.08)}
-   else{arms.forEach((limb,i)=>{limb.rotation.x=i<2?-.35:0});if(torso)torso.position.y=1.12}
-   if(d<=1){if(z.userData.attackT<=0){z.userData.attackT=.72;arms.slice(0,2).forEach((a,i)=>a.rotation.x=-1.65+(i*.25));}if(z.userData.targetKind==='player'){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}else target.userData.hp=Math.max(0,target.userData.hp-18*dt)}
+   // Imported GLB animations: attackd while striking, walk while moving, idle at rest.
+   const wanted=d<=1.15?'attack':(moving?'walk':'idle');
+   const next=z.userData.actions?.[wanted]||z.userData.actions?.idle||z.userData.actions?.walk;
+   if(next&&next!==z.userData.currentAction){
+    next.reset().fadeIn(.18).play();z.userData.currentAction?.fadeOut(.18);z.userData.currentAction=next;
+   }
+   z.userData.mixer?.update(dt);
+   if(d<=1){if(z.userData.attackT<=0)z.userData.attackT=.72;if(z.userData.targetKind==='player'){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}else target.userData.hp=Math.max(0,target.userData.hp-18*dt)}
   });
   zombies=zombies.filter(z=>{if(z.userData.hp<=0){scene.remove(z);return false}return true});
   if(playerHP<=0)gameover('YOU WERE OVERRUN');
