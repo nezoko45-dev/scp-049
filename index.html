@@ -623,10 +623,10 @@ function drawSCPSteeringVectors(obj){
  if(v)add(v.x,v.z,.85,0x00eaff,1.58);if(steer)add(steer.x,steer.z,1.35,0xffb52e,1.62);
  scpSteeringViz.visible=true;rayHUD.textContent='34 STEERING VECTORS · GREEN = CLEAR · RED = BLOCKED · ORANGE = SELECTED (G)';
 }
-function followSCPVelocity(obj,tx,tz,speed,dt){
+function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
- const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),targetX=dist>.001?dx/dist:steering.x,targetZ=dist>.001?dz/dist:steering.z;
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),targetX=!losBlocked&&dist>.001?dx/dist:steering.x,targetZ=!losBlocked&&dist>.001?dz/dist:steering.z;
  const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-2.8*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
@@ -652,7 +652,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
   // only gently biases the heading while ray distance deflects it around obstacles.
   const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
   // Pursuit has priority in open space; ray clearance only becomes influential near a wall.
-  const score=continuity*2.2+momentum*1.0+guideAlign*6.2+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
+  const score=continuity*(losBlocked?5.0:2.2)+momentum*(losBlocked?3.0:1.0)+guideAlign*(losBlocked?0:6.2)+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:clearDistance>=rayLength-.01,score,selected:false};candidates.push(c);
   if(score>bestScore){bestScore=score;best=c}
  }
@@ -678,7 +678,14 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
  if(scpRayGizmos&&performance.now()-(ud.steeringGizmoAt||0)>100){ud.steeringGizmoAt=performance.now();drawSCPSteeringVectors(obj)}
  return velocity.lengthSq()>.0025;
 }
-function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
+function scpTargetLOS(ax,az,bx,bz){
+ if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
+ const dx=bx-ax,dz=bz-az,dist=Math.hypot(dx,dz);if(dist<.001)return true;
+ // Check actual facility geometry between SCP and the victim at torso height.
+ const origin=new T.Vector3(ax,1.15,az),direction=new T.Vector3(dx/dist,0,dz/dist);
+ scpRaycaster.set(origin,direction);scpRaycaster.near=.12;scpRaycaster.far=Math.max(.12,dist-.55);
+ return scpRaycaster.intersectObjects(scpRayObstacles,false).length===0;
+}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
  requestAnimationFrame(frame);
@@ -752,7 +759,7 @@ function frame(now){
    scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;scpTargetUntil=now+11000;
   }
   let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead)))scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead))){const losClear=scpTargetLOS(bad.position.x,bad.position.z,targetObj.position.x,targetObj.position.z);bad.userData.targetLOSBlocked=!losClear;scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt,!losClear)}
   else bad.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
