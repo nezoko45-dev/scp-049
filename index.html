@@ -114,6 +114,17 @@ function drawSCPRayGizmos(obj,tx,tz){
  scpRayViz.visible=true;rayHUD.textContent='CELL FLOWFIELD VECTORS (G toggles)';
 }
 
+// Breadcrumb collision validation against every streamed facility solid.
+function breadcrumbClear(x,z,r=.48){
+ for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return false;
+ return true;
+}
+// Check the full corridor between two breadcrumb positions at 18 cm intervals.
+function breadcrumbSegmentClear(ax,az,bx,bz,r=.48){
+ const length=Math.hypot(bx-ax,bz-az),steps=Math.max(2,Math.ceil(length/.18));
+ for(let q=1;q<=steps;q++){const t=q/steps;if(!breadcrumbClear(ax+(bx-ax)*t,az+(bz-az)*t,r))return false}
+ return true;
+}
 function buildSCPParticleRoute(obj,tx,tz,r=.48){
  const p=obj.position,step=.95,maxDepth=42,beamWidth=6;
  let frontier=[{x:p.x,z:p.z,dx:0,dz:1,path:[{x:p.x,z:p.z}],score:0}],best=frontier[0],bestDistance=Math.hypot(tx-p.x,tz-p.z);
@@ -124,8 +135,8 @@ function buildSCPParticleRoute(obj,tx,tz,r=.48){
    if(remaining<.72){best=node;depth=maxDepth;break}
    for(let k=0;k<16;k++){
     const a=k*Math.PI/8,vx=Math.sin(a),vz=Math.cos(a),nx=node.x+vx*step,nz=node.z+vz*step;
-    if(scpGroundScore(nx,nz,r)!==1||hit(nx,nz,r))continue;
-    let safe=true;for(let q=1;q<=4;q++){const t=q/4;if(scpGroundScore(node.x+(nx-node.x)*t,node.z+(nz-node.z)*t,r)!==1||hit(node.x+(nx-node.x)*t,node.z+(nz-node.z)*t,r)){safe=false;break}}
+    if(!breadcrumbClear(nx,nz,r))continue;
+    const safe=breadcrumbSegmentClear(node.x,node.z,nx,nz,r);
     if(!safe)continue;
     if(node.depth&&vx*node.dx+vz*node.dz<-.15)continue;
     if(node.path.some(q=>Math.hypot(q.x-nx,q.z-nz)<step*.55))continue;
@@ -140,9 +151,8 @@ function buildSCPParticleRoute(obj,tx,tz,r=.48){
   if(frontier[0].score<best.score)best=frontier[0];
  }
  const route=best.path.slice(),end=route[route.length-1];
- if(Math.hypot(tx-end.x,tz-end.z)<step*1.35&&scpGroundScore(tx,tz,r)===1&&!hit(tx,tz,r)){
-  let clear=true;for(let q=1;q<=5;q++){const t=q/5;if(hit(end.x+(tx-end.x)*t,end.z+(tz-end.z)*t,r)){clear=false;break}}
-  if(clear)route.push({x:tx,z:tz});
+ if(Math.hypot(tx-end.x,tz-end.z)<step*1.35&&breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(end.x,end.z,tx,tz,r)){
+  route.push({x:tx,z:tz});
  }
  obj.userData.particleRoute=route;obj.userData.particleIndex=1;obj.userData.particleTargetX=tx;obj.userData.particleTargetZ=tz;obj.userData.particleRouteAt=performance.now();obj.userData.particleRouteBlocked=false;
  drawSCPParticleGizmos(obj);return route;
