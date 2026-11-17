@@ -667,7 +667,8 @@ function buildSCPFlowField(goalX=null,goalZ=null){
   componentMaxZ[id]=maxZ;
  }
  if(!componentCount)return null;
- if(goal&&component[goal.z*W+goal.x]>=0){const k=goal.z*W+goal.x;distance[k]=0;push(k,0)}
+ const scpCell=nearestOpen(bad.position.x,bad.position.z),scpComponent=scpCell?component[scpCell.z*W+scpCell.x]:-1,goalComponent=goal?component[goal.z*W+goal.x]:-1;
+ if(goal&&goalComponent>=0&&goalComponent===scpComponent){const k=goal.z*W+goal.x;distance[k]=0;push(k,0)}
  else for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x,id=component[k];if(id>=0&&z===componentMaxZ[id]){distance[k]=0;push(k,0)}}
  while(heap.length){const [k,d]=pop();if(d!==distance[k])continue;const x=k%W,z=Math.floor(k/W);
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
