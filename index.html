@@ -813,24 +813,33 @@ function frame(now){
    const nowZombie=now;
    scanAIFOVObstacles(z);
    const existing=z.userData.targetObj||null;
-   if(existing&&!insideAIFOV(z,existing.position))z.userData.targetObj=null;
+   // Target acquisition is global and independent of FOV/range. FOV is reserved
+   // exclusively for nearby obstacle sensing and directional clearance scoring.
    if(!z.userData.targetObj||nowZombie>=z.userData.targetUntil||z.userData.targetObj.userData?.hp<=0||z.userData.targetObj.userData?.dead){
     const pool=[{kind:'player',obj:ctl.getObject()},...allies.filter(a=>a.userData.hp>0&&!a.userData.dead).map(a=>({kind:'survivor',obj:a}))];
-    const visible=pool.filter(t=>insideAIFOV(z,t.obj.position));
     const previous=existing;
-    const choices=visible.filter(t=>t.obj!==previous);
-    const pick=choices[Math.floor(Math.random()*choices.length)]||visible[0]||null;
-    z.userData.targetKind=pick?.kind||null;z.userData.targetObj=pick?.obj||null;z.userData.targetUntil=nowZombie+11000;
+    const choices=pool.filter(t=>t.obj!==previous);
+    const ranked=choices.map(t=>({...t,distance:Math.hypot(t.obj.position.x-z.position.x,t.obj.position.z-z.position.z)})).sort((a,b)=>a.distance-b.distance);
+    const pick=ranked[0]||pool.map(t=>({...t,distance:Math.hypot(t.obj.position.x-z.position.x,t.obj.position.z-z.position.z)})).sort((a,b)=>a.distance-b.distance)[0]||null;
+    z.userData.targetKind=pick?.kind||null;z.userData.targetObj=pick?.obj||null;z.userData.targetUntil=nowZombie+2200;
     z.userData.steeringVector?.set(0,0,1);
    }
    const target=z.userData.targetObj||null;
    const tp=target?.position,d=tp?Math.hypot(tp.x-z.position.x,tp.z-z.position.z):Infinity;
    let zombieMoved=false;
    if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
+    // Keep pursuing the globally acquired target; local FOV scanning in the
+    // shared velocity controller handles obstacle avoidance only.
     zombieMoved=followSCPVelocity(z,tp.x,tp.z,2.35,dt);
     if(z.userData.moveDir?.lengthSq()>.001)z.rotation.y=Math.atan2(z.userData.moveDir.x,z.userData.moveDir.z);
+   }else if(target&&d<=1.05){
+    z.userData.velocity?.multiplyScalar(Math.exp(-5.5*dt));
    }else{
-    z.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
+    // No valid victim: retain heading and keep patrolling instead of freezing.
+    const v=z.userData.velocity||(z.userData.velocity=new T.Vector3());
+    const h=z.userData.steeringVector||(z.userData.steeringVector=new T.Vector3(0,0,1));
+    if(v.length()<.45)v.set(h.x*1.1,0,h.z*1.1);
+    zombieMoved=followSCPVelocity(z,z.position.x+h.x*8,z.position.z+h.z*8,1.35,dt,true);
    }
    // Imported GLB: exact AttackD clip while attacking, Walk while travelling, Idle at rest.
    const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
@@ -870,7 +879,7 @@ function frame(now){
    const elapsed=prev?Math.max(.016,(now-prev.at)/1000):.016;
    const moveSpeed=prev?Math.hypot(q.x-prev.x,q.z-prev.z)/elapsed:0;
    const distance=Math.hypot(q.x-bad.position.x,q.z-bad.position.z);
-   if(prev&&moveSpeed>.32&&distance<85)movingPool.push({...candidate,moveSpeed,distance});
+   if(prev&&moveSpeed>.32)movingPool.push({...candidate,moveSpeed,distance});
   }
   scanAIFOVObstacles(bad);
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
