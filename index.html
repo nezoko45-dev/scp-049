@@ -638,10 +638,12 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
   const alignment=vx*targetX+vz*targetZ,momentum=vx*momentumX+vz*momentumZ,score=alignment*4.2+clearDistance*1.35+momentum*.45-(blocked?.5:0);
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:!blocked,score,selected:false};candidates.push(c);if(score>bestScore){bestScore=score;best=c}
  }
+ // The target supplies a guide vector for scoring only. Movement ALWAYS
+ // follows the best of the 34 collision-tested steering vectors.
  let desiredX=targetX,desiredZ=targetZ;
- if(obstacleAhead&&best){best.selected=true;desiredX=best.x;desiredZ=best.z}
+ if(best){best.selected=true;desiredX=best.x;desiredZ=best.z}
  ud.steeringCandidates=candidates;
- const blend=1-Math.exp(-(obstacleAhead?5.2:3.2)*Math.max(0,dt));
+ const blend=1-Math.exp(-5.2*Math.max(0,dt));
  steering.x+=(desiredX-steering.x)*blend;steering.z+=(desiredZ-steering.z)*blend;
  const sl=Math.hypot(steering.x,steering.z);if(sl>.0001){steering.x/=sl;steering.z/=sl}
  const acceleration=6.2,desiredVX=steering.x*speed,desiredVZ=steering.z*speed;let ax=desiredVX-velocity.x,az=desiredVZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;
