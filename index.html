@@ -11,62 +11,6 @@ const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({c
 // The fixed starter map is removed; the entire facility is generated from streamed chunks.
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 
-const AI_FOV_RANGE=18,AI_FOV_HALF=Math.PI/3;
-let aiFOVVisible=false;
-const aiFOVMaterial=new T.MeshBasicMaterial({color:0x45d9ff,transparent:true,opacity:.10,side:T.DoubleSide,depthWrite:false});
-function makeAIFOV(obj,color=0x45d9ff){
- const geo=new T.BufferGeometry(),verts=[0,.12,0],indices=[],steps=32;
- for(let i=0;i<=steps;i++){const a=-AI_FOV_HALF+(i/steps)*(AI_FOV_HALF*2);verts.push(Math.sin(a)*AI_FOV_RANGE,.12,Math.cos(a)*AI_FOV_RANGE)}
- for(let i=0;i<steps;i++)indices.push(0,i+1,i+2);
- geo.setAttribute('position',new T.Float32BufferAttribute(verts,3));geo.setIndex(indices);geo.computeVertexNormals();
- const mesh=new T.Mesh(geo,new T.MeshBasicMaterial({color,transparent:true,opacity:.10,side:T.DoubleSide,depthWrite:false}));
- mesh.name='AI_120_DEGREE_FOV';mesh.visible=aiFOVVisible;obj.add(mesh);obj.userData.fovMesh=mesh;return mesh;
-}
-function insideAIFOV(observer,target,range=AI_FOV_RANGE){
- const dx=target.x-observer.position.x,dz=target.z-observer.position.z,d2=dx*dx+dz*dz;
- if(d2<.0001||d2>range*range)return false;
- const len=Math.sqrt(d2),fx=Math.sin(observer.rotation.y),fz=Math.cos(observer.rotation.y);
- return (dx*fx+dz*fz)/len>=Math.cos(AI_FOV_HALF);
-}
-function scanAIFOVObstacles(observer){
- const found=[],p=observer.position,velocity=observer.userData?.velocity;
- // Sense in the actual travel direction, not a possibly lagging model rotation.
- const speed=velocity?Math.hypot(velocity.x,velocity.z):0;
- const fx=speed>.12?velocity.x/speed:Math.sin(observer.rotation.y);
- const fz=speed>.12?velocity.z/speed:Math.cos(observer.rotation.y);
- const cosHalf=Math.cos(AI_FOV_HALF),r2=AI_FOV_RANGE*AI_FOV_RANGE;
- const pointInside=(x,z)=>{const dx=x-p.x,dz=z-p.z,d2=dx*dx+dz*dz;return d2<=r2&&d2>.0001&&(dx*fx+dz*fz)/Math.sqrt(d2)>=cosHalf};
- // Test a ray from the observer against an object's AABB. This catches cases
- // where the FOV boundary cuts through a box even if none of its corners do.
- const rayTouches=(dx,dz,o)=>{
-  let lo=0,hi=AI_FOV_RANGE;
-  const minX=o.x-o.w/2,maxX=o.x+o.w/2,minZ=o.z-o.d/2,maxZ=o.z+o.d/2;
-  if(Math.abs(dx)<1e-8){if(p.x<minX||p.x>maxX)return false}
-  else{let a=(minX-p.x)/dx,b=(maxX-p.x)/dx;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
-  if(Math.abs(dz)<1e-8){if(p.z<minZ||p.z>maxZ)return false}
-  else{let a=(minZ-p.z)/dz,b=(maxZ-p.z)/dz;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
-  return hi>=lo&&hi>=0&&lo<=AI_FOV_RANGE;
- };
- for(const o of solid){
-  const minX=o.x-o.w/2,maxX=o.x+o.w/2,minZ=o.z-o.d/2,maxZ=o.z+o.d/2;
-  const x=Math.max(minX,Math.min(p.x,maxX)),z=Math.max(minZ,Math.min(p.z,maxZ));
-  const dx=x-p.x,dz=z-p.z,d2=dx*dx+dz*dz;
-  if(d2>.0001&&d2>r2)continue;
-  const corners=pointInside(minX,minZ)||pointInside(minX,maxZ)||pointInside(maxX,minZ)||pointInside(maxX,maxZ);
-  const touches=d2<=.0001||pointInside(x,z)||corners||
-   rayTouches(fx,fz,o)||rayTouches(fx*Math.cos(AI_FOV_HALF)-fz*Math.sin(AI_FOV_HALF),fz*Math.cos(AI_FOV_HALF)+fx*Math.sin(AI_FOV_HALF),o)||
-   rayTouches(fx*Math.cos(AI_FOV_HALF)+fz*Math.sin(AI_FOV_HALF),fz*Math.cos(AI_FOV_HALF)-fx*Math.sin(AI_FOV_HALF),o);
-  if(touches)found.push(o);
- }
- observer.userData.fovObstacles=found;
- return found;
-}
-function setAIFOVVisible(value){
- aiFOVVisible=value;
- scene.traverse(o=>{if(o.name==='AI_120_DEGREE_FOV')o.visible=value});
-}
-makeAIFOV(bad,0x42d9ff);
-
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
 const heatNumberGroup=new T.Group();scene.add(heatNumberGroup);heatNumberGroup.visible=false;const heatNumberTextures=new Map();let heatNumberRefreshAt=0,heatNumberFieldKey='';
 const scpObservedMotion=new WeakMap();
@@ -453,7 +397,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){heatNumbersVisible=!heatNumbersVisible;heatNumberGroup.visible=heatNumbersVisible;if(heatNumbersVisible)refreshHeatNumbers(true)}if(e.code==='KeyV'){scpRayGizmos=!scpRayGizmos;setAIFOVVisible(scpRayGizmos);scpChainViz.visible=false;scpSteeringViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPRayGizmos(bad);else{clearSCPRayViz();scpRayViz.visible=false}}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyV'){scpRayGizmos=!scpRayGizmos;setAIFOVVisible(scpRayGizmos);scpChainViz.visible=false;scpSteeringViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPRayGizmos(bad);else{clearSCPRayViz();scpRayViz.visible=false}}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -756,73 +700,22 @@ function refreshHeatNumbers(force=false){
  }
 }
 
-function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
- const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
- // A simple geometric heatmap guides SCP and zombies; solid AABB-stamped cells are excluded.
- const flow=sampleSCPFlow(obj,tx,tz),dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- if(flow?.atGoal){velocity.multiplyScalar(Math.exp(-10*Math.max(dt,.001)));moveDir.copy(velocity);return false}
- if(!flow&&navReady){
-  // The straight-line heatmap can reach a local minimum at a wall corner.
-  // Fall back to 360-degree AABB score steering instead of braking forever.
-  velocity.multiplyScalar(Math.exp(-3*Math.max(dt,.001)));
-  const moved=scoreDirectionMove(obj,tx,tz,speed,dt,r);
-  if(moved){
-   const sx=ud.moveDir?.x||ud.scoreSteerX||0,sz=ud.moveDir?.z||ud.scoreSteerZ||0;
-   velocity.x=sx*speed;velocity.z=sz*speed;moveDir.copy(velocity);
-  }else moveDir.copy(velocity);
-  return moved;
- }
- const targetX=flow?flow.x:(dist>.001?dx/dist:steering.x),targetZ=flow?flow.z:(dist>.001?dz/dist:steering.z);
- const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-9*Math.max(0,dt));
- guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
- const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
- const turnRate=6.5,blend=1-Math.exp(-turnRate*Math.max(0,dt));
- steering.x+=(guide.x-steering.x)*blend;steering.z+=(guide.z-steering.z)*blend;
- const sl=Math.hypot(steering.x,steering.z);if(sl>.0001){steering.x/=sl;steering.z/=sl}
- // Continuous acceleration follows the heatmap's decreasing values.
- const acceleration=5.0,desiredVX=steering.x*speed,desiredVZ=steering.z*speed;let ax=desiredVX-velocity.x,az=desiredVZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;
- if(change>maxChange&&change>.0001){ax*=maxChange/change;az*=maxChange/change}velocity.x+=ax;velocity.z+=az;
- const nx=p.x+velocity.x*dt,nz=p.z+velocity.z*dt;
- // Final swept-AABB collision is a safety guard; route choice comes from the heatmap, not FOV.
- const segmentClear=(x0,z0,x1,z1)=>{
-  const dx=x1-x0,dz=z1-z0;
-  for(const o of solid){
-   const minX=o.x-o.w/2-r,maxX=o.x+o.w/2+r,minZ=o.z-o.d/2-r,maxZ=o.z+o.d/2+r;
-   let lo=0,hi=1;
-   if(Math.abs(dx)<1e-8){if(x0<minX||x0>maxX)continue}
-   else{let a=(minX-x0)/dx,b=(maxX-x0)/dx;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
-   if(Math.abs(dz)<1e-8){if(z0<minZ||z0>maxZ)continue}
-   else{let a=(minZ-z0)/dz,b=(maxZ-z0)/dz;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
-   if(hi>=lo&&hi>=0&&lo<=1)return false;
-  }
-  return true;
- };
- if(segmentClear(p.x,p.z,nx,nz)){p.x=nx;p.z=nz;ud.steeringWallSliding=false}
- else{
-  // Try axis-separated tangential movement; never accept a step through a collider.
-  const canX=segmentClear(p.x,p.z,nx,p.z),canZ=segmentClear(p.x,p.z,p.x,nz);
-  if(canX||canZ){
-   if(canX&&canZ){const xProgress=Math.abs(velocity.x),zProgress=Math.abs(velocity.z);if(xProgress>=zProgress){p.x=nx;p.z=nz}else{p.z=nz}}
-   else if(canX)p.x=nx;
-   else p.z=nz;
-   if(!canX)velocity.x=0;if(!canZ)velocity.z=0;
-  }else{
-   // Both the forward step and its axis slides are blocked. Run the
-   // object-bound 360-degree escape scan even when the heatmap supplied a
-   // direction; a non-null heatmap vector is not proof that it is traversable.
-   const recovered=navReady&&scoreDirectionMove(obj,tx,tz,speed,dt,r);
-   if(recovered){
-    const sx=ud.moveDir?.x??ud.scoreSteerX??0,sz=ud.moveDir?.z??ud.scoreSteerZ??0;
-    velocity.x=sx*speed;velocity.z=sz*speed;
-    moveDir.copy(velocity).setY(0);ud.steeringWallSliding=true;return true;
-   }
-   velocity.multiplyScalar(Math.exp(-8*Math.max(dt,.001)));
-  }
-  ud.steeringWallSliding=true;
- }
- moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- 
- return velocity.lengthSq()>.0025;
+function followSCPVelocity(obj,tx,tz,speed,dt){
+ const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48;
+ const velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3()),scanDir=ud.aabbScanDirection||(ud.aabbScanDirection=new T.Vector3());
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
+ if(dist<.85){velocity.multiplyScalar(Math.exp(-7*Math.max(dt,.001)));moveDir.copy(velocity);return false}
+ const desiredX=dx/dist,desiredZ=dz/dist;
+ const clearDistance=(vx,vz,max)=>{let clear=0;for(let d=.18;d<=max;d+=.18){if(hit(p.x+vx*d,p.z+vz*d,r))break;clear=d}return clear};
+ let bestX=0,bestZ=0,bestScore=-Infinity;
+ const headings=ud.aabbHeadings||(ud.aabbHeadings=Array.from({length:72},(_,i)=>i*Math.PI/36));
+ for(const a of headings){const vx=Math.sin(a),vz=Math.cos(a),clear=clearDistance(vx,vz,4.2);if(clear<.18)continue;const toward=vx*desiredX+vz*desiredZ;const score=toward*3.2+Math.min(clear,3.2)*1.15;if(score>bestScore){bestScore=score;bestX=vx;bestZ=vz}}
+ if(bestScore===-Infinity){velocity.multiplyScalar(Math.exp(-5*Math.max(dt,.001)));const nx=p.x+desiredX*speed*dt,nz=p.z+desiredZ*speed*dt;if(!hit(nx,p.z,r))p.x=nx;else if(!hit(p.x,nz,r))p.z=nz;moveDir.copy(velocity);return false}
+ const blend=1-Math.exp(-7*Math.max(0,dt));steering.x+=(bestX-steering.x)*blend;steering.z+=(bestZ-steering.z)*blend;const sl=Math.hypot(steering.x,steering.z);if(sl>.001){steering.x/=sl;steering.z/=sl}
+ const desiredVX=steering.x*speed,desiredVZ=steering.z*speed,accel=7*Math.max(0,dt);velocity.x+=Math.max(-accel,Math.min(accel,desiredVX-velocity.x));velocity.z+=Math.max(-accel,Math.min(accel,desiredVZ-velocity.z));
+ const mx=velocity.x*dt,mz=velocity.z*dt;
+ if(!hit(p.x+mx,p.z+mz,r)){p.x+=mx;p.z+=mz}else if(!hit(p.x+mx,p.z,r)){p.x+=mx;velocity.z*=.35}else if(!hit(p.x,p.z+mz,r)){p.z+=mz;velocity.x*=.35}else{velocity.multiplyScalar(.35);return false}
+ moveDir.copy(velocity);scanDir.set(bestX,0,bestZ);return Math.hypot(mx,mz)>.0005;
 }
 function scpTargetLOS(ax,az,bx,bz){
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
