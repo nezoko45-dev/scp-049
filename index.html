@@ -902,8 +902,11 @@ function frame(now){
    scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt,!inFOV);
   }else{
    bad.userData.targetLOSBlocked=true;
+   // Initialize the persistent heading before reading it. On the first frame
+   // without a moving target, steeringVector may not exist yet.
+   const idleHeading=bad.userData.steeringVector||(bad.userData.steeringVector=new T.Vector3(0,0,1));
    // No moving victim is available: keep momentum and use the FOV obstacle steering.
-   scpMoved=followSCPVelocity(bad,bad.position.x+bad.userData.steeringVector.x*12,bad.position.z+bad.userData.steeringVector.z*12,3.2,dt,true);
+   scpMoved=followSCPVelocity(bad,bad.position.x+idleHeading.x*12,bad.position.z+idleHeading.z*12,3.2,dt,true);
   }
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
