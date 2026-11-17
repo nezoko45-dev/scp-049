@@ -754,15 +754,31 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const acceleration=5.0,desiredVX=steering.x*speed,desiredVZ=steering.z*speed;let ax=desiredVX-velocity.x,az=desiredVZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;
  if(change>maxChange&&change>.0001){ax*=maxChange/change;az*=maxChange/change}velocity.x+=ax;velocity.z+=az;
  const nx=p.x+velocity.x*dt,nz=p.z+velocity.z*dt;
- // Final short swept raycast prevents tunneling between steering updates.
- const finalObstacles=ud.fovObstacles||[];
- const finalBlocked=finalObstacles.some(o=>nx>=o.x-o.w/2-r&&nx<=o.x+o.w/2+r&&nz>=o.z-o.d/2-r&&nz<=o.z+o.d/2+r);
- if(!finalBlocked){p.x=nx;p.z=nz;ud.steeringWallSliding=false}
+ // Physical collision is independent of FOV: sweep the full SCP body segment
+ // against EVERY solid AABB so momentum cannot carry him through a wall.
+ const segmentClear=(x0,z0,x1,z1)=>{
+  const dx=x1-x0,dz=z1-z0;
+  for(const o of solid){
+   const minX=o.x-o.w/2-r,maxX=o.x+o.w/2+r,minZ=o.z-o.d/2-r,maxZ=o.z+o.d/2+r;
+   let lo=0,hi=1;
+   if(Math.abs(dx)<1e-8){if(x0<minX||x0>maxX)continue}
+   else{let a=(minX-x0)/dx,b=(maxX-x0)/dx;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
+   if(Math.abs(dz)<1e-8){if(z0<minZ||z0>maxZ)continue}
+   else{let a=(minZ-z0)/dz,b=(maxZ-z0)/dz;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
+   if(hi>=lo&&hi>=0&&lo<=1)return false;
+  }
+  return true;
+ };
+ if(segmentClear(p.x,p.z,nx,nz)){p.x=nx;p.z=nz;ud.steeringWallSliding=false}
  else{
-  // Deflect along the clearest side ray while preserving most of the current speed.
-  const open=candidates.filter(c=>c.length>.22).sort((a,b)=>b.score-a.score)[0];
-  if(open){const moveSpeed=Math.max(.65,Math.min(speed,vLen||speed)),step=moveSpeed*dt;p.x+=open.x*step;p.z+=open.z*step;velocity.set(open.x*moveSpeed,0,open.z*moveSpeed);steering.set(open.x,0,open.z)}
-  else velocity.multiplyScalar(Math.exp(-.9*dt));
+  // Try axis-separated tangential movement; never accept a step through a collider.
+  const canX=segmentClear(p.x,p.z,nx,p.z),canZ=segmentClear(p.x,p.z,p.x,nz);
+  if(canX||canZ){
+   if(canX&&canZ){const xProgress=Math.abs(velocity.x),zProgress=Math.abs(velocity.z);if(xProgress>=zProgress){p.x=nx;p.z=nz}else{p.z=nz}}
+   else if(canX)p.x=nx;
+   else p.z=nz;
+   if(!canX)velocity.x=0;if(!canZ)velocity.z=0;
+  }else{velocity.multiplyScalar(Math.exp(-8*Math.max(dt,.001)))}
   ud.steeringWallSliding=true;
  }
  moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
