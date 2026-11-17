@@ -537,7 +537,7 @@ function gradientSCP(x,z){
 // Continuous velocity follower: SCP advances through particle waypoints in order.
 // No direct moveTo, raycasts, A*, Dijkstra, or flowfield movement.
 function followSCPParticleVelocity(obj,tx,tz,speed,dt){
- const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3());
+ const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  const route=ud.particleRoute,oldX=ud.particleTargetX,oldZ=ud.particleTargetZ;
  if(!route?.length||Math.hypot(tx-(oldX??tx),tz-(oldZ??tz))>1.15||ud.particleRouteBlocked||ud.particleIndex>=route.length)buildSCPParticleRoute(obj,tx,tz,r);
  const path=ud.particleRoute||[];
@@ -554,7 +554,7 @@ function followSCPParticleVelocity(obj,tx,tz,speed,dt){
  const nx=p.x+velocity.x*dt,nz=p.z+velocity.z*dt;let clear=true;
  for(let q=1;q<=5;q++){const t=q/5,x=p.x+(nx-p.x)*t,z=p.z+(nz-p.z)*t;if(scpGroundScore(x,z,r)!==1||hit(x,z,r)){clear=false;break}}
  if(!clear){velocity.set(0,0,0);ud.particleRouteBlocked=true;return false}
- p.x=nx;p.z=nz;ud.moveDir.copy(velocity).setY(0);obj.rotation.y=Math.atan2(velocity.x,velocity.z);
+ p.x=nx;p.z=nz;moveDir.copy(velocity).setY(0);obj.rotation.y=Math.atan2(velocity.x,velocity.z);
  if(performance.now()-(ud.particleGizmoAt||0)>100){ud.particleGizmoAt=performance.now();drawSCPParticleGizmos(obj)}
  return velocity.lengthSq()>.0025;
 }
