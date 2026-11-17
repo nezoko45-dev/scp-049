@@ -678,43 +678,38 @@ function drawSCPSteeringVectors(obj){
 const scpFlowCache=new Map();
 function buildSCPFlowField(goalX=null,goalZ=null){
  if(!navReady||!navData?.grid||!navData.origin)return null;
- const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,revision=navData.revision||0,now=performance.now();
- // When a victim is selected, build the field backward from that victim.
- // With no victim, retain the map-wide exploration field.
- const goal=Number.isFinite(goalX)&&Number.isFinite(goalZ)?nearestOpen(goalX,goalZ):null,goalKey=goal?(goal.x+','+goal.z):'explore',cacheKey=revision+':'+goalKey,old=scpFlowCache.get(cacheKey);
+ const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,revision=navData.revision||0;
+ const goal=Number.isFinite(goalX)&&Number.isFinite(goalZ)?nearestOpen(goalX,goalZ):null;
+ const goalKey=goal?(goal.x+','+goal.z):'explore',cacheKey=revision+':'+goalKey,old=scpFlowCache.get(cacheKey);
  if(old&&old.W===W&&old.H===H)return old;
  const distance=new Float32Array(N);distance.fill(Infinity);
- const dirX=new Float32Array(N),dirZ=new Float32Array(N),heap=[],costs=[];
- const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
- const push=(k,v)=>{let i=heap.length;heap.push(k);costs.push(v);while(i>0){let p=(i-1)>>1;if(costs[p]<=v)break;heap[i]=heap[p];costs[i]=costs[p];i=p;heap[i]=k;costs[i]=v}};
- const pop=()=>{const k=heap[0],v=costs[0],lk=heap.pop(),lv=costs.pop();if(heap.length){let i=0;heap[0]=lk;costs[0]=lv;for(;;){let l=i*2+1,r=l+1,b=i;if(l<heap.length&&costs[l]<costs[b])b=l;if(r<heap.length&&costs[r]<costs[b])b=r;if(b===i)break;[heap[i],heap[b]]=[heap[b],heap[i]];[costs[i],costs[b]]=[costs[b],costs[i]];i=b}}return [k,v]};
- // Label every connected walkable island. Streamed facility chunks can have
- // mismatched doorway openings, so a single far-edge seed can leave SCP's room
- // completely unreachable. Each component gets a source along its own +Z edge.
- const component=new Int32Array(N);component.fill(-1);const componentMaxZ=[],queue=new Int32Array(N);let componentCount=0;
+ const dirX=new Float32Array(N),dirZ=new Float32Array(N);
+ const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+ const gx=goal?goal.x:(W>>1),gz=goal?goal.z:(H>>1);
+ // Simple geometric heatmap: values are straight-line cell distance to the
+ // destination. No Dijkstra, flood fill, graph traversal, or path solver.
+ // Walkability comes from facility cell scores, which are stamped using the
+ // actual solid-object AABBs in rebuildFacilityScoreMap().
  for(let z=0;z<H;z++)for(let x=0;x<W;x++){
-  const start=z*W+x;if(!g[z]?.[x]||component[start]!==-1)continue;
-  const id=componentCount++;let head=0,tail=0,maxZ=z;queue[tail++]=start;component[start]=id;
-  while(head<tail){const k=queue[head++],cx=k%W,cz=Math.floor(k/W);if(cz>maxZ)maxZ=cz;
-   for(const [dx,dz] of dirs){const nx=cx+dx,nz=cz+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[cz]?.[nx]||!g[nz]?.[cx]))continue;const nk=nz*W+nx;if(component[nk]!==-1)continue;component[nk]=id;queue[tail++]=nk}
+  if(!g[z]?.[x])continue;
+  const k=z*W+x;distance[k]=goal?Math.hypot(x-gx,z-gz):Math.hypot(x-gx,z-gz);
+ }
+ // Each cell points to the neighboring walkable cell with the lowest
+ // geometric heat value. Diagonal moves are rejected if either side cell
+ // is blocked, so the agent cannot squeeze through blocked corners.
+ for(let z=0;z<H;z++)for(let x=0;x<W;x++){
+  const k=z*W+x;if(!Number.isFinite(distance[k])||distance[k]===0)continue;
+  let best=distance[k],bx=0,bz=0;
+  for(const [dx,dz] of dirs){
+   const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;
+   if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;
+   const nd=distance[nz*W+nx];
+   if(nd<best-1e-4){best=nd;bx=dx;bz=dz}
   }
-  componentMaxZ[id]=maxZ;
- }
- if(!componentCount)return null;
- const goalComponent=goal?component[goal.z*W+goal.x]:-1;
- if(goal&&goalComponent>=0){const k=goal.z*W+goal.x;distance[k]=0;push(k,0)}
- else if(!goal)for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x,id=component[k];if(id>=0&&z===componentMaxZ[id]){distance[k]=0;push(k,0)}}
- while(heap.length){const [k,d]=pop();if(d!==distance[k])continue;const x=k%W,z=Math.floor(k/W);
-  for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
- }
- for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x;if(!g[z]?.[x]||!Number.isFinite(distance[k])||distance[k]===0)continue;let best=distance[k],bx=0,bz=0;
-  // Dijkstra already includes the movement cost in each distance. Select the
-  // neighboring cell with the strictly lower accumulated distance; adding the
-  // edge cost again here cancels the gradient and leaves every direction zero.
-  for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx];if(nd<best-1e-4){best=nd;bx=dx;bz=dz}}
   const len=Math.hypot(bx,bz);if(len){dirX[k]=bx/len;dirZ[k]=bz/len}
  }
- const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,componentCount,revision,goalKey,distance,dirX,dirZ,builtAt:now};scpFlowCache.set(cacheKey,field);while(scpFlowCache.size>8)scpFlowCache.delete(scpFlowCache.keys().next().value);return field;
+ const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,revision,goalKey,distance,dirX,dirZ,builtAt:performance.now()};
+ scpFlowCache.set(cacheKey,field);while(scpFlowCache.size>8)scpFlowCache.delete(scpFlowCache.keys().next().value);return field;
 }
 function sampleSCPFlow(obj,goalX=null,goalZ=null){
  const f=buildSCPFlowField(goalX,goalZ);if(!f)return null;
@@ -763,7 +758,7 @@ function refreshHeatNumbers(force=false){
 
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
- // The distance-field heatmap is the navigation authority for SCP and zombies.
+ // A simple geometric heatmap guides SCP and zombies; solid AABB-stamped cells are excluded.
  const flow=sampleSCPFlow(obj,tx,tz),dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
  if(flow?.atGoal){velocity.multiplyScalar(Math.exp(-10*Math.max(dt,.001)));moveDir.copy(velocity);return false}
  if(!flow&&navReady){velocity.multiplyScalar(Math.exp(-7*Math.max(dt,.001)));moveDir.copy(velocity);return false}
