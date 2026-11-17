@@ -626,21 +626,41 @@ function drawSCPSteeringVectors(obj){
 function followSCPVelocity(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),targetX=dist>.001?dx/dist:0,targetZ=dist>.001?dz/dist:0,vLen=Math.hypot(velocity.x,velocity.z),momentumX=vLen>.05?velocity.x/vLen:targetX,momentumZ=vLen>.05?velocity.z/vLen:targetZ;
- const rayLength=3.6,rayStep=.36,raySteps=Math.ceil(rayLength/rayStep);let best=null,bestScore=-Infinity;const candidates=[],phase=ud.steeringPhase||0;
- for(let i=0;i<34;i++){const angle=phase+i*(Math.PI*2/34),vx=Math.cos(angle),vz=Math.sin(angle);let clearDistance=rayLength,blocked=false;
+ const rayLength=3.6,rayStep=.3,raySteps=Math.ceil(rayLength/rayStep),candidates=[],phase=ud.steeringPhase||0;
+ let directClear=rayLength;
+ for(let k=1;k<=raySteps;k++){const d=Math.min(rayLength,k*rayStep);if(hit(p.x+targetX*d,p.z+targetZ*d,r)){directClear=d-rayStep;break}}
+ const obstacleAhead=directClear<rayLength;
+ let best=null,bestScore=-Infinity;
+ for(let i=0;i<34;i++){
+  const angle=phase+i*(Math.PI*2/34),vx=Math.cos(angle),vz=Math.sin(angle);let clearDistance=rayLength,blocked=false;
   for(let k=1;k<=raySteps;k++){const d=Math.min(rayLength,k*rayStep);if(hit(p.x+vx*d,p.z+vz*d,r)){clearDistance=d-rayStep;blocked=true;break}}
-  clearDistance=Math.max(0,clearDistance);const alignment=vx*targetX+vz*targetZ,momentum=vx*momentumX+vz*momentumZ,score=clearDistance*2.4+alignment*1.65+momentum*.65-(blocked?.35:0);
+  clearDistance=Math.max(0,clearDistance);
+  const alignment=vx*targetX+vz*targetZ,momentum=vx*momentumX+vz*momentumZ,score=alignment*4.2+clearDistance*1.35+momentum*.45-(blocked?.5:0);
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:!blocked,score,selected:false};candidates.push(c);if(score>bestScore){bestScore=score;best=c}
  }
- if(best){best.selected=true;ud.steeringCandidates=candidates;const blend=1-Math.exp(-4*Math.max(0,dt));steering.x+=(best.x-steering.x)*blend;steering.z+=(best.z-steering.z)*blend;const sl=Math.hypot(steering.x,steering.z);if(sl>.0001){steering.x/=sl;steering.z/=sl}}
- const acceleration=6.2,desiredVX=steering.x*speed,desiredVZ=steering.z*speed;let ax=desiredVX-velocity.x,az=desiredVZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;if(change>maxChange&&change>.0001){ax*=maxChange/change;az*=maxChange/change}velocity.x+=ax;velocity.z+=az;
+ let desiredX=targetX,desiredZ=targetZ;
+ if(obstacleAhead&&best){best.selected=true;desiredX=best.x;desiredZ=best.z}
+ ud.steeringCandidates=candidates;
+ const blend=1-Math.exp(-(obstacleAhead?5.2:3.2)*Math.max(0,dt));
+ steering.x+=(desiredX-steering.x)*blend;steering.z+=(desiredZ-steering.z)*blend;
+ const sl=Math.hypot(steering.x,steering.z);if(sl>.0001){steering.x/=sl;steering.z/=sl}
+ const acceleration=6.2,desiredVX=steering.x*speed,desiredVZ=steering.z*speed;let ax=desiredVX-velocity.x,az=desiredVZ-velocity.z,change=Math.hypot(ax,az),maxChange=acceleration*dt;
+ if(change>maxChange&&change>.0001){ax*=maxChange/change;az*=maxChange/change}velocity.x+=ax;velocity.z+=az;
  const nx=p.x+velocity.x*dt,nz=p.z+velocity.z*dt,clear=(x,z)=>scpGroundScore(x,z,r)===1&&!hit(x,z,r);
- if(clear(nx,nz)){p.x=nx;p.z=nz;ud.steeringWallSliding=false}else{const xClear=clear(nx,p.z),zClear=clear(p.x,nz);
+ if(clear(nx,nz)){p.x=nx;p.z=nz;ud.steeringWallSliding=false}
+ else{
+  const xClear=clear(nx,p.z),zClear=clear(p.x,nz);
   if(xClear||zClear){if(xClear&&zClear){p.x=nx;p.z=nz}else if(xClear){p.x=nx;velocity.z*=.35;steering.z*=.35}else{p.z=nz;velocity.x*=.35;steering.x*=.35}ud.steeringWallSliding=true}
-  else{const open=candidates.filter(c=>c.clear).sort((a,b)=>b.score-a.score)[0];if(open){const step=Math.max(.025,Math.min(speed,Math.max(.65,vLen))*dt),moveSpeed=Math.min(speed,Math.max(.65,vLen));p.x+=open.x*step;p.z+=open.z*step;velocity.set(open.x*moveSpeed,0,open.z*moveSpeed);steering.set(open.x,0,open.z)}else velocity.multiplyScalar(Math.exp(-1.1*dt));ud.steeringWallSliding=true}
+  else{
+   const open=candidates.filter(c=>c.clear).sort((x,y)=>y.score-x.score)[0];
+   if(open){const step=Math.max(.025,Math.min(speed,Math.max(.65,vLen))*dt),moveSpeed=Math.min(speed,Math.max(.65,vLen));p.x+=open.x*step;p.z+=open.z*step;velocity.set(open.x*moveSpeed,0,open.z*moveSpeed);steering.set(open.x,0,open.z)}
+   else velocity.multiplyScalar(Math.exp(-1.1*dt));
+   ud.steeringWallSliding=true;
+  }
  }
  moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- if(scpRayGizmos&&performance.now()-(ud.steeringGizmoAt||0)>100){ud.steeringGizmoAt=performance.now();drawSCPSteeringVectors(obj)}return velocity.lengthSq()>.0025;
+ if(scpRayGizmos&&performance.now()-(ud.steeringGizmoAt||0)>100){ud.steeringGizmoAt=performance.now();drawSCPSteeringVectors(obj)}
+ return velocity.lengthSq()>.0025;
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
