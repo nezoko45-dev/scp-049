@@ -707,7 +707,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
  if(dist<.85){velocity.multiplyScalar(Math.exp(-8*Math.max(dt,.001)));moveDir.copy(velocity);return false}
  const desiredX=dx/dist,desiredZ=dz/dist;
  const segmentClear=(x,z,dx,dz)=>{const len=Math.hypot(dx,dz),steps=Math.max(1,Math.ceil(len/.08));for(let i=1;i<=steps;i++){const t=i/steps;if(hit(x+dx*t,z+dz*t,r))return false}return true};
- const clearDistance=(vx,vz,max)=>{let clear=0;for(let d=.1;d<=max;d+=.1){if(!segmentClear(p.x,p.z,vx*d,vz*d))break;clear=d}return clear};
+ const clearDistance=(vx,vz,max)=>{let clear=0;for(let d=.12;d<=max;d+=.12){if(hit(p.x+vx*d,p.z+vz*d,r))break;clear=d}return clear};
  let bestX=0,bestZ=0,bestScore=-Infinity,bestClear=0;
  const headings=ud.aabbHeadings||(ud.aabbHeadings=Array.from({length:72},(_,i)=>i*Math.PI/36));
  const oldLen=Math.hypot(steering.x,steering.z),oldX=oldLen>.001?steering.x/oldLen:desiredX,oldZ=oldLen>.001?steering.z/oldLen:desiredZ;
