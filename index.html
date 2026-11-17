@@ -72,24 +72,24 @@ let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
 const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),scpRayMatHit=new T.LineBasicMaterial({color:0xff2222,depthTest:false});
 const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.style.display='none';
-const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
+const scpSteeringViz=new T.Group();scene.add(scpSteeringViz);scpSteeringViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
-function drawSCPBreadcrumbs(obj){
- if(!scpRayGizmos){scpChainViz.visible=false;return}
- const ud=obj.userData||{},route=ud.breadcrumbRoute||[],idx=ud.breadcrumbIndex||1;
- while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}
+function drawSCPSteeringVectors(obj){
+ if(!scpRayGizmos){scpSteeringViz.visible=false;return}
+ const ud=obj.userData||{},route=ud.steeringRoute||[],idx=ud.steeringIndex||1;
+ while(scpSteeringViz.children.length){const o=scpSteeringViz.children[0];scpSteeringViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}
  if(route.length>1){
   const verts=[];for(const p of route)verts.push(p.x,1.35,p.z);
-  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpChainViz.add(new T.Line(g,scpChainMat));
-  const pg=new T.BufferGeometry();pg.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpChainViz.add(new T.Points(pg,new T.PointsMaterial({color:0xffd400,size:.19,sizeAttenuation:true,depthTest:false})));
+  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpSteeringViz.add(new T.Line(g,scpChainMat));
+  const pg=new T.BufferGeometry();pg.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpSteeringViz.add(new T.Points(pg,new T.PointsMaterial({color:0xffd400,size:.19,sizeAttenuation:true,depthTest:false})));
   const target=route[Math.min(idx,route.length-1)];
-  if(target){const tg=new T.BufferGeometry();tg.setAttribute('position',new T.Float32BufferAttribute([target.x,1.42,target.z],3));scpChainViz.add(new T.Points(tg,new T.PointsMaterial({color:0x39ff75,size:.34,sizeAttenuation:true,depthTest:false})));}
+  if(target){const tg=new T.BufferGeometry();tg.setAttribute('position',new T.Float32BufferAttribute([target.x,1.42,target.z],3));scpSteeringViz.add(new T.Points(tg,new T.PointsMaterial({color:0x39ff75,size:.34,sizeAttenuation:true,depthTest:false})));}
  }
- const v=ud.velocity;if(v&&v.lengthSq()>.0025){const p=obj.position,g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([p.x,1.55,p.z,p.x+v.x*.65,1.55,p.z+v.z*.65],3));scpChainViz.add(new T.Line(g,new T.LineBasicMaterial({color:0x00eaff,depthTest:false})));}
- scpChainViz.visible=scpRayGizmos;rayHUD.textContent='SCP BREADCRUMB TRAIL · GREEN = NEXT PARTICLE · CYAN = VELOCITY (G)';
+ const v=ud.velocity;if(v&&v.lengthSq()>.0025){const p=obj.position,g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([p.x,1.55,p.z,p.x+v.x*.65,1.55,p.z+v.z*.65],3));scpSteeringViz.add(new T.Line(g,new T.LineBasicMaterial({color:0x00eaff,depthTest:false})));}
+ scpSteeringViz.visible=scpRayGizmos;rayHUD.textContent='SCP STEERING VECTOR · GREEN = NEXT PARTICLE · CYAN = VELOCITY (G)';
 }
 // Compatibility for older steering code/cached call sites: both names resolve to the same ray-chain renderer.
-function drawSCPRayChain(obj){drawSCPBreadcrumbs(obj)}
+function drawSCPRayChain(obj){drawSCPSteeringVectors(obj)}
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 function drawSCPRayGizmos(obj,tx,tz){
@@ -116,18 +116,18 @@ function drawSCPRayGizmos(obj,tx,tz){
 
 // Continuous velocity + persistent steering-vector movement.
 // Target attraction and smooth AABB repulsion are blended every frame; no routes or waypoints.
-function drawSCPBreadcrumbs(obj){
- if(!scpRayGizmos){scpChainViz.visible=false;return}
- while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose()}
+function drawSCPSteeringVectors(obj){
+ if(!scpRayGizmos){scpSteeringViz.visible=false;return}
+ while(scpSteeringViz.children.length){const o=scpSteeringViz.children[0];scpSteeringViz.remove(o);o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose()}
  const ud=obj.userData||{},p=obj.position,v=ud.velocity,steer=ud.steeringVector;
  const add=(x,z,length,color,y)=>{
   if(!x&&!z)return;
   const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([p.x,y,p.z,p.x+x*length,y,p.z+z*length],3));
-  scpChainViz.add(new T.Line(g,new T.LineBasicMaterial({color,depthTest:false})));
+  scpSteeringViz.add(new T.Line(g,new T.LineBasicMaterial({color,depthTest:false})));
  };
  if(v)add(v.x,v.z,.8,0x00eaff,1.55);
  if(steer)add(steer.x,steer.z,1.35,0xffb52e,1.58);
- scpChainViz.visible=true;
+ scpSteeringViz.visible=true;
  rayHUD.textContent='SCP STEERING VECTOR · ORANGE = STEERING · CYAN = VELOCITY (G)';
 }
 function followSCPVelocity(obj,tx,tz,speed,dt){
@@ -203,7 +203,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
  }
  moveDir.copy(velocity).setY(0);
  if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- if(scpRayGizmos&&performance.now()-(ud.steeringGizmoAt||0)>100){ud.steeringGizmoAt=performance.now();drawSCPBreadcrumbs(obj)}
+ if(scpRayGizmos&&performance.now()-(ud.steeringGizmoAt||0)>100){ud.steeringGizmoAt=performance.now();drawSCPSteeringVectors(obj)}
  return velocity.lengthSq()>.0025;
 }
 function scpTargetLOS(ax,az,bx,bz){const cs=navData?.cellSize||1,n=Math.max(2,Math.ceil(Math.hypot(bx-ax,bz-az)/(cs*.2)));for(let k=1;k<=n;k++){const t=k/n,x=ax+(bx-ax)*t,z=az+(bz-az)*t;if(hit(x,z,.85))return false;if(navReady&&navData?.grid){const c=cellOf(x,z);if(c.x<0||c.z<0||c.x>=navData.width||c.z>=navData.height||!navData.grid[c.z]?.[c.x])return false}}return true}
@@ -223,7 +223,7 @@ function frame(now){
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
    // Zombies select a victim on an 11-second interval and use SCP's exact
-   // sequential breadcrumb-route + persistent-velocity wall-sliding controller.
+   // sequential steering-route + persistent-velocity wall-sliding controller.
    const nowZombie=now;
    if(!z.userData.targetObj||nowZombie>=z.userData.targetUntil||z.userData.targetObj.userData?.hp<=0||z.userData.targetObj.userData?.dead){
     const pool=[{kind:'player',obj:ctl.getObject()},...allies.filter(a=>a.userData.hp>0&&!a.userData.dead).map(a=>({kind:'survivor',obj:a}))];
