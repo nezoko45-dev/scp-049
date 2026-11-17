@@ -712,17 +712,6 @@ function sampleSCPFlow(obj,goalX=null,goalZ=null){
  }
  return null;
 }
-function fovSteeringClearance(obj,vx,vz,maxDistance){
- const obstacles=obj.userData.fovObstacles||[],p=obj.position,r=.62,step=.3;
- let clear=maxDistance;
- for(let d=step;d<=maxDistance;d+=step){
-  const x=p.x+vx*d,z=p.z+vz*d;
-  for(const o of obstacles){
-   if(x>=o.x-o.w/2-r&&x<=o.x+o.w/2+r&&z>=o.z-o.d/2-r&&z<=o.z+o.d/2+r){clear=Math.min(clear,d-step);return Math.max(0,clear)}
-  }
- }
- return clear;
-}
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
@@ -731,15 +720,21 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
  const vLen=Math.hypot(velocity.x,velocity.z),heading=vLen>.12?new T.Vector3(velocity.x/vLen,0,velocity.z/vLen):steering.clone().setY(0).normalize();
- // Geometric FOV obstacle steering: score candidate headings against the
- // bounding boxes SCP can currently see, rather than using flowfield arrows.
- const rayLength=6.5,candidates=[];
- scanAIFOVObstacles(obj);
+ // Keep the established obstacle-avoidance steering independent from FOV.
+ // FOV is used for target/visibility detection only.
+ if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
+ const rayLength=6.5,rayOffsets=[-r,0,r],candidates=[];
  let best=null,bestScore=-Infinity;
  for(let i=0;i<34;i++){
   const angle=(i/33-.5)*Math.PI*1.72,ca=Math.cos(angle),sa=Math.sin(angle);
   const vx=heading.x*ca-heading.z*sa,vz=heading.x*sa+heading.z*ca;
-  const clearDistance=fovSteeringClearance(obj,vx,vz,rayLength);
+  const dir=new T.Vector3(vx,0,vz),side=new T.Vector3(-vz,0,vx);let clearDistance=rayLength;
+  for(const offset of rayOffsets){
+   scpRaycaster.set(new T.Vector3(p.x+side.x*offset,1.05,p.z+side.z*offset),dir);
+   scpRaycaster.near=.08;scpRaycaster.far=rayLength;
+   const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
+   if(hits.length)clearDistance=Math.min(clearDistance,hits[0].distance);
+  }
   const guideAlign=vx*guide.x+vz*guide.z,momentum=vx*heading.x+vz*heading.z,continuity=vx*steering.x+vz*steering.z;
   const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
   const score=continuity*1.0+momentum*.6+guideAlign*(obj===bad?13.5:6.8)+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
