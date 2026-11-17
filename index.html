@@ -720,20 +720,24 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
  const vLen=Math.hypot(velocity.x,velocity.z),heading=vLen>.12?new T.Vector3(velocity.x/vLen,0,velocity.z/vLen):steering.clone().setY(0).normalize();
- // Keep the established obstacle-avoidance steering independent from FOV.
- // FOV is used for target/visibility detection only.
- if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- const rayLength=6.5,rayOffsets=[-r,0,r],candidates=[];
+ // Geometric FOV steering: only objects detected inside the 120-degree
+ // vision cone are considered when scoring possible movement directions.
+ const rayLength=6.5,candidates=[],visibleObstacles=scanAIFOVObstacles(obj);
  let best=null,bestScore=-Infinity;
  for(let i=0;i<34;i++){
   const angle=(i/33-.5)*Math.PI*1.72,ca=Math.cos(angle),sa=Math.sin(angle);
   const vx=heading.x*ca-heading.z*sa,vz=heading.x*sa+heading.z*ca;
-  const dir=new T.Vector3(vx,0,vz),side=new T.Vector3(-vz,0,vx);let clearDistance=rayLength;
-  for(const offset of rayOffsets){
-   scpRaycaster.set(new T.Vector3(p.x+side.x*offset,1.05,p.z+side.z*offset),dir);
-   scpRaycaster.near=.08;scpRaycaster.far=rayLength;
-   const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
-   if(hits.length)clearDistance=Math.min(clearDistance,hits[0].distance);
+  let clearDistance=rayLength;
+  // Test the swept body path against each visible obstacle's expanded AABB.
+  // This is pure geometry: no Three.Raycaster or navigation-grid query.
+  for(const o of visibleObstacles){
+   const minX=o.x-o.w/2-r,maxX=o.x+o.w/2+r,minZ=o.z-o.d/2-r,maxZ=o.z+o.d/2+r;
+   let tMin=0,tMax=rayLength;
+   if(Math.abs(vx)<1e-6){if(p.x<minX||p.x>maxX)continue}
+   else{let a=(minX-p.x)/vx,b=(maxX-p.x)/vx;if(a>b){const t=a;a=b;b=t}tMin=Math.max(tMin,a);tMax=Math.min(tMax,b)}
+   if(Math.abs(vz)<1e-6){if(p.z<minZ||p.z>maxZ)continue}
+   else{let a=(minZ-p.z)/vz,b=(maxZ-p.z)/vz;if(a>b){const t=a;a=b;b=t}tMin=Math.max(tMin,a);tMax=Math.min(tMax,b)}
+   if(tMax>=tMin&&tMax>=0&&tMin<clearDistance)clearDistance=Math.max(0,tMin);
   }
   const guideAlign=vx*guide.x+vz*guide.z,momentum=vx*heading.x+vz*heading.z,continuity=vx*steering.x+vz*steering.z;
   const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
@@ -751,7 +755,9 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  if(change>maxChange&&change>.0001){ax*=maxChange/change;az*=maxChange/change}velocity.x+=ax;velocity.z+=az;
  const nx=p.x+velocity.x*dt,nz=p.z+velocity.z*dt;
  // Final short swept raycast prevents tunneling between steering updates.
- if(scpRayClearSegment(p.x,p.z,nx,nz,r)){p.x=nx;p.z=nz;ud.steeringWallSliding=false}
+ const finalObstacles=ud.fovObstacles||[];
+ const finalBlocked=finalObstacles.some(o=>nx>=o.x-o.w/2-r&&nx<=o.x+o.w/2+r&&nz>=o.z-o.d/2-r&&nz<=o.z+o.d/2+r);
+ if(!finalBlocked){p.x=nx;p.z=nz;ud.steeringWallSliding=false}
  else{
   // Deflect along the clearest side ray while preserving most of the current speed.
   const open=candidates.filter(c=>c.length>.22).sort((a,b)=>b.score-a.score)[0];
