@@ -92,11 +92,11 @@ function drawSCPBreadcrumbs(obj){
 function drawSCPRayChain(obj){drawSCPBreadcrumbs(obj)}
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
-function drawSCPRayGizmos(obj){
+function drawSCPRayGizmos(obj,goalX=null,goalZ=null){
  if(!scpRayGizmos)return;
  clearSCPRayViz();
  try{
-  const f=buildSCPFlowField();
+  const f=buildSCPFlowField(goalX,goalZ);
   if(!f){rayHUD.textContent='FLOWFIELD ERROR: NAV GRID HAS NO WALKABLE CELLS';return}
   const cx=Math.floor((obj.position.x-f.ox)/f.cs),cz=Math.floor((obj.position.z-f.oz)/f.cs);
   const radius=Math.ceil(48/f.cs),stride=3,segments=[];
@@ -642,10 +642,13 @@ function drawSCPSteeringVectors(obj){
  scpSteeringViz.visible=true;rayHUD.textContent='34 STEERING VECTORS · GREEN = CLEAR · RED = BLOCKED · ORANGE = SELECTED (G)';
 }
 
-function buildSCPFlowField(){
+function buildSCPFlowField(goalX=null,goalZ=null){
  if(!navReady||!navData?.grid||!navData.origin)return null;
- const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,revision=navData.revision||0,now=performance.now(),old=bad.userData.flowField;
- if(old&&old.revision===revision&&old.W===W&&old.H===H)return old;
+ const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,revision=navData.revision||0,now=performance.now();
+ // When a victim is selected, build the field backward from that victim.
+ // With no victim, retain the map-wide exploration field.
+ const goal=Number.isFinite(goalX)&&Number.isFinite(goalZ)?nearestOpen(goalX,goalZ):null,goalKey=goal?(goal.x+','+goal.z):'explore',old=bad.userData.flowField;
+ if(old&&old.revision===revision&&old.W===W&&old.H===H&&old.goalKey===goalKey)return old;
  const distance=new Float32Array(N);distance.fill(Infinity);
  const dirX=new Float32Array(N),dirZ=new Float32Array(N),heap=[],costs=[];
  const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
@@ -664,7 +667,8 @@ function buildSCPFlowField(){
   componentMaxZ[id]=maxZ;
  }
  if(!componentCount)return null;
- for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x,id=component[k];if(id>=0&&z===componentMaxZ[id]){distance[k]=0;push(k,0)}}
+ if(goal&&component[goal.z*W+goal.x]>=0){const k=goal.z*W+goal.x;distance[k]=0;push(k,0)}
+ else for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x,id=component[k];if(id>=0&&z===componentMaxZ[id]){distance[k]=0;push(k,0)}}
  while(heap.length){const [k,d]=pop();if(d!==distance[k])continue;const x=k%W,z=Math.floor(k/W);
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
  }
@@ -675,10 +679,10 @@ function buildSCPFlowField(){
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx];if(nd<best-1e-4){best=nd;bx=dx;bz=dz}}
   const len=Math.hypot(bx,bz);if(len){dirX[k]=bx/len;dirZ[k]=bz/len}
  }
- const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,componentCount,revision,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
+ const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,componentCount,revision,goalKey,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
 }
-function sampleSCPFlow(obj){
- const f=buildSCPFlowField();if(!f)return null;
+function sampleSCPFlow(obj,goalX=null,goalZ=null){
+ const f=buildSCPFlowField(goalX,goalZ);if(!f)return null;
  const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs);
  if(x<0||z<0||x>=f.W||z>=f.H)return null;
  // SCP can stand on a blocked edge of a cell. Sample the closest reachable
@@ -699,7 +703,7 @@ function sampleSCPFlow(obj){
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
- const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=obj===bad?sampleSCPFlow(obj):null,targetX=flow?flow.x:(obj===bad||losBlocked||dist<=.001?steering.x:dx/dist),targetZ=flow?flow.z:(obj===bad||losBlocked||dist<=.001?steering.z:dz/dist);
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=obj===bad?sampleSCPFlow(obj,tx,tz):null,targetX=flow?flow.x:(obj===bad||losBlocked||dist<=.001?steering.x:dx/dist),targetZ=flow?flow.z:(obj===bad||losBlocked||dist<=.001?steering.z:dz/dist);
  const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-7.5*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
@@ -748,7 +752,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
   ud.steeringWallSliding=true;
  }
  moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- if(obj===bad&&scpRayGizmos&&performance.now()-(ud.flowGizmoAt||0)>700){ud.flowGizmoAt=performance.now();drawSCPRayGizmos(obj)}
+ if(obj===bad&&scpRayGizmos&&performance.now()-(ud.flowGizmoAt||0)>700){ud.flowGizmoAt=performance.now();drawSCPRayGizmos(obj,tx,tz)}
  return velocity.lengthSq()>.0025;
 }
 function scpTargetLOS(ax,az,bx,bz){
