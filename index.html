@@ -128,40 +128,43 @@ function breadcrumbSegmentClear(ax,az,bx,bz,r=.48){
 // Simple greedy breadcrumb generation: walk toward the target and add a
 // collision-checked detour breadcrumb only when the direct segment is blocked.
 function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
- const p=obj.position,step=.9,maxBreadcrumbs=120,route=[{x:p.x,z:p.z}],visited=[];
- let x=p.x,z=p.z,previousX=0,previousZ=0;
+ const p=obj.position,step=.85,maxBreadcrumbs=420,route=[{x:p.x,z:p.z}],visited=[];
+ let x=p.x,z=p.z,prevX=0,prevZ=0,stalled=0;
  for(let n=0;n<maxBreadcrumbs;n++){
   const dx=tx-x,dz=tz-z,remaining=Math.hypot(dx,dz);
-  if(remaining<.32)break;
-  const ux=dx/remaining,uz=dz/remaining,distance=Math.min(step,remaining);
-  const directX=x+ux*distance,directZ=z+uz*distance;
-  if(breadcrumbClear(directX,directZ,r)&&breadcrumbSegmentClear(x,z,directX,directZ,r)){
-   x=directX;z=directZ;route.push({x,z});previousX=ux;previousZ=uz;
-   if(distance>=remaining-.001)break;
-   continue;
+  if(remaining<.3)break;
+  // If the complete remaining corridor is clear, connect straight to target.
+  if(breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(x,z,tx,tz,r)){
+   route.push({x:tx,z:tz});x=tx;z=tz;break;
   }
+  const ux=dx/remaining,uz=dz/remaining;
   let best=null,bestScore=Infinity;
-  // Try short angular offsets around the target heading; no beam search/tree.
-  for(const degrees of [25,-25,45,-45,65,-65,90,-90,115,-115,140,-140,165,-165,180]){
+  // Try target-facing headings first, then progressively wider detours.
+  for(const degrees of [0,15,-15,30,-30,45,-45,60,-60,75,-75,90,-90,110,-110,130,-130,150,-150,180]){
    const a=Math.atan2(ux,uz)+degrees*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
-   const nx=x+vx*step,nz=z+vz*step;
+   const nx=x+vx*step,nz=z+vz*step,nd=Math.hypot(tx-nx,tz-nz);
    if(!breadcrumbClear(nx,nz,r)||!breadcrumbSegmentClear(x,z,nx,nz,r))continue;
-   if(visited.some(q=>Math.hypot(q.x-nx,q.z-nz)<.62))continue;
-   const turn=previousX||previousZ?1-(vx*previousX+vz*previousZ):0;
+   if(visited.some(q=>Math.hypot(q.x-nx,q.z-nz)<.7))continue;
+   // Permit a small temporary increase in distance to get around a corner,
+   // but reject large backward steps so the trail keeps progressing to target.
+   if(nd>remaining+.42)continue;
    let clearance=2.5;
    for(const o of solid){
-    const gap=Math.hypot(Math.max(0,Math.abs(nx-o.x)-o.w/2),Math.max(0,Math.abs(nz-o.z)-o.d/2));
-    clearance=Math.min(clearance,gap);
+    const gx=Math.max(0,Math.abs(nx-o.x)-o.w/2-r);
+    const gz=Math.max(0,Math.abs(nz-o.z)-o.d/2-r);
+    clearance=Math.min(clearance,Math.hypot(gx,gz));
    }
-   const score=Math.hypot(tx-nx,tz-nz)+turn*.42-Math.min(clearance,2)*.1;
-   if(score<bestScore){bestScore=score;best={x:nx,z:nz,dx:vx,dz:vz}}
+   const turn=(prevX||prevZ)?1-(vx*prevX+vz*prevZ):0;
+   const progress=remaining-nd;
+   const score=nd+turn*.22-Math.min(clearance,1.5)*.08+(progress<.02?.18:0);
+   if(score<bestScore){bestScore=score;best={x:nx,z:nz,dx:vx,dz:vz,progress}}
   }
-  if(!best)break;
-  x=best.x;z=best.z;previousX=best.dx;previousZ=best.dz;
+  if(!best){stalled++;break}
+  if(best.progress<.025)stalled++;else stalled=0;
+  if(stalled>8)break;
+  x=best.x;z=best.z;prevX=best.dx;prevZ=best.dz;
   route.push({x,z});visited.push({x,z});
  }
- const end=route[route.length-1];
- if(Math.hypot(tx-end.x,tz-end.z)<step*1.35&&breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(end.x,end.z,tx,tz,r))route.push({x:tx,z:tz});
  const ud=obj.userData;
  ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=false;
  drawSCPBreadcrumbs(obj);return route;
