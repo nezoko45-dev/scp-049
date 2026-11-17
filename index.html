@@ -761,14 +761,27 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
    if(tMax>=tMin&&tMax>=0&&tMin<clearDistance)clearDistance=Math.max(0,tMin);
   }
   const guideAlign=vx*guide.x+vz*guide.z,momentum=vx*heading.x+vz*heading.z,continuity=vx*steering.x+vz*steering.z;
-  const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
-  const score=continuity*1.0+momentum*.6+guideAlign*(obj===bad?13.5:6.8)+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
+  const obstacleUrgency=Math.max(0,(AI_FOV_RANGE-clearDistance)/AI_FOV_RANGE);
+  // FOV contact repulsion applies even when an obstacle is beside (not
+  // directly intersecting) this candidate's swept path.
+  let contactPenalty=0;
+  for(const o of visibleObstacles){
+   const ox=Math.max(o.x-o.w/2,Math.min(p.x,o.x+o.w/2))-p.x;
+   const oz=Math.max(o.z-o.d/2,Math.min(p.z,o.z+o.d/2))-p.z;
+   const od=Math.hypot(ox,oz);if(od<.001||od>=AI_FOV_RANGE)continue;
+   const toward=(vx*ox+vz*oz)/od;
+   if(toward>0){
+    const proximity=Math.pow(1-od/AI_FOV_RANGE,.55);
+    contactPenalty+=proximity*34*toward*toward;
+   }
+  }
+  const score=continuity*1.0+momentum*.6+guideAlign*(obj===bad?13.5:6.8)+(clearDistance/rayLength)*.35-obstacleUrgency*13.0-contactPenalty;
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:clearDistance>=rayLength-.01,score,selected:false};candidates.push(c);
   if(score>bestScore){bestScore=score;best=c}
  }
  if(best)best.selected=true;ud.steeringCandidates=candidates;
  // Smoothly turn persistent steering toward the best ray, never teleport the heading.
- const desiredX=best?.x??guide.x,desiredZ=best?.z??guide.z,turnRate=(obj===bad?3.8:2.1)+Math.max(0,3.2-(best?.length||0))*.65,blend=1-Math.exp(-turnRate*Math.max(0,dt));
+ const desiredX=best?.x??guide.x,desiredZ=best?.z??guide.z,turnRate=(obj===bad?5.2:3.6)+Math.max(0,AI_FOV_RANGE-(best?.length||0))*.12,blend=1-Math.exp(-turnRate*Math.max(0,dt));
  steering.x+=(desiredX-steering.x)*blend;steering.z+=(desiredZ-steering.z)*blend;
  const sl=Math.hypot(steering.x,steering.z);if(sl>.0001){steering.x/=sl;steering.z/=sl}
  // Continuous acceleration: preserve forward velocity and only curve it as steering changes.
