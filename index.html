@@ -652,7 +652,7 @@ function sampleSCPFlow(obj){
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
- const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=obj===bad?sampleSCPFlow(obj):null,targetX=flow?flow.x:(!losBlocked&&dist>.001?dx/dist:steering.x),targetZ=flow?flow.z:(!losBlocked&&dist>.001?dz/dist:steering.z);
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=obj===bad?sampleSCPFlow(obj):null,targetX=flow?flow.x:(obj===bad||losBlocked||dist<=.001?steering.x:dx/dist),targetZ=flow?flow.z:(obj===bad||losBlocked||dist<=.001?steering.z:dz/dist);
  const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-2.8*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
