@@ -94,21 +94,28 @@ const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 function drawSCPRayGizmos(obj){
  if(!scpRayGizmos)return;clearSCPRayViz();
- const f=buildSCPFlowField();if(!f)return;
- const step=10,markers=[];
- for(let z=1;z<f.H-1;z+=step)for(let x=1;x<f.W-1;x+=step){
+ const f=buildSCPFlowField();if(!f){rayHUD.textContent='FLOWFIELD WAITING FOR NAV GRID';return}
+ // Keep the gizmos concentrated around SCP so they remain large and visible.
+ const cx=Math.floor((obj.position.x-f.ox)/f.cs),cz=Math.floor((obj.position.z-f.oz)/f.cs),radius=34,step=3,markers=[];
+ for(let z=Math.max(1,cz-radius);z<Math.min(f.H-1,cz+radius);z+=step)for(let x=Math.max(1,cx-radius);x<Math.min(f.W-1,cx+radius);x+=step){
   const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];if((!dx&&!dz)||!Number.isFinite(f.distance[i]))continue;
   markers.push({x:f.ox+(x+.5)*f.cs,z:f.oz+(z+.5)*f.cs,dx,dz});
  }
  if(markers.length){
-  const geo=new T.ConeGeometry(.13,.42,5),mat=new T.MeshBasicMaterial({color:0x24e8ff,depthTest:false});
+  const geo=new T.ConeGeometry(.24,.72,6),mat=new T.MeshBasicMaterial({color:0x00eaff,depthTest:false,toneMapped:false});
   const mesh=new T.InstancedMesh(geo,mat,markers.length),dummy=new T.Object3D(),up=new T.Vector3(0,1,0);
-  markers.forEach((m,i)=>{dummy.position.set(m.x,.34,m.z);dummy.quaternion.setFromUnitVectors(up,new T.Vector3(m.dx,0,m.dz));dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix)});
+  markers.forEach((m,i)=>{
+   dummy.position.set(m.x,.72,m.z);
+   dummy.quaternion.setFromUnitVectors(up,new T.Vector3(m.dx,0,m.dz));
+   dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
+  });
   mesh.instanceMatrix.needsUpdate=true;mesh.frustumCulled=false;scpRayViz.add(mesh);
  }
- const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs);
- if(x>=0&&z>=0&&x<f.W&&z<f.H){const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];if(dx||dz){const dot=new T.Mesh(new T.SphereGeometry(.19,8,6),new T.MeshBasicMaterial({color:0xffb52e,depthTest:false}));dot.position.set(obj.position.x,.62,obj.position.z);scpRayViz.add(dot)}}
- scpRayViz.visible=true;rayHUD.textContent='3D FLOWFIELD GIZMOS · CYAN = MAP DIRECTION · ORANGE = SCP CELL (G)';
+ const flow=sampleSCPFlow(obj);
+ const dot=new T.Mesh(new T.SphereGeometry(.28,10,8),new T.MeshBasicMaterial({color:0xffb52e,depthTest:false,toneMapped:false}));
+ dot.position.set(obj.position.x,.78,obj.position.z);scpRayViz.add(dot);
+ scpRayViz.visible=true;
+ rayHUD.textContent='FLOWFIELD GIZMOS: '+markers.length+' · '+(flow?'SCP DIR '+flow.x.toFixed(2)+', '+flow.z.toFixed(2):'NO REACHABLE CELL')+' · G TOGGLE';
 }
 
 // Breadcrumb collision validation against every streamed facility solid.
@@ -647,13 +654,26 @@ function sampleSCPFlow(obj){
  const f=buildSCPFlowField();if(!f)return null;
  const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs);
  if(x<0||z<0||x>=f.W||z>=f.H)return null;
- const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];return dx||dz?{x:dx,z:dz}:null;
+ // SCP can stand on a blocked edge of a cell. Sample the closest reachable
+ // flow cell instead of silently reverting to the old straight steering vector.
+ for(let r=0;r<=10;r++){
+  let best=null,bestD=Infinity;
+  for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){
+   if(r&&Math.max(Math.abs(dx),Math.abs(dz))!==r)continue;
+   const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=f.W||nz>=f.H)continue;
+   const i=nz*f.W+nx,vx=f.dirX[i],vz=f.dirZ[i];
+   if((!vx&&!vz)||!Number.isFinite(f.distance[i]))continue;
+   const d=dx*dx+dz*dz;if(d<bestD){bestD=d;best={x:vx,z:vz,cellX:nx,cellZ:nz}}
+  }
+  if(best)return best;
+ }
+ return null;
 }
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
  const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=obj===bad?sampleSCPFlow(obj):null,targetX=flow?flow.x:(obj===bad||losBlocked||dist<=.001?steering.x:dx/dist),targetZ=flow?flow.z:(obj===bad||losBlocked||dist<=.001?steering.z:dz/dist);
- const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-2.8*Math.max(0,dt));
+ const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-7.5*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
  const vLen=Math.hypot(velocity.x,velocity.z),heading=vLen>.12?new T.Vector3(velocity.x/vLen,0,velocity.z/vLen):steering.clone().setY(0).normalize();
@@ -678,13 +698,13 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
   // only gently biases the heading while ray distance deflects it around obstacles.
   const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
   // Pursuit has priority in open space; ray clearance only becomes influential near a wall.
-  const score=continuity*2.0+momentum*1.0+guideAlign*6.8+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
+  const score=continuity*1.0+momentum*.6+guideAlign*(obj===bad?13.5:6.8)+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:clearDistance>=rayLength-.01,score,selected:false};candidates.push(c);
   if(score>bestScore){bestScore=score;best=c}
  }
  if(best)best.selected=true;ud.steeringCandidates=candidates;
  // Smoothly turn persistent steering toward the best ray, never teleport the heading.
- const desiredX=best?.x??guide.x,desiredZ=best?.z??guide.z,turnRate=2.1+Math.max(0,3.2-(best?.length||0))*.65,blend=1-Math.exp(-turnRate*Math.max(0,dt));
+ const desiredX=best?.x??guide.x,desiredZ=best?.z??guide.z,turnRate=(obj===bad?3.8:2.1)+Math.max(0,3.2-(best?.length||0))*.65,blend=1-Math.exp(-turnRate*Math.max(0,dt));
  steering.x+=(desiredX-steering.x)*blend;steering.z+=(desiredZ-steering.z)*blend;
  const sl=Math.hypot(steering.x,steering.z);if(sl>.0001){steering.x/=sl;steering.z/=sl}
  // Continuous acceleration: preserve forward velocity and only curve it as steering changes.
@@ -701,7 +721,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
   ud.steeringWallSliding=true;
  }
  moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- if(obj===bad&&scpRayGizmos&&performance.now()-(ud.flowGizmoAt||0)>2200){ud.flowGizmoAt=performance.now();drawSCPRayGizmos(obj)}
+ if(obj===bad&&scpRayGizmos&&performance.now()-(ud.flowGizmoAt||0)>700){ud.flowGizmoAt=performance.now();drawSCPRayGizmos(obj)}
  return velocity.lengthSq()>.0025;
 }
 function scpTargetLOS(ax,az,bx,bz){
