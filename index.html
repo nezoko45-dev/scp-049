@@ -75,6 +75,7 @@ const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;
 const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
 function drawSCPBreadcrumbs(obj){
+ if(scpRayGizmos){scpChainViz.visible=false;return}
  if(!scpRayGizmos){scpChainViz.visible=false;return}
  const ud=obj.userData||{},route=ud.breadcrumbRoute||[],idx=ud.breadcrumbIndex||1;
  while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}
@@ -98,34 +99,34 @@ function drawSCPRayGizmos(obj){
  try{
   const f=buildSCPFlowField();
   if(!f){rayHUD.textContent='FLOWFIELD ERROR: NAV GRID HAS NO WALKABLE CELLS';return}
-  // Draw the field over the whole loaded map, rather than a small patch by SCP.
-  const step=Math.max(4,Math.ceil(Math.max(f.W,f.H)/90)),markers=[];
-  let reachable=0;
-  for(let z=1;z<f.H-1;z++)for(let x=1;x<f.W-1;x++){
-   const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];
-   if(!Number.isFinite(f.distance[i]))continue;
-   reachable++;
-   if((x%step)||(z%step)||(!dx&&!dz))continue;
-   markers.push({x:f.ox+(x+.5)*f.cs,z:f.oz+(z+.5)*f.cs,dx,dz});
+  const cx=Math.floor((obj.position.x-f.ox)/f.cs),cz=Math.floor((obj.position.z-f.oz)/f.cs);
+  const radius=Math.ceil(48/f.cs),stride=3,segments=[];
+  let reachable=0,arrows=0;
+  for(let z=Math.max(1,cz-radius);z<Math.min(f.H-1,cz+radius);z+=stride){
+   for(let x=Math.max(1,cx-radius);x<Math.min(f.W-1,cx+radius);x+=stride){
+    const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];
+    if(!Number.isFinite(f.distance[i])||(!dx&&!dz))continue;
+    reachable++;
+    const px=f.ox+(x+.5)*f.cs,pz=f.oz+(z+.5)*f.cs,L=1.8,head=.55,wing=.34;
+    const ex=px+dx*L,ez=pz+dz*L,pxn=-dz,pzn=dx;
+    segments.push(px,2.8,pz,ex,2.8,ez);
+    segments.push(ex,2.8,ez,ex-dx*head+pxn*wing,2.8,ez-dz*head+pzn*wing);
+    segments.push(ex,2.8,ez,ex-dx*head-pxn*wing,2.8,ez-dz*head-pzn*wing);
+    arrows++;
+   }
   }
-  if(markers.length){
-   const geo=new T.ConeGeometry(.34,1.05,7),mat=new T.MeshBasicMaterial({color:0x00eaff,depthTest:false,toneMapped:false});
-   const mesh=new T.InstancedMesh(geo,mat,markers.length),dummy=new T.Object3D(),up=new T.Vector3(0,1,0);
-   markers.forEach((m,i)=>{
-    dummy.position.set(m.x,1.05,m.z);
-    dummy.quaternion.setFromUnitVectors(up,new T.Vector3(m.dx,0,m.dz));
-    dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
-   });
-   mesh.instanceMatrix.needsUpdate=true;mesh.frustumCulled=false;scpRayViz.add(mesh);
+  if(segments.length){
+   const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(segments,3));
+   const mat=new T.LineBasicMaterial({color:0x00f5ff,depthTest:false,depthWrite:false,toneMapped:false});
+   const lines=new T.LineSegments(geo,mat);lines.renderOrder=999;scpRayViz.add(lines);
   }
-  const flow=sampleSCPFlow(obj);
-  const dot=new T.Mesh(new T.SphereGeometry(.34,12,10),new T.MeshBasicMaterial({color:0xffb52e,depthTest:false,toneMapped:false}));
-  dot.position.set(obj.position.x,1.0,obj.position.z);scpRayViz.add(dot);
-  scpRayViz.visible=true;
-  rayHUD.textContent='FLOWFIELD ACTIVE · '+markers.length+' VISIBLE ARROWS / '+reachable+' REACHABLE CELLS · '+f.componentCount+' REGIONS · '+(flow?'SCP VECTOR '+flow.x.toFixed(2)+', '+flow.z.toFixed(2):'SCP CELL NOT REACHABLE')+' · G TOGGLE';
+  const dot=new T.Mesh(new T.SphereGeometry(.55,16,12),new T.MeshBasicMaterial({color:0xff9d00,depthTest:false,depthWrite:false,toneMapped:false}));
+  dot.position.set(obj.position.x,2.9,obj.position.z);dot.renderOrder=1000;scpRayViz.add(dot);
+  scpRayViz.visible=true;scpChainViz.visible=false;scpSteeringViz.visible=false;
+  rayHUD.textContent='FLOWFIELD ON · '+arrows+' LOCAL ARROWS · '+reachable+' REACHABLE SAMPLES · '+f.componentCount+' REGIONS · '+(sampleSCPFlow(obj)?'SCP VECTOR FOUND':'NO VECTOR AT SCP');
  }catch(e){
   scpRayViz.visible=false;
-  rayHUD.textContent='FLOWFIELD BUILD ERROR: '+(e?.message||e);
+  rayHUD.textContent='FLOWFIELD ERROR: '+(e?.message||e);
   console.error('SCP flowfield visualization failed',e);
  }
 }
