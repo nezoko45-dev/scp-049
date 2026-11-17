@@ -29,13 +29,34 @@ function insideAIFOV(observer,target,range=AI_FOV_RANGE){
  return (dx*fx+dz*fz)/len>=Math.cos(AI_FOV_HALF);
 }
 function scanAIFOVObstacles(observer){
- const found=[],p=observer.position,fx=Math.sin(observer.rotation.y),fz=Math.cos(observer.rotation.y),cosHalf=Math.cos(AI_FOV_HALF),r2=AI_FOV_RANGE*AI_FOV_RANGE;
+ const found=[],p=observer.position,velocity=observer.userData?.velocity;
+ // Sense in the actual travel direction, not a possibly lagging model rotation.
+ const speed=velocity?Math.hypot(velocity.x,velocity.z):0;
+ const fx=speed>.12?velocity.x/speed:Math.sin(observer.rotation.y);
+ const fz=speed>.12?velocity.z/speed:Math.cos(observer.rotation.y);
+ const cosHalf=Math.cos(AI_FOV_HALF),r2=AI_FOV_RANGE*AI_FOV_RANGE;
+ const pointInside=(x,z)=>{const dx=x-p.x,dz=z-p.z,d2=dx*dx+dz*dz;return d2<=r2&&d2>.0001&&(dx*fx+dz*fz)/Math.sqrt(d2)>=cosHalf};
+ // Test a ray from the observer against an object's AABB. This catches cases
+ // where the FOV boundary cuts through a box even if none of its corners do.
+ const rayTouches=(dx,dz,o)=>{
+  let lo=0,hi=AI_FOV_RANGE;
+  const minX=o.x-o.w/2,maxX=o.x+o.w/2,minZ=o.z-o.d/2,maxZ=o.z+o.d/2;
+  if(Math.abs(dx)<1e-8){if(p.x<minX||p.x>maxX)return false}
+  else{let a=(minX-p.x)/dx,b=(maxX-p.x)/dx;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
+  if(Math.abs(dz)<1e-8){if(p.z<minZ||p.z>maxZ)return false}
+  else{let a=(minZ-p.z)/dz,b=(maxZ-p.z)/dz;if(a>b){const q=a;a=b;b=q}lo=Math.max(lo,a);hi=Math.min(hi,b)}
+  return hi>=lo&&hi>=0&&lo<=AI_FOV_RANGE;
+ };
  for(const o of solid){
-  const x=Math.max(o.x-o.w/2,Math.min(p.x,o.x+o.w/2)),z=Math.max(o.z-o.d/2,Math.min(p.z,o.z+o.d/2));
+  const minX=o.x-o.w/2,maxX=o.x+o.w/2,minZ=o.z-o.d/2,maxZ=o.z+o.d/2;
+  const x=Math.max(minX,Math.min(p.x,maxX)),z=Math.max(minZ,Math.min(p.z,maxZ));
   const dx=x-p.x,dz=z-p.z,d2=dx*dx+dz*dz;
-  if(d2<.16||d2>r2)continue;
-  const len=Math.sqrt(d2);
-  if((dx*fx+dz*fz)/len>=cosHalf)found.push(o);
+  if(d2>.0001&&d2>r2)continue;
+  const corners=pointInside(minX,minZ)||pointInside(minX,maxZ)||pointInside(maxX,minZ)||pointInside(maxX,maxZ);
+  const touches=d2<=.0001||pointInside(x,z)||corners||
+   rayTouches(fx,fz,o)||rayTouches(fx*Math.cos(AI_FOV_HALF)-fz*Math.sin(AI_FOV_HALF),fz*Math.cos(AI_FOV_HALF)+fx*Math.sin(AI_FOV_HALF),o)||
+   rayTouches(fx*Math.cos(AI_FOV_HALF)+fz*Math.sin(AI_FOV_HALF),fz*Math.cos(AI_FOV_HALF)-fx*Math.sin(AI_FOV_HALF),o);
+  if(touches)found.push(o);
  }
  observer.userData.fovObstacles=found;
  return found;
@@ -722,7 +743,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const vLen=Math.hypot(velocity.x,velocity.z),heading=vLen>.12?new T.Vector3(velocity.x/vLen,0,velocity.z/vLen):steering.clone().setY(0).normalize();
  // Geometric FOV steering: only objects detected inside the 120-degree
  // vision cone are considered when scoring possible movement directions.
- const rayLength=6.5,candidates=[],visibleObstacles=scanAIFOVObstacles(obj);
+ const rayLength=AI_FOV_RANGE,candidates=[],visibleObstacles=scanAIFOVObstacles(obj);
  let best=null,bestScore=-Infinity;
  for(let i=0;i<34;i++){
   const angle=(i/33-.5)*Math.PI*1.72,ca=Math.cos(angle),sa=Math.sin(angle);
