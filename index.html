@@ -720,6 +720,7 @@ function sampleSCPFlow(obj,goalX=null,goalZ=null){
  const f=buildSCPFlowField(goalX,goalZ);if(!f)return null;
  const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs);
  if(x<0||z<0||x>=f.W||z>=f.H)return null;
+ if(f.distance[z*f.W+x]===0)return{x:0,z:0,atGoal:true};
  // SCP can stand on a blocked edge of a cell. Sample the closest reachable
  // flow cell instead of silently reverting to the old straight steering vector.
  for(let r=0;r<=10;r++){
@@ -764,6 +765,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // The distance-field heatmap is the navigation authority for SCP and zombies.
  const flow=sampleSCPFlow(obj,tx,tz),dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
+ if(flow?.atGoal){velocity.multiplyScalar(Math.exp(-10*Math.max(dt,.001)));moveDir.copy(velocity);return false}
  if(!flow&&navReady){velocity.multiplyScalar(Math.exp(-7*Math.max(dt,.001)));moveDir.copy(velocity);return false}
  const targetX=flow?flow.x:(dist>.001?dx/dist:steering.x),targetZ=flow?flow.z:(dist>.001?dz/dist:steering.z);
  const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-9*Math.max(0,dt));
