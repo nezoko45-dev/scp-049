@@ -92,26 +92,23 @@ function drawSCPBreadcrumbs(obj){
 function drawSCPRayChain(obj){drawSCPBreadcrumbs(obj)}
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
-function drawSCPRayGizmos(obj,tx,tz){
+function drawSCPRayGizmos(obj){
  if(!scpRayGizmos)return;clearSCPRayViz();
- const ud=obj.userData||{},f=ud.flowField;
- if(f){
-  const verts=[],y=.12,step=4;
-  // Draw the actual cell-flowfield vectors across the generated facility.
-  for(let z=1;z<f.H-1;z+=step)for(let x=1;x<f.N-1;x+=step){
-   const i=z*f.N+x,dx=f.dirX[i],dz=f.dirZ[i];if((!dx&&!dz)||f.blocked[i]||f.distance[i]<0)continue;
-   const wx=f.ox+(x+.5)*f.cs,wz=f.oz+(z+.5)*f.cs,len=f.cs*.42,ex=wx+dx*len,ez=wz+dz*len;
-   verts.push(wx,y,wz,ex,y,ez,ex,y,ez,ex-dx*.22-dz*.13,y,ez-dz*.22+dx*.13,ex,y,ez,ex-dx*.22+dz*.13,y,ez-dz*.22-dx*.13);
-  }
-  if(verts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(verts,3));scpRayViz.add(new T.LineSegments(g,scpRayMatClear))}
-  // Emphasize SCP's current cell vector so its movement direction is visible.
-  const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs),i=z*f.N+x;
-  if(x>=0&&z>=0&&x<f.N&&z<f.H&&f.dirX[i]||f.dirZ[i]){
-   const dx=f.dirX[i],dz=f.dirZ[i],px=obj.position.x,pz=obj.position.z;
-   const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute([px,.28,pz,px+dx*2,.28,pz+dz*2],3));scpRayViz.add(new T.Line(g,scpRayMatClear))
-  }
+ const f=buildSCPFlowField();if(!f)return;
+ const step=10,markers=[];
+ for(let z=1;z<f.H-1;z+=step)for(let x=1;x<f.W-1;x+=step){
+  const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];if((!dx&&!dz)||!Number.isFinite(f.distance[i]))continue;
+  markers.push({x:f.ox+(x+.5)*f.cs,z:f.oz+(z+.5)*f.cs,dx,dz});
  }
- scpRayViz.visible=true;rayHUD.textContent='CELL FLOWFIELD VECTORS (G toggles)';
+ if(markers.length){
+  const geo=new T.ConeGeometry(.13,.42,5),mat=new T.MeshBasicMaterial({color:0x24e8ff,depthTest:false});
+  const mesh=new T.InstancedMesh(geo,mat,markers.length),dummy=new T.Object3D(),up=new T.Vector3(0,1,0);
+  markers.forEach((m,i)=>{dummy.position.set(m.x,.34,m.z);dummy.quaternion.setFromUnitVectors(up,new T.Vector3(m.dx,0,m.dz));dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix)});
+  mesh.instanceMatrix.needsUpdate=true;mesh.frustumCulled=false;scpRayViz.add(mesh);
+ }
+ const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs);
+ if(x>=0&&z>=0&&x<f.W&&z<f.H){const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];if(dx||dz){const dot=new T.Mesh(new T.SphereGeometry(.19,8,6),new T.MeshBasicMaterial({color:0xffb52e,depthTest:false}));dot.position.set(obj.position.x,.62,obj.position.z);scpRayViz.add(dot)}}
+ scpRayViz.visible=true;rayHUD.textContent='3D FLOWFIELD GIZMOS · CYAN = MAP DIRECTION · ORANGE = SCP CELL (G)';
 }
 
 // Breadcrumb collision validation against every streamed facility solid.
@@ -402,7 +399,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;function fallback(){let a=new T.Mesh(new T.CapsuleGeometry(.45,1.3,5,10),mats[2]);a.position.y=1.3;let b=new T.Mesh(new T.CylinderGeometry(.5,.7,1.5,12),mats[2]);b.position.y=.8;let h=new T.Mesh(new T.SphereGeometry(.3),mats[1]);h.position.y=2.3;bad.add(a,b,h);loaded=true}new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true},undefined,fallback);setTimeout(()=>!loaded&&fallback(),7000);
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpChainViz.visible=false;scpSteeringViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPSteeringVectors(bad)}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpChainViz.visible=false;scpSteeringViz.visible=false;rayHUD.style.display=scpRayGizmos?'block':'none';if(scpRayGizmos)drawSCPRayGizmos(bad);else clearSCPRayViz()}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -624,30 +621,30 @@ function drawSCPSteeringVectors(obj){
  scpSteeringViz.visible=true;rayHUD.textContent='34 STEERING VECTORS · GREEN = CLEAR · RED = BLOCKED · ORANGE = SELECTED (G)';
 }
 
-function buildSCPFlowField(tx,tz){
- if(!navReady||!navData?.grid)return null;
- const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,target=nearestOpen(tx,tz);
- if(!target)return null;
- const targetKey=target.z*W+target.x,revision=navData.revision||0,now=performance.now(),old=bad.userData.flowField;
- if(old&&old.targetKey===targetKey&&old.revision===revision)return old;
- if(old&&old.targetKey===targetKey&&now-(old.builtAt||0)<500)return old;
+function buildSCPFlowField(){
+ if(!navReady||!navData?.grid||!navData.origin)return null;
+ const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,revision=navData.revision||0,now=performance.now(),old=bad.userData.flowField;
+ if(old&&old.revision===revision&&old.W===W&&old.H===H)return old;
  const distance=new Float32Array(N);distance.fill(Infinity);
  const dirX=new Float32Array(N),dirZ=new Float32Array(N),heap=[],costs=[];
  const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
  const push=(k,v)=>{let i=heap.length;heap.push(k);costs.push(v);while(i>0){let p=(i-1)>>1;if(costs[p]<=v)break;heap[i]=heap[p];costs[i]=costs[p];i=p;heap[i]=k;costs[i]=v}};
  const pop=()=>{const k=heap[0],v=costs[0],lk=heap.pop(),lv=costs.pop();if(heap.length){let i=0;heap[0]=lk;costs[0]=lv;for(;;){let l=i*2+1,r=l+1,b=i;if(l<heap.length&&costs[l]<costs[b])b=l;if(r<heap.length&&costs[r]<costs[b])b=r;if(b===i)break;[heap[i],heap[b]]=[heap[b],heap[i]];[costs[i],costs[b]]=[costs[b],costs[i]];i=b}}return [k,v]};
- distance[targetKey]=0;push(targetKey,0);
+ let seedRow=-1;
+ for(let z=H-1;z>=0&&seedRow<0;z--)for(let x=0;x<W;x++)if(g[z]?.[x]){seedRow=z;break}
+ if(seedRow<0)return null;
+ for(let x=0;x<W;x++)if(g[seedRow]?.[x]){const k=seedRow*W+x;distance[k]=0;push(k,0)}
  while(heap.length){const [k,d]=pop();if(d!==distance[k])continue;const x=k%W,z=Math.floor(k/W);
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
  }
- for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x;if(!g[z]?.[x]||!Number.isFinite(distance[k])||k===targetKey)continue;let best=distance[k],bx=0,bz=0;
+ for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x;if(!g[z]?.[x]||!Number.isFinite(distance[k])||distance[k]===0)continue;let best=distance[k],bx=0,bz=0;
   for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx]+c;if(nd<best){best=nd;bx=dx;bz=dz}}
   const len=Math.hypot(bx,bz);if(len){dirX[k]=bx/len;dirZ[k]=bz/len}
  }
- const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,targetKey,revision,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
+ const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,seedRow,revision,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
 }
-function sampleSCPFlow(obj,tx,tz){
- const f=buildSCPFlowField(tx,tz);if(!f)return null;
+function sampleSCPFlow(obj){
+ const f=buildSCPFlowField();if(!f)return null;
  const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs);
  if(x<0||z<0||x>=f.W||z>=f.H)return null;
  const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];return dx||dz?{x:dx,z:dz}:null;
@@ -655,7 +652,7 @@ function sampleSCPFlow(obj,tx,tz){
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
- const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=sampleSCPFlow(obj,tx,tz),targetX=flow?flow.x:(!losBlocked&&dist>.001?dx/dist:steering.x),targetZ=flow?flow.z:(!losBlocked&&dist>.001?dz/dist:steering.z);
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=obj===bad?sampleSCPFlow(obj):null,targetX=flow?flow.x:(!losBlocked&&dist>.001?dx/dist:steering.x),targetZ=flow?flow.z:(!losBlocked&&dist>.001?dz/dist:steering.z);
  const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-2.8*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
@@ -704,7 +701,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
   ud.steeringWallSliding=true;
  }
  moveDir.copy(velocity).setY(0);if(velocity.lengthSq()>.0025)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- if(scpRayGizmos&&performance.now()-(ud.steeringGizmoAt||0)>100){ud.steeringGizmoAt=performance.now();drawSCPSteeringVectors(obj)}
+ if(obj===bad&&scpRayGizmos&&performance.now()-(ud.flowGizmoAt||0)>2200){ud.flowGizmoAt=performance.now();drawSCPRayGizmos(obj)}
  return velocity.lengthSq()>.0025;
 }
 function scpTargetLOS(ax,az,bx,bz){
@@ -806,10 +803,8 @@ function frame(now){
    scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt,!losClear);
   }else{
    bad.userData.targetLOSBlocked=true;
-   const v=bad.userData.velocity,st=bad.userData.steeringVector;
-   if(v)v.multiplyScalar(Math.exp(-2.8*dt));
-   // No visible victim: brake and slowly scan instead of travelling forever on stale momentum.
-   if(st){const scan=.72*dt,x=st.x*Math.cos(scan)-st.z*Math.sin(scan),z=st.x*Math.sin(scan)+st.z*Math.cos(scan);st.set(x,0,z).normalize()}
+   // Locomotion is independent of victim detection: keep following the map-wide field.
+   scpMoved=followSCPVelocity(bad,0,0,3.2,dt,true);
   }
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
