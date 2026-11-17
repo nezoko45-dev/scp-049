@@ -76,7 +76,6 @@ const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
 function drawSCPBreadcrumbs(obj){
  if(scpRayGizmos){scpChainViz.visible=false;return}
- if(!scpRayGizmos){scpChainViz.visible=false;return}
  const ud=obj.userData||{},route=ud.breadcrumbRoute||[],idx=ud.breadcrumbIndex||1;
  while(scpChainViz.children.length){const o=scpChainViz.children[0];scpChainViz.remove(o);o.traverse?.(q=>{q.geometry?.dispose();if(Array.isArray(q.material))q.material.forEach(m=>m.dispose());else q.material?.dispose()})}
  if(route.length>1){
