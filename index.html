@@ -750,17 +750,38 @@ function frame(now){
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   const playerObj=ctl.getObject();
   const livingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));
+  const visiblePool=livingPool.filter(t=>scpTargetLOS(bad.position.x,bad.position.z,t.obj.position.x,t.obj.position.z));
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
-  // Select the nearest living victim, then hold that target for 11 seconds to avoid flicker.
-  if(!scpTarget||currentInvalid||now>=scpTargetUntil){
+  let currentVisible=!!scpTarget&&!currentInvalid&&scpTargetLOS(bad.position.x,bad.position.z,currentObj.position.x,currentObj.position.z);
+  if(currentVisible)bad.userData.targetLostAt=0;
+  else if(scpTarget&&!currentInvalid&&!bad.userData.targetLostAt)bad.userData.targetLostAt=now;
+  const lostTooLong=!!scpTarget&&bad.userData.targetLostAt&&now-bad.userData.targetLostAt>2400;
+  // Only acquire targets with a clear line of sight. If the current target vanishes
+  // behind cover, keep its last heading briefly, then forget it instead of chasing blindly.
+  if(currentInvalid||lostTooLong)scpTarget=null;
+  if(!scpTarget||now>=scpTargetUntil||(!currentVisible&&visiblePool.length)){
    let pick=null,bestDistance=Infinity;
-   for(const candidate of livingPool){const d=Math.hypot(candidate.obj.position.x-bad.position.x,candidate.obj.position.z-bad.position.z);if(d<bestDistance){bestDistance=d;pick=candidate}}
-   scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;scpTargetUntil=now+11000;
+   for(const candidate of visiblePool){
+    if(scpTarget&&candidate.obj===currentObj)continue;
+    const d=Math.hypot(candidate.obj.position.x-bad.position.x,candidate.obj.position.z-bad.position.z);
+    if(d<bestDistance){bestDistance=d;pick=candidate}
+   }
+   if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000;bad.userData.targetLostAt=0}
+   else if(!scpTarget)scpTargetUntil=now+500;
   }
   let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead))){const losClear=scpTargetLOS(bad.position.x,bad.position.z,targetObj.position.x,targetObj.position.z);bad.userData.targetLOSBlocked=!losClear;scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt,!losClear)}
-  else bad.userData.velocity?.multiplyScalar(Math.exp(-2.2*dt));
+  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead))){
+   const losClear=scpTargetLOS(bad.position.x,bad.position.z,targetObj.position.x,targetObj.position.z);
+   bad.userData.targetLOSBlocked=!losClear;
+   scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt,!losClear);
+  }else{
+   bad.userData.targetLOSBlocked=true;
+   const v=bad.userData.velocity,st=bad.userData.steeringVector;
+   if(v)v.multiplyScalar(Math.exp(-2.8*dt));
+   // No visible victim: brake and slowly scan instead of travelling forever on stale momentum.
+   if(st){const scan=.72*dt,x=st.x*Math.cos(scan)-st.z*Math.sin(scan),z=st.x*Math.sin(scan)+st.z*Math.cos(scan);st.set(x,0,z).normalize()}
+  }
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
