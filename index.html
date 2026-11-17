@@ -627,7 +627,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
  const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),targetX=dist>.001?dx/dist:steering.x,targetZ=dist>.001?dz/dist:steering.z;
- const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-.9*Math.max(0,dt));
+ const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-2.8*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
  const vLen=Math.hypot(velocity.x,velocity.z),heading=vLen>.12?new T.Vector3(velocity.x/vLen,0,velocity.z/vLen):steering.clone().setY(0).normalize();
@@ -651,7 +651,8 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
   // Strong continuity prevents alternating between neighboring rays; the target
   // only gently biases the heading while ray distance deflects it around obstacles.
   const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
-  const score=continuity*4.8+momentum*2.0+guideAlign*(1.8+obstacleUrgency*1.2)+clearDistance*1.05;
+  // Pursuit has priority in open space; ray clearance only becomes influential near a wall.
+  const score=continuity*2.2+momentum*1.0+guideAlign*6.2+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:clearDistance>=rayLength-.01,score,selected:false};candidates.push(c);
   if(score>bestScore){bestScore=score;best=c}
  }
@@ -740,17 +741,14 @@ function frame(now){
    noise=sprint?1:.15
   }else noise*=.95;
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
-  // A target is eligible only while its position is genuinely changing.
-  // Measure actual displacement each frame, not input keys or animation state.
-  const movingNow=(obj)=>{const u=obj.userData||(obj.userData={}),q=obj.position,prev=u.scpMoveSample;u.scpMoveSample={x:q.x,z:q.z};if(!prev){u.scpMovingNow=false;return false}const speed=Math.hypot(q.x-prev.x,q.z-prev.z)/Math.max(dt,.001);u.scpMovingNow=speed>.18;return u.scpMovingNow;};
   const playerObj=ctl.getObject();
   const livingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));
-  const movingPool=livingPool.filter(t=>movingNow(t.obj));
-  // Prefer a moving target every 11 seconds, but never require target movement to pursue.
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  const hasCurrentTarget=!!scpTarget,currentInvalid=hasCurrentTarget&&(!currentObj||(scpTarget?.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
-  if((!hasCurrentTarget&&now>=scpTargetUntil)||currentInvalid||now>=scpTargetUntil){
-   const pool=movingPool.length?movingPool:livingPool,choices=pool.filter(t=>t.obj!==currentObj),pick=choices[Math.floor(Math.random()*choices.length)]||pool[0]||null;
+  const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
+  // Select the nearest living victim, then hold that target for 11 seconds to avoid flicker.
+  if(!scpTarget||currentInvalid||now>=scpTargetUntil){
+   let pick=null,bestDistance=Infinity;
+   for(const candidate of livingPool){const d=Math.hypot(candidate.obj.position.x-bad.position.x,candidate.obj.position.z-bad.position.z);if(d<bestDistance){bestDistance=d;pick=candidate}}
    scpTarget=pick?{kind:pick.kind,obj:pick.obj,index:pick.index}:null;scpTargetUntil=now+11000;
   }
   let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
