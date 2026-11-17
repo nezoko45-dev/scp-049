@@ -623,10 +623,39 @@ function drawSCPSteeringVectors(obj){
  if(v)add(v.x,v.z,.85,0x00eaff,1.58);if(steer)add(steer.x,steer.z,1.35,0xffb52e,1.62);
  scpSteeringViz.visible=true;rayHUD.textContent='34 STEERING VECTORS · GREEN = CLEAR · RED = BLOCKED · ORANGE = SELECTED (G)';
 }
+
+function buildSCPFlowField(tx,tz){
+ if(!navReady||!navData?.grid)return null;
+ const W=navData.width,H=navData.height,N=W*H,g=navData.grid,cs=navData.cellSize||1,target=nearestOpen(tx,tz);
+ if(!target)return null;
+ const targetKey=target.z*W+target.x,revision=navData.revision||0,now=performance.now(),old=bad.userData.flowField;
+ if(old&&old.targetKey===targetKey&&old.revision===revision)return old;
+ if(old&&old.targetKey===targetKey&&now-(old.builtAt||0)<500)return old;
+ const distance=new Float32Array(N);distance.fill(Infinity);
+ const dirX=new Float32Array(N),dirZ=new Float32Array(N),heap=[],costs=[];
+ const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
+ const push=(k,v)=>{let i=heap.length;heap.push(k);costs.push(v);while(i>0){let p=(i-1)>>1;if(costs[p]<=v)break;heap[i]=heap[p];costs[i]=costs[p];i=p;heap[i]=k;costs[i]=v}};
+ const pop=()=>{const k=heap[0],v=costs[0],lk=heap.pop(),lv=costs.pop();if(heap.length){let i=0;heap[0]=lk;costs[0]=lv;for(;;){let l=i*2+1,r=l+1,b=i;if(l<heap.length&&costs[l]<costs[b])b=l;if(r<heap.length&&costs[r]<costs[b])b=r;if(b===i)break;[heap[i],heap[b]]=[heap[b],heap[i]];[costs[i],costs[b]]=[costs[b],costs[i]];i=b}}return [k,v]};
+ distance[targetKey]=0;push(targetKey,0);
+ while(heap.length){const [k,d]=pop();if(d!==distance[k])continue;const x=k%W,z=Math.floor(k/W);
+  for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nk=nz*W+nx,nd=d+c;if(nd<distance[nk]){distance[nk]=nd;push(nk,nd)}}
+ }
+ for(let z=0;z<H;z++)for(let x=0;x<W;x++){const k=z*W+x;if(!g[z]?.[x]||!Number.isFinite(distance[k])||k===targetKey)continue;let best=distance[k],bx=0,bz=0;
+  for(const [dx,dz,c] of dirs){const nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=W||nz>=H||!g[nz]?.[nx])continue;if(dx&&dz&&(!g[z]?.[nx]||!g[nz]?.[x]))continue;const nd=distance[nz*W+nx]+c;if(nd<best){best=nd;bx=dx;bz=dz}}
+  const len=Math.hypot(bx,bz);if(len){dirX[k]=bx/len;dirZ[k]=bz/len}
+ }
+ const field={W,H,N,cs,ox:navData.origin.x,oz:navData.origin.z,targetKey,revision,distance,dirX,dirZ,builtAt:now};bad.userData.flowField=field;return field;
+}
+function sampleSCPFlow(obj,tx,tz){
+ const f=buildSCPFlowField(tx,tz);if(!f)return null;
+ const x=Math.floor((obj.position.x-f.ox)/f.cs),z=Math.floor((obj.position.z-f.oz)/f.cs);
+ if(x<0||z<0||x>=f.W||z>=f.H)return null;
+ const i=z*f.W+x,dx=f.dirX[i],dz=f.dirZ[i];return dx||dz?{x:dx,z:dz}:null;
+}
 function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),steering=ud.steeringVector||(ud.steeringVector=new T.Vector3(0,0,1)),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  // Target direction is only a slowly changing guide. Momentum remains the movement source.
- const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),targetX=!losBlocked&&dist>.001?dx/dist:steering.x,targetZ=!losBlocked&&dist>.001?dz/dist:steering.z;
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz),flow=sampleSCPFlow(obj,tx,tz),targetX=flow?flow.x:(!losBlocked&&dist>.001?dx/dist:steering.x),targetZ=flow?flow.z:(!losBlocked&&dist>.001?dz/dist:steering.z);
  const guide=ud.targetGuide||(ud.targetGuide=new T.Vector3(targetX,0,targetZ)),guideBlend=1-Math.exp(-2.8*Math.max(0,dt));
  guide.x+=(targetX-guide.x)*guideBlend;guide.z+=(targetZ-guide.z)*guideBlend;
  const gl=Math.hypot(guide.x,guide.z);if(gl>.001){guide.x/=gl;guide.z/=gl}
@@ -652,7 +681,7 @@ function followSCPVelocity(obj,tx,tz,speed,dt,losBlocked=false){
   // only gently biases the heading while ray distance deflects it around obstacles.
   const obstacleUrgency=Math.max(0,(3.2-clearDistance)/3.2);
   // Pursuit has priority in open space; ray clearance only becomes influential near a wall.
-  const score=continuity*(losBlocked?5.0:2.2)+momentum*(losBlocked?3.0:1.0)+guideAlign*(losBlocked?0:6.2)+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
+  const score=continuity*2.0+momentum*1.0+guideAlign*6.8+(clearDistance/rayLength)*.35-obstacleUrgency*4.8;
   const c={x:vx,z:vz,length:Math.max(.18,clearDistance),clear:clearDistance>=rayLength-.01,score,selected:false};candidates.push(c);
   if(score>bestScore){bestScore=score;best=c}
  }
