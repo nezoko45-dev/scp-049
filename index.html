@@ -703,7 +703,7 @@ function refreshHeatNumbers(force=false){
 // SCP's forward-only local occupancy FOV. Each visible sample is scored
 // 1 = walkable, 0 = blocked using facility AABBs (no raycasting/path solver).
 const SCP_SCORE_ROWS=6,SCP_SCORE_COLS=9,SCP_SCORE_RANGE=8,SCP_FOV_HALF=Math.PI/3;
-const scpScoreViz=new T.Group();scene.add(scpScoreViz);
+const scpScoreViz=new T.Group();scene.add(scpScoreViz);scpScoreViz.visible=false;
 const scpScoreSprites=[];
 function makeSCPScoreSprite(){
  const canvas=document.createElement('canvas');canvas.width=96;canvas.height=72;
