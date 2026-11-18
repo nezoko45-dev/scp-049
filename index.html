@@ -704,57 +704,67 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48;
  const velocity=ud.velocity||(ud.velocity=new T.Vector3()),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- if(dist<.85){velocity.multiplyScalar(Math.exp(-8*Math.max(dt,.001)));moveDir.copy(velocity);return false}
- // Elastic band: movable guide points connect the agent to its target.
+ if(dist<.85){velocity.multiplyScalar(Math.exp(-7*Math.max(dt,.001)));moveDir.copy(velocity);return false}
  let band=ud.elasticBand;
  const resetBand=()=>{
-  const count=Math.max(5,Math.min(25,Math.ceil(dist/1.05)+1));
-  band=Array.from({length:count},(_,i)=>({x:p.x+dx*i/(count-1),z:p.z+dz*i/(count-1)}));
+  const count=Math.max(6,Math.min(28,Math.ceil(dist/.9)+1));
+  band=Array.from({length:count},(_,i)=>({x:p.x+dx*i/(count-1),z:p.z+dz*i/(count-1),avoid:new Map()}));
   ud.elasticBand=band;ud.elasticTargetX=tx;ud.elasticTargetZ=tz;
  };
  if(!band||band.length<5||Math.hypot(tx-(ud.elasticTargetX??tx),tz-(ud.elasticTargetZ??tz))>7||Math.hypot(band[band.length-1].x-tx,band[band.length-1].z-tz)>5)resetBand();
  band[0].x=p.x;band[0].z=p.z;
  band[band.length-1].x=tx;band[band.length-1].z=tz;
  ud.elasticTargetX=tx;ud.elasticTargetZ=tz;
- const margin=r+.42;
- const repel=q=>{
-  for(const o of solid){
-   const hx=o.w*.5+margin,hz=o.d*.5+margin,rx=q.x-o.x,rz=q.z-o.z;
-   if(Math.abs(rx)>=hx||Math.abs(rz)>=hz)continue;
-   const px=hx-Math.abs(rx),pz=hz-Math.abs(rz);
-   if(px<pz)q.x=o.x+(rx<0?-hx-.025:hx+.025);
-   else q.z=o.z+(rz<0?-hz-.025:hz+.025);
+ const margin=r+.48;
+ const repel=(q,index)=>{
+  if(!q.avoid)q.avoid=new Map();
+  for(let k=0;k<solid.length;k++){
+   const o=solid[k],hx=o.w*.5+margin,hz=o.d*.5+margin,rx=q.x-o.x,rz=q.z-o.z;
+   if(Math.abs(rx)>=hx||Math.abs(rz)>=hz){q.avoid.delete(k);continue}
+   let choice=q.avoid.get(k);
+   if(!choice){
+    const px=hx-Math.abs(rx),pz=hz-Math.abs(rz);
+    choice=px<pz?(rx<0?-1:1)*1:(rz<0?-1:1)*2;
+    q.avoid.set(k,choice);
+   }
+   if(Math.abs(choice)===1)q.x=o.x+(choice<0?-hx-.04:hx+.04);
+   else q.z=o.z+(choice<0?-hz-.04:hz+.04);
   }
  };
- // Neighbor tension contracts the chain; expanded AABB projection bends it around solids.
- for(let pass=0;pass<3;pass++)for(let i=1;i<band.length-1;i++){
+ // Gentle, single-pass spring relaxation avoids frame-to-frame overshoot.
+ for(let i=1;i<band.length-1;i++){
   const q=band[i],a=band[i-1],b=band[i+1];
-  q.x+=(a.x+b.x-2*q.x)*.22;q.z+=(a.z+b.z-2*q.z)*.22;repel(q);
+  q.x+=(a.x+b.x-2*q.x)*.12;
+  q.z+=(a.z+b.z-2*q.z)*.12;
+  repel(q,i);
  }
  const segmentClear=(x,z,ex,ez)=>{
-  const sx=ex-x,sz=ez-z,len=Math.hypot(sx,sz),steps=Math.max(1,Math.ceil(len/.09));
+  const sx=ex-x,sz=ez-z,len=Math.hypot(sx,sz),steps=Math.max(1,Math.ceil(len/.08));
   for(let i=1;i<=steps;i++){const t=i/steps;if(hit(x+sx*t,z+sz*t,r))return false}
   return true;
  };
- let waypoint=band[1];
- for(let i=2;i<Math.min(band.length,5);i++){if(segmentClear(p.x,p.z,band[i].x,band[i].z))waypoint=band[i];else break}
+ // Follow only the immediate guide node; never jump between competing lookahead nodes.
+ const waypoint=band[1];
  let vx=waypoint.x-p.x,vz=waypoint.z-p.z,vl=Math.hypot(vx,vz);
- if(vl<.08){velocity.multiplyScalar(Math.exp(-10*Math.max(dt,.001)));moveDir.copy(velocity);return false}
+ if(vl<.06){velocity.multiplyScalar(Math.exp(-8*Math.max(dt,.001)));moveDir.copy(velocity);return false}
  vx/=vl;vz/=vl;
- const accel=13*Math.max(0,dt),desiredVX=vx*speed,desiredVZ=vz*speed;
+ const accel=8*Math.max(0,dt),desiredVX=vx*speed,desiredVZ=vz*speed;
  velocity.x+=Math.max(-accel,Math.min(accel,desiredVX-velocity.x));
  velocity.z+=Math.max(-accel,Math.min(accel,desiredVZ-velocity.z));
  let mx=velocity.x*dt,mz=velocity.z*dt;
- const step=Math.hypot(mx,mz),maxStep=Math.min(speed*Math.max(0,dt),Math.max(0,vl-.025));
+ const step=Math.hypot(mx,mz),maxStep=Math.min(speed*Math.max(0,dt),Math.max(0,vl-.035));
  if(step>maxStep&&step>.0001){const k=maxStep/step;mx*=k;mz*=k}
  let moved=false;
  if(segmentClear(p.x,p.z,p.x+mx,p.z+mz)){p.x+=mx;p.z+=mz;moved=step>.0005}
- else velocity.multiplyScalar(.15);
- while(band.length>5&&Math.hypot(band[1].x-p.x,band[1].z-p.z)<.42)band.splice(1,1);
- while(band.length<25){
+ else{
+  velocity.multiplyScalar(.35);
+  // If the first guide point is blocked, let the persistent AABB side choice bend it around.
+ }
+ while(band.length>6&&Math.hypot(band[1].x-p.x,band[1].z-p.z)<.38)band.splice(1,1);
+ while(band.length<28){
   const a=band[band.length-2],b=band[band.length-1];
-  if(Math.hypot(b.x-a.x,b.z-a.z)<1.15)break;
-  band.splice(band.length-1,0,{x:(a.x+b.x)*.5,z:(a.z+b.z)*.5});
+  if(Math.hypot(b.x-a.x,b.z-a.z)<.95)break;
+  band.splice(band.length-1,0,{x:(a.x+b.x)*.5,z:(a.z+b.z)*.5,avoid:new Map()});
  }
  moveDir.copy(velocity);return moved
 }
