@@ -12,6 +12,7 @@ const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({c
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
+let scpInvestigation=null; // Last visible position retained while SCP investigates a lost target.
 const heatNumberGroup=new T.Group();scene.add(heatNumberGroup);heatNumberGroup.visible=false;const heatNumberTextures=new Map();let heatNumberRefreshAt=0,heatNumberFieldKey='';
 const scpObservedMotion=new WeakMap();
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
@@ -866,27 +867,76 @@ function frame(now){
   }
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
-  const currentMotion=currentObj?movingPool.find(t=>t.obj===currentObj):null;
-  if(currentInvalid)scpTarget=null;
-  const shouldSwitch=!scpTarget||now>=scpTargetUntil||(!currentMotion&&movingPool.length>0)||(currentMotion&&movingPool.some(t=>t.obj!==currentObj&&t.moveSpeed>currentMotion.moveSpeed*1.35));
-  if(shouldSwitch&&movingPool.length){
-   let pick=null,bestScore=-Infinity;
-   for(const candidate of movingPool){
-    const score=candidate.moveSpeed*2.0-candidate.distance*.035+(candidate.kind==='player'?.12:0);
-    if(score>bestScore){bestScore=score;pick=candidate}
+  if(currentInvalid){scpTarget=null;scpInvestigation=null;scpTargetUntil=0;currentObj=null}
+  const targetIsValid=obj=>!!obj&&(obj===playerObj||(obj.userData.hp>0&&!obj.userData.dead));
+  const visiblePool=[];
+  // SCP only acquires targets he can actually see. Hidden targets remain in memory,
+  // but their live coordinates are no longer used once line of sight is lost.
+  for(const candidate of movingPool){
+   if(scpTargetLOS(bad.position.x,bad.position.z,candidate.obj.position.x,candidate.obj.position.z))visiblePool.push(candidate);
+  }
+  let currentVisible=!!(currentObj&&targetIsValid(currentObj)&&scpTargetLOS(bad.position.x,bad.position.z,currentObj.position.x,currentObj.position.z));
+  // The instant the current target disappears behind geometry, freeze its last
+  // visible position as an investigation destination.
+  if(scpTarget&&currentObj&&!currentVisible&&!scpInvestigation){
+   scpInvestigation={x:currentObj.position.x,z:currentObj.position.z,phase:'travel',startedAt:now,waitUntil:0};
+   scpTargetUntil=0;
+  }
+  // Any newly visible moving target interrupts the investigation immediately.
+  if(visiblePool.length){
+   let keepCurrent=currentVisible&&scpTarget&&now<scpTargetUntil;
+   if(keepCurrent){
+    const currentCandidate=visiblePool.find(t=>t.obj===currentObj);
+    if(!currentCandidate)keepCurrent=false;
+    else if(visiblePool.some(t=>t.obj!==currentObj&&t.moveSpeed>currentCandidate.moveSpeed*1.35))keepCurrent=false;
    }
-   if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+2800}
-  }else if(!scpTarget)scpTargetUntil=now+350;
-  let scpMoved=false;const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
-  if(targetObj&&(scpTarget.kind==='player'||(targetObj.userData.hp>0&&!targetObj.userData.dead))){
+   if(!keepCurrent){
+    let pick=null,bestScore=-Infinity;
+    for(const candidate of visiblePool){
+     const score=candidate.moveSpeed*2.0-candidate.distance*.035+(candidate.kind==='player'?.12:0);
+     if(score>bestScore){bestScore=score;pick=candidate}
+    }
+    if(pick){
+     scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};
+     scpTargetUntil=now+2800;
+     scpInvestigation=null;
+     currentObj=pick.obj;
+     currentVisible=true;
+    }
+   }
+  }
+  let scpMoved=false;
+  if(scpInvestigation){
+   if(scpInvestigation.phase==='travel'){
+    const remain=Math.hypot(scpInvestigation.x-bad.position.x,scpInvestigation.z-bad.position.z);
+    if(remain<=1.05){
+     scpInvestigation.phase='wait';
+     scpInvestigation.waitUntil=now+15000;
+     bad.userData.velocity?.set(0,0,0);
+     bad.userData.moveDir?.set(0,0,0);
+     bad.userData.elasticBand=null;
+    }else{
+     scpMoved=followSCPVelocity(bad,scpInvestigation.x,scpInvestigation.z,3.2,dt);
+    }
+   }else{
+    // Hold position at the last-seen spot for 15 seconds while checking for
+    // newly visible targets. Do not chase hidden actors' live positions.
+    bad.userData.velocity?.set(0,0,0);
+    bad.userData.moveDir?.set(0,0,0);
+    if(now>=scpInvestigation.waitUntil){
+     scpInvestigation=null;
+     scpTarget=null;
+     scpTargetUntil=0;
+    }
+   }
+  }else if(currentObj&&targetIsValid(currentObj)&&currentVisible){
    bad.userData.targetLOSBlocked=false;
-   scpMoved=followSCPVelocity(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+   scpMoved=followSCPVelocity(bad,currentObj.position.x,currentObj.position.z,3.2,dt);
   }else{
    bad.userData.targetLOSBlocked=true;
-   // Initialize the persistent heading before reading it. On the first frame
-   // without a moving target, steeringVector may not exist yet.
+   // No visible target and no active investigation: continue the existing
+   // facility exploration behavior until a visible moving target is found.
    const idleHeading=bad.userData.steeringVector||(bad.userData.steeringVector=new T.Vector3(0,0,1));
-   // No moving victim is available: follow the map-wide exploration heatmap.
    scpMoved=followSCPVelocity(bad,bad.position.x+idleHeading.x*12,bad.position.z+idleHeading.z*12,3.2,dt,true);
   }
   // Face the selected movement heading, not the moving target's position.
