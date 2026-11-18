@@ -751,6 +751,11 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
  if(segmentClear(p.x,p.z,p.x+mx,p.z+mz)){p.x+=mx;p.z+=mz;moved=step>.0005}
  else velocity.multiplyScalar(.15);
  while(band.length>5&&Math.hypot(band[1].x-p.x,band[1].z-p.z)<.42)band.splice(1,1);
+ while(band.length<25){
+  const a=band[band.length-2],b=band[band.length-1];
+  if(Math.hypot(b.x-a.x,b.z-a.z)<1.15)break;
+  band.splice(band.length-1,0,{x:(a.x+b.x)*.5,z:(a.z+b.z)*.5});
+ }
  moveDir.copy(velocity);return moved
 }
 function scpTargetLOS(ax,az,bx,bz){
