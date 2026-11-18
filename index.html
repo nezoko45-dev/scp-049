@@ -12,7 +12,6 @@ const mats=[0x333a3e,0x4c555a,0x20272b].map(color=>new T.MeshStandardMaterial({c
 let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
-let scpInvestigation=null; // Last visible position retained while SCP investigates a lost target.
 const heatNumberGroup=new T.Group();scene.add(heatNumberGroup);heatNumberGroup.visible=false;const heatNumberTextures=new Map();let heatNumberRefreshAt=0,heatNumberFieldKey='';
 const scpObservedMotion=new WeakMap();
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
@@ -701,6 +700,85 @@ function refreshHeatNumbers(force=false){
  }
 }
 
+// SCP's forward-only local occupancy FOV. Each visible sample is scored
+// 1 = walkable, 0 = blocked using facility AABBs (no raycasting/path solver).
+const SCP_SCORE_ROWS=6,SCP_SCORE_COLS=9,SCP_SCORE_RANGE=8,SCP_FOV_HALF=Math.PI/3;
+const scpScoreViz=new T.Group();scene.add(scpScoreViz);
+const scpScoreSprites=[];
+function makeSCPScoreSprite(){
+ const canvas=document.createElement('canvas');canvas.width=96;canvas.height=72;
+ const ctx=canvas.getContext('2d');ctx.fillStyle='rgba(0,12,18,.82)';ctx.fillRect(4,4,88,64);
+ ctx.strokeStyle='#45e8ff';ctx.lineWidth=4;ctx.strokeRect(4,4,88,64);
+ ctx.font='bold 48px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+ const tex=new T.CanvasTexture(canvas);tex.minFilter=T.NearestFilter;
+ const sprite=new T.Sprite(new T.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
+ sprite.scale.set(.62,.46,1);sprite.userData.canvas=canvas;sprite.userData.ctx=ctx;sprite.userData.tex=tex;
+ scpScoreViz.add(sprite);return sprite;
+}
+for(let i=0;i<SCP_SCORE_ROWS*SCP_SCORE_COLS;i++)scpScoreSprites.push(makeSCPScoreSprite());
+function scpForward(obj){return {x:Math.sin(obj.rotation.y),z:Math.cos(obj.rotation.y)}}
+function scpFOVContains(obj,x,z,range=18){
+ const dx=x-obj.position.x,dz=z-obj.position.z,d=Math.hypot(dx,dz);
+ if(d>range)return false;
+ const f=scpForward(obj),dot=(dx*f.x+dz*f.z)/(d||1);
+ return d<.001||dot>=Math.cos(SCP_FOV_HALF);
+}
+function scpFOVTargetVisible(obj,target){
+ const a=obj.position,b=target.position,dx=b.x-a.x,dz=b.z-a.z,len=Math.hypot(dx,dz);
+ if(len>18||len<.001||!scpFOVContains(obj,b.x,b.z,18))return false;
+ const steps=Math.max(2,Math.ceil(len/.22));
+ for(let i=1;i<steps;i++){const t=i/steps;if(hit(a.x+dx*t,a.z+dz*t,.38))return false}
+ return true;
+}
+function updateSCPFOVScores(obj){
+ const p=obj.position,f=scpForward(obj);let n=0,clearTotal=0,bestClearance=-1,bestAngle=0;
+ for(let row=1;row<=SCP_SCORE_ROWS;row++){
+  const distance=row*(SCP_SCORE_RANGE/SCP_SCORE_ROWS);
+  for(let col=0;col<SCP_SCORE_COLS;col++){
+   const angle=-SCP_FOV_HALF+(2*SCP_FOV_HALF)*col/(SCP_SCORE_COLS-1);
+   const ca=Math.cos(angle),sa=Math.sin(angle);
+   const dx=f.x*ca+f.z*sa,dz=f.z*ca-f.x*sa,x=p.x+dx*distance,z=p.z+dz*distance;
+   const walkable=!hit(x,z,.48),sprite=scpScoreSprites[n++];
+   sprite.position.set(x,.12,z);sprite.visible=true;
+   const ctx=sprite.userData.ctx,canvas=sprite.userData.canvas;
+   ctx.clearRect(0,0,canvas.width,canvas.height);
+   ctx.fillStyle=walkable?'rgba(0,65,38,.9)':'rgba(95,12,18,.92)';
+   ctx.fillRect(4,4,88,64);ctx.strokeStyle=walkable?'#42ff9a':'#ff5265';ctx.lineWidth=4;ctx.strokeRect(4,4,88,64);
+   ctx.fillStyle=walkable?'#baffd6':'#ffd1d6';ctx.font='bold 48px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(walkable?'1':'0',48,37);
+   sprite.userData.tex.needsUpdate=true;
+   if(walkable){clearTotal++;if(distance>bestClearance){bestClearance=distance;bestAngle=angle}}
+  }
+ }
+ scpScoreViz.visible=true;obj.userData.fovBestAngle=bestAngle;obj.userData.fovClearRatio=clearTotal/(SCP_SCORE_ROWS*SCP_SCORE_COLS);
+}
+function followSCPFOVScores(obj,target,speed,dt){
+ const p=obj.position,ud=obj.userData||(obj.userData={}),velocity=ud.velocity||(ud.velocity=new T.Vector3());
+ updateSCPFOVScores(obj);
+ const f=scpForward(obj);let targetAngle=0;
+ if(target){
+  const dx=target.position.x-p.x,dz=target.position.z-p.z;
+  targetAngle=Math.atan2(dx*f.z-dz*f.x,dx*f.x+dz*f.z);
+  targetAngle=Math.max(-SCP_FOV_HALF,Math.min(SCP_FOV_HALF,targetAngle));
+ }
+ let bestAngle=0,bestScore=-Infinity;
+ for(let i=0;i<=24;i++){
+  const angle=-SCP_FOV_HALF+(2*SCP_FOV_HALF)*i/24,ca=Math.cos(angle),sa=Math.sin(angle);
+  const dx=f.x*ca+f.z*sa,dz=f.z*ca-f.x*sa;let clearance=0,blocked=false;
+  for(let step=1;step<=8;step++){const d=step*.55;if(hit(p.x+dx*d,p.z+dz*d,.48)){blocked=true;break}clearance=d}
+  const alignment=target?Math.cos(angle-targetAngle):Math.cos(angle)*.35;
+  const score=clearance*1.5+alignment*(target?5:1.2)+(blocked?0:1);
+  if(score>bestScore){bestScore=score;bestAngle=angle}
+ }
+ const ca=Math.cos(bestAngle),sa=Math.sin(bestAngle),dx=f.x*ca+f.z*sa,dz=f.z*ca-f.x*sa;
+ const accel=10*Math.max(0,dt),desiredX=dx*speed,desiredZ=dz*speed;
+ velocity.x+=Math.max(-accel,Math.min(accel,desiredX-velocity.x));
+ velocity.z+=Math.max(-accel,Math.min(accel,desiredZ-velocity.z));
+ const mx=velocity.x*dt,mz=velocity.z*dt;let moved=false;
+ if(!hit(p.x+mx,p.z,.48)){p.x+=mx;moved=Math.abs(mx)>.0001}else velocity.x=0;
+ if(!hit(p.x,p.z+mz,.48)){p.z+=mz;moved=moved||Math.abs(mz)>.0001}else velocity.z=0;
+ if(Math.hypot(velocity.x,velocity.z)>.04)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
+ ud.moveDir?.set(velocity.x,0,velocity.z);return moved;
+}
 function followSCPVelocity(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48;
  const velocity=ud.velocity||(ud.velocity=new T.Vector3()),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
@@ -867,78 +945,24 @@ function frame(now){
   }
   let currentObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
-  if(currentInvalid){scpTarget=null;scpInvestigation=null;scpTargetUntil=0;currentObj=null}
-  const targetIsValid=obj=>!!obj&&(obj===playerObj||(obj.userData.hp>0&&!obj.userData.dead));
-  const visiblePool=[];
-  // SCP only acquires targets he can actually see. Hidden targets remain in memory,
-  // but their live coordinates are no longer used once line of sight is lost.
-  for(const candidate of movingPool){
-   if(scpTargetLOS(bad.position.x,bad.position.z,candidate.obj.position.x,candidate.obj.position.z))visiblePool.push(candidate);
-  }
-  let currentVisible=!!(currentObj&&targetIsValid(currentObj)&&scpTargetLOS(bad.position.x,bad.position.z,currentObj.position.x,currentObj.position.z));
-  // The instant the current target disappears behind geometry, freeze its last
-  // visible position as an investigation destination.
-  if(scpTarget&&currentObj&&!currentVisible&&!scpInvestigation){
-   scpInvestigation={x:currentObj.position.x,z:currentObj.position.z,phase:'travel',startedAt:now,waitUntil:0};
-   scpTargetUntil=0;
-  }
-  // Any newly visible moving target interrupts the investigation immediately.
-  if(visiblePool.length){
-   let keepCurrent=currentVisible&&scpTarget&&now<scpTargetUntil;
-   if(keepCurrent){
-    const currentCandidate=visiblePool.find(t=>t.obj===currentObj);
-    if(!currentCandidate)keepCurrent=false;
-    else if(visiblePool.some(t=>t.obj!==currentObj&&t.moveSpeed>currentCandidate.moveSpeed*1.35))keepCurrent=false;
-   }
-   if(!keepCurrent){
+  if(currentInvalid){scpTarget=null;currentObj=null}
+  const visiblePool=movingPool.filter(t=>scpFOVTargetVisible(bad,t.obj));
+  const currentVisible=!!(currentObj&&(currentObj===playerObj||(currentObj.userData.hp>0&&!currentObj.userData.dead))&&scpFOVTargetVisible(bad,currentObj));
+  if(!currentVisible)scpTarget=null;
+  if(!scpTarget||now>=scpTargetUntil){
+   if(visiblePool.length){
     let pick=null,bestScore=-Infinity;
     for(const candidate of visiblePool){
-     const score=candidate.moveSpeed*2.0-candidate.distance*.035+(candidate.kind==='player'?.12:0);
+     const score=candidate.moveSpeed*2-candidate.distance*.035+(candidate.kind==='player'?.12:0);
      if(score>bestScore){bestScore=score;pick=candidate}
     }
-    if(pick){
-     scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};
-     scpTargetUntil=now+2800;
-     scpInvestigation=null;
-     currentObj=pick.obj;
-     currentVisible=true;
-    }
+    if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+2800;currentObj=pick.obj}
    }
   }
-  let scpMoved=false;
-  if(scpInvestigation){
-   if(scpInvestigation.phase==='travel'){
-    const remain=Math.hypot(scpInvestigation.x-bad.position.x,scpInvestigation.z-bad.position.z);
-    if(remain<=1.05){
-     scpInvestigation.phase='wait';
-     scpInvestigation.waitUntil=now+15000;
-     bad.userData.velocity?.set(0,0,0);
-     bad.userData.moveDir?.set(0,0,0);
-     bad.userData.elasticBand=null;
-    }else{
-     scpMoved=followSCPVelocity(bad,scpInvestigation.x,scpInvestigation.z,3.2,dt);
-    }
-   }else{
-    // Hold position at the last-seen spot for 15 seconds while checking for
-    // newly visible targets. Do not chase hidden actors' live positions.
-    bad.userData.velocity?.set(0,0,0);
-    bad.userData.moveDir?.set(0,0,0);
-    if(now>=scpInvestigation.waitUntil){
-     scpInvestigation=null;
-     scpTarget=null;
-     scpTargetUntil=0;
-    }
-   }
-  }else if(currentObj&&targetIsValid(currentObj)&&currentVisible){
-   bad.userData.targetLOSBlocked=false;
-   scpMoved=followSCPVelocity(bad,currentObj.position.x,currentObj.position.z,3.2,dt);
-  }else{
-   bad.userData.targetLOSBlocked=true;
-   // No visible target and no active investigation: continue the existing
-   // facility exploration behavior until a visible moving target is found.
-   const idleHeading=bad.userData.steeringVector||(bad.userData.steeringVector=new T.Vector3(0,0,1));
-   scpMoved=followSCPVelocity(bad,bad.position.x+idleHeading.x*12,bad.position.z+idleHeading.z*12,3.2,dt,true);
-  }
+  const targetObj=scpTarget?.kind==='player'?playerObj:(scpTarget?allies[scpTarget.index]:null);
+  const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead))&&scpFOVTargetVisible(bad,targetObj));
+  if(!targetValid)scpTarget=null;
+  const scpMoved=followSCPFOVScores(bad,targetValid?targetObj:null,3.2,dt);
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
   // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
