@@ -56,52 +56,55 @@ function echoSteer(obj,target,speed,dt,now){
  const bearing=target?scpEchoTargetBearings.get(target):null;
  const echoTarget=bearing&&now-bearing.at<9000?bearing:null;
  const targetAngle=echoTarget?Math.atan2(echoTarget.x-p.x,echoTarget.z-p.z):Math.atan2(f.x,f.z);
- if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- const rayCount=48,maxReach=7,originY=1.05,clearances=new Array(rayCount);
- let centerX=0,centerZ=0;
- for(let i=0;i<rayCount;i++){
-  const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a);
-  scpRaycaster.set(new T.Vector3(p.x,originY,p.z),new T.Vector3(dx,0,dz));
-  scpRaycaster.near=0;scpRaycaster.far=maxReach;
-  const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
-  clearances[i]=hits.length?Math.min(maxReach,hits[0].distance):maxReach;
- }
- // Compare opposite rays: bias toward the side with more room to keep SCP centered.
- for(let i=0;i<rayCount/2;i++){
-  const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a),difference=clearances[i]-clearances[i+rayCount/2];
-  centerX+=dx*difference;centerZ+=dz*difference;
- }
- const centerLen=Math.hypot(centerX,centerZ)||1;centerX/=centerLen;centerZ/=centerLen;
- let best=-Infinity,bestAngle=targetAngle,foundClear=false;
- for(let i=0;i<rayCount;i++){
-  const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a),clearance=clearances[i];
-  // Reject headings whose next short movement would collide; sample the whole step.
-  let blocked=false;for(const d of [.35,.7,1.05])if(hit(p.x+dx*d,p.z+dz*d,.46)){blocked=true;break}
-  let echoPenalty=0;
-  for(const o of scpEchoObstacles){const ox=o.x-p.x,oz=o.z-p.z,d=Math.hypot(ox,oz);if(d>9||d<.01)continue;const toward=(ox*dx+oz*dz)/d;if(toward>0)echoPenalty+=toward*toward*(9-d)*1.8}
-  const align=Math.cos(a-targetAngle),centerBias=dx*centerX+dz*centerZ;
-  const wallPenalty=clearance<.75?18:clearance<1.25?7:0;
-  const score=align*(echoTarget?12:1.2)+centerBias*2.0+Math.min(clearance,3)*.12-wallPenalty-echoPenalty-(blocked?40:0);
-  if(!blocked)foundClear=true;
-  if(score>best){best=score;bestAngle=a}
- }
- // If boxed in or overlapping a collider, stop pushing into it and search for the
- // nearest short collision-free escape heading rather than freezing permanently.
- if(!foundClear){
-  let escape=-Infinity;
-  for(let i=0;i<rayCount;i++){
-   const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a);
-   const free=!hit(p.x+dx*.22,p.z+dz*.22,.32);
-   const score=(free?100:0)+clearances[i];
-   if(score>escape){escape=score;bestAngle=a}
+ const blocked=(a,reach=1.25)=>{
+  const dx=Math.sin(a),dz=Math.cos(a);
+  for(const d of [.35,.7,reach])if(hit(p.x+dx*d,p.z+dz*d,.48))return true;
+  return false;
+ };
+ // Behavior tree: a priority selector runs obstacle steering when pursuit is blocked;
+ // otherwise it runs the direct pursuit action.
+ const actions={
+  steerAroundObjects(){
+   if(!blocked(targetAngle,1.35))return false;
+   let best=-Infinity,chosen=targetAngle,found=false;
+   const offsets=[-2.35,2.35,-1.85,1.85,-1.35,1.35,-.95,.95,-.62,.62,-.34,.34,Math.PI];
+   for(const offset of offsets){
+    const a=targetAngle+offset;
+    if(blocked(a,1.5))continue;
+    found=true;
+    const align=Math.cos(offset),momentum=Math.cos(a-Math.atan2(v.x,v.z));
+    let clearance=0;
+    for(const d of [.6,1.1,1.7,2.3])if(!hit(p.x+Math.sin(a)*d,p.z+Math.cos(a)*d,.48))clearance++;
+    const score=align*3+momentum*.35+clearance*.22;
+    if(score>best){best=score;chosen=a}
+   }
+   if(!found){
+    // Tight corner: test short steps and pick the least obstructed direction.
+    let escape=-Infinity;
+    for(let k=0;k<24;k++){
+     const a=k*Math.PI/12,dx=Math.sin(a),dz=Math.cos(a);
+     const score=(!hit(p.x+dx*.24,p.z+dz*.24,.38)?10:0)+(!hit(p.x+dx*.48,p.z+dz*.48,.38)?5:0);
+     if(score>escape){escape=score;chosen=a}
+    }
+   }
+   ud.btAction="steer around objects";
+   return chosen;
+  },
+  pursuit(){
+   ud.btAction="pursuit";
+   return targetAngle;
   }
- }
- const dx=Math.sin(bestAngle),dz=Math.cos(bestAngle),acc=10*dt;
+ };
+ const avoid=actions.steerAroundObjects();
+ const heading=avoid!==false?avoid:actions.pursuit();
+ const dx=Math.sin(heading),dz=Math.cos(heading),acc=10*dt;
  v.x+=Math.max(-acc,Math.min(acc,dx*speed-v.x));v.z+=Math.max(-acc,Math.min(acc,dz*speed-v.z));
  const mx=v.x*dt,mz=v.z*dt;let moved=false;
  if(!hit(p.x+mx,p.z,.48)){p.x+=mx;moved=Math.abs(mx)>.0001}else v.x=0;
  if(!hit(p.x,p.z+mz,.48)){p.z+=mz;moved=moved||Math.abs(mz)>.0001}else v.z=0;
- if(Math.hypot(v.x,v.z)>.04)obj.rotation.y=Math.atan2(v.x,v.z);ud.moveDir?.set(v.x,0,v.z);return moved;
+ if(Math.hypot(v.x,v.z)>.04)obj.rotation.y=Math.atan2(v.x,v.z);
+ ud.moveDir?.set(v.x,0,v.z);
+ return moved;
 }
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
 const SCP_SCORE_MEMORY='scp049-facility-score-memory-v1';
@@ -612,41 +615,7 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // 360-degree sphere-like ray fan: 32 horizontal rays and 16 rays each
 // on upper/lower rings. All rays inspect every direction around SCP.
 // SCP navigation is exclusively live 3D raycasting; no grid or score-map dependency.
-const scpRaycaster=new T.Raycaster();
-const scpRayObstacles=[];let scpObstacleMeshCount=-1;
-function refreshSCPObstacles(){scpRayObstacles.length=0;for(const m of navMeshes)if(m?.isMesh)scpRayObstacles.push(m);scpObstacleMeshCount=navMeshes.length}
-function scpRayClearSegment(x,z,nx,nz,r=.42){
- const dx=nx-x,dz=nz-z,len=Math.hypot(dx,dz);if(len<.001)return true;
- const dir=new T.Vector3(dx/len,0,dz/len),side=new T.Vector3(-dir.z,0,dir.x),originY=1.05;
- // Three parallel horizontal rays approximate SCP's body radius.
- for(const offset of [-r,0,r]){
-  scpRaycaster.set(new T.Vector3(x+side.x*offset,originY,z+side.z*offset),dir);
-  scpRaycaster.near=0;scpRaycaster.far=len;
-  if(scpRaycaster.intersectObjects(scpRayObstacles,false).length)return false;
- }
- return true;
-}
-// SCP uses continuous ground-level gradient sampling against real facility geometry.
-// No navigation cells, JSON scores, grid lookups, or A*: nearby physical obstacles
-// shorten sampled rays; longer clear ground rays pull SCP toward open space.
-function gradientSCP(x,z){
- if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
- let gx=0,gz=0,clearCount=0;const originY=1.05,maxReach=8;
- // Binary ray scores: unobstructed ray = 1, ray hitting geometry = 0.
- for(let k=0;k<48;k++){
-  const a=k*Math.PI/24,dx=Math.sin(a),dz=Math.cos(a);
-  scpRaycaster.set(new T.Vector3(x,originY,z),new T.Vector3(dx,0,dz));
-  scpRaycaster.near=0;scpRaycaster.far=maxReach;
-  const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
-  const score=hits.length?0:1;
-  if(score===1){gx+=dx;gz+=dz;clearCount++}
- }
- return {x:gx/(clearCount||1),z:gz/(clearCount||1),score:clearCount/48}
-}
-
-// Continuous velocity follower: SCP advances through breadcrumb waypoints in order.
-// No direct moveTo, raycasts, A*, Dijkstra, or flowfield movement.
-function followSCPBreadcrumbVelocity(obj,tx,tz,speed,dt){
+// SCP obstacle avoidance uses AABB collision checks in its behavior tree; no raycasting.\nfunction followSCPBreadcrumbVelocity(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  const route=ud.breadcrumbRoute,oldX=ud.breadcrumbTargetX,oldZ=ud.breadcrumbTargetZ,now=performance.now();
  if(!route?.length||Math.hypot(tx-(oldX??tx),tz-(oldZ??tz))>3.2||(ud.breadcrumbRouteBlocked&&now-(ud.breadcrumbBlockedAt||0)>.75)||ud.breadcrumbIndex>=route.length)buildSCPBreadcrumbRoute(obj,tx,tz,r);
