@@ -14,6 +14,57 @@ let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
 const heatNumberGroup=new T.Group();scene.add(heatNumberGroup);heatNumberGroup.visible=false;const heatNumberTextures=new Map();let heatNumberRefreshAt=0,heatNumberFieldKey='';
 const scpObservedMotion=new WeakMap();
+// SCP acoustic echolocation: expanding wavefronts register geometric contacts,
+// then return echoes to the source. No raycasts or LOS queries are involved.
+const scpEchoViz=new T.Group();scene.add(scpEchoViz);let scpEchoGizmos=true,scpNextPulse=0;
+const scpEchoPulses=[],scpEchoReturns=[],scpEchoMotion=new WeakMap(),scpEchoSeen=new WeakMap();
+const echoRingMat=new T.MeshBasicMaterial({color:0x55eaff,transparent:true,opacity:.72,side:T.DoubleSide,depthWrite:false});
+const returnMat=new T.MeshBasicMaterial({color:0xffd27a,transparent:true,opacity:.8,side:T.DoubleSide,depthWrite:false});
+const echoGeo=new T.TorusGeometry(1,.035,5,48);
+function echoRing(mat){const m=new T.Mesh(echoGeo,mat);m.rotation.x=Math.PI/2;scpEchoViz.add(m);return m}
+function emitSCPEcho(now){
+ const ring=echoRing(echoRingMat);ring.position.set(bad.position.x,.18,bad.position.z);
+ scpEchoPulses.push({ring,x:bad.position.x,z:bad.position.z,r:0,last:0,hit:new Set(),born:now});
+}
+function registerSCPEcho(x,z,obj,kind,now){
+ const ring=echoRing(returnMat);ring.position.set(x,.22,z);ring.scale.setScalar(.12);
+ const lineGeo=new T.BufferGeometry().setFromPoints([new T.Vector3(x,.22,z),new T.Vector3(bad.position.x,.22,bad.position.z)]);
+ const line=new T.Line(lineGeo,new T.LineBasicMaterial({color:0xffd27a,transparent:true,opacity:.75}));
+ scpEchoViz.add(line);scpEchoReturns.push({ring,line,x,z,born:now,arrive:now+Math.max(120,Math.hypot(x-bad.position.x,z-bad.position.z)/13*1000),obj,kind});
+ if(obj){const old=scpEchoMotion.get(obj),elapsed=old?Math.max(.016,(now-old.at)/1000):0;
+  const speed=old?Math.hypot(obj.position.x-old.x,obj.position.z-old.z)/elapsed:0;
+  scpEchoMotion.set(obj,{x:obj.position.x,z:obj.position.z,at:now});
+  if(speed>.32)scpEchoSeen.set(obj,{speed,at:now});
+ }
+}
+function updateSCPEcho(now,dt,targets){
+ if(now>=scpNextPulse){emitSCPEcho(now);scpNextPulse=now+2100}
+ for(let i=scpEchoPulses.length-1;i>=0;i--){
+  const p=scpEchoPulses[i],old=p.r;p.r=Math.min(26,p.r+9*dt);
+  p.ring.position.set(p.x,.18,p.z);p.ring.scale.setScalar(Math.max(.01,p.r));
+  // A wavefront touches each solid AABB when its radius reaches the nearest point.
+  for(let k=0;k<solid.length;k++){if(p.hit.has('s'+k))continue;const o=solid[k],nx=Math.max(o.x-o.w/2,Math.min(p.x,o.x+o.w/2)),nz=Math.max(o.z-o.d/2,Math.min(p.z,o.z+o.d/2)),d=Math.hypot(nx-p.x,nz-p.z);if(d>old&&d<=p.r){p.hit.add('s'+k);registerSCPEcho(nx,nz,null,'object',now)}}
+  for(const t of targets){if(p.hit.has(t.obj))continue;const d=Math.hypot(t.obj.position.x-p.x,t.obj.position.z-p.z);if(d>old&&d<=p.r){p.hit.add(t.obj);registerSCPEcho(t.obj.position.x,t.obj.position.z,t.obj,t.kind,now)}}
+  if(p.r>=26){scpEchoViz.remove(p.ring);p.ring.geometry.dispose();scpEchoPulses.splice(i,1)}
+ }
+ for(let i=scpEchoReturns.length-1;i>=0;i--){const e=scpEchoReturns[i],u=Math.min(1,(now-e.born)/Math.max(1,e.arrive-e.born));e.ring.position.set(e.x+(bad.position.x-e.x)*u,.22,e.z+(bad.position.z-e.z)*u);e.ring.scale.setScalar(.12+u*.28);e.line.geometry.setFromPoints([new T.Vector3(e.x,.22,e.z),new T.Vector3(bad.position.x,.22,bad.position.z)]);e.line.material.opacity=1-u;if(u>=1){if(e.obj){const seen=scpEchoSeen.get(e.obj);if(seen&&now-seen.at<7000)scpEchoSeen.set(e.obj,{speed:seen.speed,at:now,confirmed:true})}scpEchoViz.remove(e.ring,e.line);e.ring.geometry.dispose();e.line.geometry.dispose();e.line.material.dispose();scpEchoReturns.splice(i,1)}}
+ scpEchoViz.visible=scpEchoGizmos;
+}
+function magneticSteer(obj,target,speed,dt){
+ const p=obj.position,ud=obj.userData||(obj.userData={}),v=ud.velocity||(ud.velocity=new T.Vector3()),f=scpForward(obj);
+ let targetAngle=0;if(target){const dx=target.position.x-p.x,dz=target.position.z-p.z;targetAngle=Math.atan2(dx*f.z-dz*f.x,dx*f.x+dz*f.z)}
+ let best=-Infinity,bestAngle=0;
+ for(let i=0;i<36;i++){const a=-Math.PI+(Math.PI*2*i/36),dx=Math.sin(a),dz=Math.cos(a);let clearance=8;
+  for(const o of solid){const nx=Math.max(o.x-o.w/2,Math.min(p.x,o.x+o.w/2)),nz=Math.max(o.z-o.d/2,Math.min(p.z,o.z+o.d/2)),d=Math.hypot(nx-p.x,nz-p.z);if(d<5){const toward=(o.x-p.x)*dx+(o.z-p.z)*dz;if(toward>0)clearance=Math.min(clearance,Math.max(0,d-.7))}}
+  const align=target?Math.cos(Math.atan2(dx,dz)-targetAngle):Math.cos(Math.atan2(dx,dz)-Math.atan2(f.x,f.z))*.25;
+  const score=clearance*1.4+align*(target?5:1);if(score>best){best=score;bestAngle=a}
+ }
+ const dx=Math.sin(bestAngle),dz=Math.cos(bestAngle),acc=10*dt;
+ v.x+=Math.max(-acc,Math.min(acc,dx*speed-v.x));v.z+=Math.max(-acc,Math.min(acc,dz*speed-v.z));
+ const mx=v.x*dt,mz=v.z*dt;let moved=false;if(!hit(p.x+mx,p.z,.48)){p.x+=mx;moved=Math.abs(mx)>.0001}else v.x=0;if(!hit(p.x,p.z+mz,.48)){p.z+=mz;moved=moved||Math.abs(mz)>.0001}else v.z=0;
+ if(Math.hypot(v.x,v.z)>.04)obj.rotation.y=Math.atan2(v.x,v.z);ud.moveDir?.set(v.x,0,v.z);return moved;
+}
+
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
 const SCP_SCORE_MEMORY='scp049-facility-score-memory-v1';
 let scoreMemorySaveTimer=0,scoreMemoryDirty=false;function saveSCPScoreMemory(){scoreMemoryDirty=true;if(scoreMemorySaveTimer)return;scoreMemorySaveTimer=setTimeout(()=>{scoreMemorySaveTimer=0;if(!scoreMemoryDirty||!navData?.grid)return;scoreMemoryDirty=false;try{localStorage.setItem(SCP_SCORE_MEMORY,JSON.stringify({width:navData.width,height:navData.height,cellSize:navData.cellSize,origin:navData.origin,grid:navData.grid}))}catch(e){console.warn('SCP score memory save failed',e)}},2500)}
@@ -397,7 +448,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpEchoGizmos=!scpEchoGizmos;scpEchoViz.visible=scpEchoGizmos}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -911,17 +962,9 @@ function frame(now){
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   const playerObj=ctl.getObject();
   const livingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));
-  // Track world-position changes for every living target. No FOV, range,
-  // raycast, or line-of-sight test is used for target acquisition or pursuit.
-  const movingPool=[];
-  for(const candidate of livingPool){
-   const q=candidate.obj.position,prev=scpObservedMotion.get(candidate.obj);
-   scpObservedMotion.set(candidate.obj,{x:q.x,z:q.z,at:now});
-   const elapsed=prev?Math.max(.016,(now-prev.at)/1000):.016;
-   const moveSpeed=prev?Math.hypot(q.x-prev.x,q.z-prev.z)/elapsed:0;
-   const distance=Math.hypot(q.x-bad.position.x,q.z-bad.position.z);
-   if(prev&&moveSpeed>.32)movingPool.push({...candidate,moveSpeed,distance});
-  }
+  // Targets are only discovered when an emitted sound wave returns an echo.
+  updateSCPEcho(now,dt,livingPool);
+  const movingPool=livingPool.map(t=>{const seen=scpEchoSeen.get(t.obj);return seen&&seen.confirmed&&now-seen.at<7000?{...t,moveSpeed:seen.speed,distance:Math.hypot(t.obj.position.x-bad.position.x,t.obj.position.z-bad.position.z)}:null}).filter(Boolean);
   const currentObj=scpTarget?.obj||null;
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
   if(currentInvalid){scpTarget=null;scpTargetUntil=0}
@@ -937,10 +980,10 @@ function frame(now){
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
-  const scpMoved=followSCPFOVScores(bad,targetValid?targetObj:null,3.2,dt);
+  const scpMoved=magneticSteer(bad,targetValid?targetObj:null,3.2,dt);
   // Face the selected movement heading, not the moving target's position.
 if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
-  // Keep ray gizmos synchronized with SCP's current position every active frame, even when steering stalls.
+  // Magnetic proximity steering uses AABB geometry; acoustic echoes handle detection.
 
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
