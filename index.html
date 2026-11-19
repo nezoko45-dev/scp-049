@@ -561,7 +561,8 @@ function moveSCPWithJSONRay(obj,dx,dz,r=.38){return jsonSteerMove(obj,dx,dz,r)}
 // 360-degree sphere-like ray fan: 32 horizontal rays and 16 rays each
 // on upper/lower rings. All rays inspect every direction around SCP.
 // SCP navigation is exclusively live 3D raycasting; no grid or score-map dependency.
-// SCP obstacle avoidance uses AABB collision checks in its behavior tree; no raycasting.\nfunction followSCPBreadcrumbVelocity(obj,tx,tz,speed,dt){
+// SCP obstacle avoidance uses AABB collision checks in its behavior tree; no raycasting.
+function followSCPBreadcrumbVelocity(obj,tx,tz,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position,r=.48,velocity=ud.velocity||(ud.velocity=new T.Vector3()),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
  const route=ud.breadcrumbRoute,oldX=ud.breadcrumbTargetX,oldZ=ud.breadcrumbTargetZ,now=performance.now();
  if(!route?.length||Math.hypot(tx-(oldX??tx),tz-(oldZ??tz))>3.2||(ud.breadcrumbRouteBlocked&&now-(ud.breadcrumbBlockedAt||0)>.75)||ud.breadcrumbIndex>=route.length)buildSCPBreadcrumbRoute(obj,tx,tz,r);
