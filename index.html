@@ -959,7 +959,18 @@ function frame(now){
     // Keep all existing particles in place and move only the trail endpoint.
     const last=particleRoute[particleRoute.length-1];
     if(breadcrumbSegmentClear(last.x,last.z,tx,tz,.48)){
-     if(Math.hypot(last.x-tx,last.z-tz)>.025){
+     // Keep a compact breadcrumb chain: never let the moving target stretch
+     // the final segment. Extend it in short, evenly spaced steps instead.
+     const spacing=.85,dx=tx-last.x,dz=tz-last.z,distToTarget=Math.hypot(dx,dz);
+     if(distToTarget>spacing){
+      const steps=Math.floor(distToTarget/spacing);
+      for(let stepIndex=1;stepIndex<=steps;stepIndex++){
+       const t=Math.min(1,stepIndex*spacing/distToTarget);
+       particleRoute.push({x:last.x+dx*t,z:last.z+dz*t});
+      }
+      const end=particleRoute[particleRoute.length-1];
+      if(Math.hypot(end.x-tx,end.z-tz)>.025)particleRoute.push({x:tx,z:tz});
+     }else if(distToTarget>.025){
       if(particleRoute.length===1)particleRoute.push({x:tx,z:tz});
       else particleRoute[particleRoute.length-1]={x:tx,z:tz};
      }
