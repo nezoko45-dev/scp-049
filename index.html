@@ -159,48 +159,70 @@ function breadcrumbSegmentClear(ax,az,bx,bz,r=.48){
 }
 // Simple greedy breadcrumb generation: walk toward the target and add a
 // collision-checked detour breadcrumb only when the direct segment is blocked.
+// Simple AABB-corner breadcrumb planner. It walks directly toward the target
+// until an object's expanded bounds block the corridor, then places one
+// breadcrumb just outside a reachable corner and continues toward the target.
 function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
- const p=obj.position,step=.85,maxBreadcrumbs=420,route=[{x:p.x,z:p.z}],visited=[];
- let x=p.x,z=p.z,prevX=0,prevZ=0,stalled=0;
- for(let n=0;n<maxBreadcrumbs;n++){
-  const dx=tx-x,dz=tz-z,remaining=Math.hypot(dx,dz);
-  if(remaining<.3)break;
-  // If the complete remaining corridor is clear, connect straight to target.
+ const p=obj.position,spacing=.85,route=[{x:p.x,z:p.z}],cornersVisited=[];
+ let x=p.x,z=p.z,complete=false;
+ for(let n=0;n<80;n++){
+  const dx=tx-x,dz=tz-z,distance=Math.hypot(dx,dz);
+  if(distance<.2){complete=true;break}
   if(breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(x,z,tx,tz,r)){
-   route.push({x:tx,z:tz});x=tx;z=tz;break;
+   complete=true;break;
   }
-  const ux=dx/remaining,uz=dz/remaining;
-  let best=null,bestScore=Infinity;
-  // Try target-facing headings first, then progressively wider detours.
-  for(const degrees of [0,15,-15,30,-30,45,-45,60,-60,75,-75,90,-90,110,-110,130,-130,150,-150,180]){
-   const a=Math.atan2(ux,uz)+degrees*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
-   const nx=x+vx*step,nz=z+vz*step,nd=Math.hypot(tx-nx,tz-nz);
-   if(!breadcrumbClear(nx,nz,r)||!breadcrumbSegmentClear(x,z,nx,nz,r))continue;
-   if(visited.some(q=>Math.hypot(q.x-nx,q.z-nz)<.7))continue;
-   // Permit a small temporary increase in distance to get around a corner,
-   // but reject large backward steps so the trail keeps progressing to target.
-   // Allow a short temporary retreat: getting around the side of a wall
-   // often requires moving slightly farther from a target hidden behind it.
-   if(nd>remaining+1.25)continue;
-   let clearance=2.5;
+  // Find the first AABB intersected by the straight corridor to the target.
+  let blocker=null,blockDistance=Infinity;
+  const samples=Math.max(2,Math.ceil(distance/.12));
+  for(let k=1;k<=samples;k++){
+   const t=k/samples,sx=x+dx*t,sz=z+dz*t;
    for(const o of solid){
-    const gx=Math.max(0,Math.abs(nx-o.x)-o.w/2-r);
-    const gz=Math.max(0,Math.abs(nz-o.z)-o.d/2-r);
-    clearance=Math.min(clearance,Math.hypot(gx,gz));
+    if(Math.abs(sx-o.x)<o.w/2+r&&Math.abs(sz-o.z)<o.d/2+r){
+     const along=distance*t;
+     if(along<blockDistance){blockDistance=along;blocker=o}
+    }
    }
-   const turn=(prevX||prevZ)?1-(vx*prevX+vz*prevZ):0;
-   const progress=remaining-nd;
-   const score=nd+turn*.22-Math.min(clearance,1.5)*.08+(progress<.02?.18:0);
-   if(score<bestScore){bestScore=score;best={x:nx,z:nz,dx:vx,dz:vz,progress}}
+   if(blocker)break;
   }
-  if(!best){stalled++;break}
-  if(best.progress<.025)stalled++;else stalled=0;
-  if(stalled>8)break;
-  x=best.x;z=best.z;prevX=best.dx;prevZ=best.dz;
-  route.push({x,z});visited.push({x,z});
+  if(!blocker)break;
+  const pad=r+.16,halfW=blocker.w/2+pad,halfD=blocker.d/2+pad;
+  const options=[
+   {x:blocker.x-halfW,z:blocker.z-halfD},
+   {x:blocker.x-halfW,z:blocker.z+halfD},
+   {x:blocker.x+halfW,z:blocker.z-halfD},
+   {x:blocker.x+halfW,z:blocker.z+halfD}
+  ];
+  let best=null,bestScore=Infinity;
+  for(const q of options){
+   if(!breadcrumbClear(q.x,q.z,r))continue;
+   if(!breadcrumbSegmentClear(x,z,q.x,q.z,r))continue;
+   if(cornersVisited.some(v=>Math.hypot(v.x-q.x,v.z-q.z)<.5))continue;
+   const toTarget=Math.hypot(tx-q.x,tz-q.z);
+   const directAfter=breadcrumbSegmentClear(q.x,q.z,tx,tz,r);
+   // Prefer a corner that clears the target corridor; otherwise choose the
+   // shortest reachable corner route and let the next pass handle later bounds.
+   const score=Math.hypot(q.x-x,q.z-z)+toTarget+(directAfter?0:1000);
+   if(score<bestScore){bestScore=score;best=q}
+  }
+  if(!best)break;
+  const leg=Math.hypot(best.x-x,best.z-z),steps=Math.max(1,Math.ceil(leg/spacing));
+  for(let k=1;k<=steps;k++){
+   const t=k/steps;route.push({x:x+(best.x-x)*t,z:z+(best.z-z)*t});
+  }
+  x=best.x;z=best.z;cornersVisited.push(best);
  }
- const ud=obj.userData;
- ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=false;
+ // Finish with short, evenly spaced breadcrumbs along the final clear leg.
+ if(breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(x,z,tx,tz,r)){
+  const leg=Math.hypot(tx-x,tz-z),steps=Math.max(1,Math.ceil(leg/spacing));
+  if(leg>.05)for(let k=1;k<=steps;k++){
+   const t=k/steps;route.push({x:x+(tx-x)*t,z:z+(tz-z)*t});
+  }
+ }else if(route.length===1){
+  // Keep a single safe start point if no corner can be reached.
+  route.push({x:p.x,z:p.z});
+ }
+ const ud=obj.userData||(obj.userData={});
+ ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=!complete&&route.length<2;
  return route;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
@@ -943,57 +965,20 @@ function frame(now){
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
-  // Refresh the chain every frame, but preserve its established path.
-  // In open space only the final particle follows the target. Around an
-  // obstacle, rebuild only a short tail from the nearest usable old particle.
+  // Rebuild a simple AABB breadcrumb route only when the target has moved
+  // enough; keep the existing path stable between replans.
   let particleRoute=bad.userData.particleRoute||[];
   if(targetValid){
-   const ud=bad.userData,tx=targetObj.position.x,tz=targetObj.position.z;
+   const ud=bad.userData,tx=targetObj.position.x,tz=targetObj.position.z,nowRoute=performance.now();
    const newTarget=ud.particleRouteTargetObj!==targetObj;
    const routeMissing=particleRoute.length<2;
-   if(newTarget||routeMissing){
+   const goal=ud.particleRouteGoal;
+   const targetMoved=!goal||Math.hypot(tx-goal.x,tz-goal.z)>.85;
+   const replanDue=nowRoute-(ud.particleRouteAt||0)>450;
+   if(newTarget||routeMissing||(targetMoved&&replanDue)){
     particleRoute=buildSCPBreadcrumbRoute(bad,tx,tz,.48);
     ud.particleRoute=particleRoute;ud.particleRouteGoal={x:tx,z:tz};
-    ud.particleRouteTargetObj=targetObj;ud.particleIndex=1;
-   }else{
-    // Keep all existing particles in place and move only the trail endpoint.
-    const last=particleRoute[particleRoute.length-1];
-    if(breadcrumbSegmentClear(last.x,last.z,tx,tz,.48)){
-     // Keep a compact breadcrumb chain: never let the moving target stretch
-     // the final segment. Extend it in short, evenly spaced steps instead.
-     const spacing=.85,dx=tx-last.x,dz=tz-last.z,distToTarget=Math.hypot(dx,dz);
-     if(distToTarget>spacing){
-      const steps=Math.floor(distToTarget/spacing);
-      for(let stepIndex=1;stepIndex<=steps;stepIndex++){
-       const t=Math.min(1,stepIndex*spacing/distToTarget);
-       particleRoute.push({x:last.x+dx*t,z:last.z+dz*t});
-      }
-      const end=particleRoute[particleRoute.length-1];
-      if(Math.hypot(end.x-tx,end.z-tz)>.025)particleRoute.push({x:tx,z:tz});
-     }else if(distToTarget>.025){
-      if(particleRoute.length===1)particleRoute.push({x:tx,z:tz});
-      else particleRoute[particleRoute.length-1]={x:tx,z:tz};
-     }
-    }else{
-     // Target is around/behind an object: replace only the end section.
-     // Search backward for a stable particle from which a clear detour can form.
-     const active=Math.max(1,ud.particleIndex||1);
-     let replanned=false;
-     for(let anchorIndex=particleRoute.length-2;anchorIndex>=Math.max(0,active-1,particleRoute.length-15);anchorIndex--){
-      const anchor=particleRoute[anchorIndex],temp={position:{x:anchor.x,z:anchor.z},userData:{}};
-      const tail=buildSCPBreadcrumbRoute(temp,tx,tz,.48);
-      if(tail.length>1){
-       particleRoute=particleRoute.slice(0,anchorIndex).concat(tail);
-       ud.particleRoute=particleRoute;ud.particleRouteGoal={x:tx,z:tz};
-       ud.particleIndex=Math.max(1,Math.min(active,anchorIndex+1));
-       replanned=true;break;
-      }
-     }
-     // If no tail can be built, leave the current chain untouched rather
-     // than snapping every particle through the obstacle.
-     if(!replanned)ud.particleRouteGoal=ud.particleRouteGoal||{x:tx,z:tz};
-    }
-    ud.particleRoute=particleRoute;
+    ud.particleRouteTargetObj=targetObj;ud.particleRouteAt=nowRoute;ud.particleIndex=1;
    }
   }else{
    particleRoute=[{x:bad.position.x,z:bad.position.z}];
