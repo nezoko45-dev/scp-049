@@ -230,76 +230,82 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
 function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
  const p=obj.position,ud=obj.userData||(obj.userData={});
  const velocity=ud.velocity||(ud.velocity=new T.Vector3());
- let dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- if(dist<.001){velocity.multiplyScalar(Math.exp(-4*dt));return false}
- const targetX=dx/dist,targetZ=dz/dist;
- let forceX=targetX,forceZ=targetZ,avoidX=0,avoidZ=0,nearest=Infinity;
+ const distToTarget=Math.hypot(tx-p.x,tz-p.z);
+ if(distToTarget<.001){velocity.multiplyScalar(Math.exp(-4*dt));return false}
+ const targetX=(tx-p.x)/distToTarget,targetZ=(tz-p.z)/distToTarget;
  const influence=4.8;
+ let forceX=targetX,forceZ=targetZ,avoidX=0,avoidZ=0,nearest=Infinity;
+ // AABB repulsion plus one persistent wall-follow side. Do not flip sides
+ // independently for each collider; that caused competing obstacles to jitter.
  for(const o of solid){
-  const hx=o.w/2+r,hz=o.d/2+r;
+  const hx=o.w*.5+r,hz=o.d*.5+r;
   const qx=Math.max(o.x-hx,Math.min(p.x,o.x+hx));
   const qz=Math.max(o.z-hz,Math.min(p.z,o.z+hz));
   let ax=p.x-qx,az=p.z-qz,d=Math.hypot(ax,az);
   if(d>influence)continue;
   if(d<.001){
    const exits=[
-    {x:-(hx-(p.x-o.x)),z:0,d:hx-(p.x-o.x)},
-    {x:hx+(p.x-o.x),z:0,d:hx+(p.x-o.x)},
-    {x:0,z:-(hz-(p.z-o.z)),d:hz-(p.z-o.z)},
-    {x:0,z:hz+(p.z-o.z),d:hz+(p.z-o.z)}
+    {x:-(hx+(p.x-o.x)),z:0,d:hx+(p.x-o.x)},
+    {x:hx-(p.x-o.x),z:0,d:hx-(p.x-o.x)},
+    {x:0,z:-(hz+(p.z-o.z)),d:hz+(p.z-o.z)},
+    {x:0,z:hz-(p.z-o.z),d:hz-(p.z-o.z)}
    ].sort((a,b)=>a.d-b.d);
    ax=exits[0].x;az=exits[0].z;d=Math.max(.05,Math.hypot(ax,az));
   }
   const nx=ax/d,nz=az/d,w=Math.pow(Math.max(0,(influence-d)/influence),2);
-  avoidX+=nx*w*3.2;avoidZ+=nz*w*3.2;nearest=Math.min(nearest,d);
-  // Add a tangent that travels around the same side instead of reversing
-  // the avoidance direction every frame.
+  avoidX+=nx*w*3.8;avoidZ+=nz*w*3.8;nearest=Math.min(nearest,d);
   const side=ud.steerSide||1;
-  let txv=-nz*side,tzv=nx*side;
-  if(txv*targetX+tzv*targetZ<0){ud.steerSide=-side;txv=-txv;tzv=-tzv}
-  const tangentWeight=w*(d<1.4?1.35:.55);
-  avoidX+=txv*tangentWeight;avoidZ+=tzv*tangentWeight;
+  avoidX+=(-nz*side)*w*(d<1.5?1.25:.55);
+  avoidZ+=(nx*side)*w*(d<1.5?1.25:.55);
  }
  forceX+=avoidX;forceZ+=avoidZ;
  let fl=Math.hypot(forceX,forceZ);
  if(fl<.001){forceX=targetX;forceZ=targetZ;fl=1}
  forceX/=fl;forceZ/=fl;
- // Persist and smoothly rotate the steering vector rather than recomputing
- // a route or snapping to a new heading every frame.
  let sx=ud.steerX??targetX,sz=ud.steerZ??targetZ;
  const blend=1-Math.exp(-Math.max(0,dt)*5.5);
  sx+=(forceX-sx)*blend;sz+=(forceZ-sz)*blend;
  let sl=Math.hypot(sx,sz)||1;sx/=sl;sz/=sl;
- // Keep the vector from pointing into a blocked AABB. Try small rotations
- // in the remembered wall-follow direction until a clear step is found.
- const step=speed*dt;
+ const step=Math.max(.025,speed*dt);
  let chosen=null;
- for(const turn of [0,25,-25,50,-50,80,-80,115,-115,160,-160,180]){
+ // Score candidate headings by progress, clearance, and remembered side.
+ const turns=[0,20,-20,40,-40,65,-65,95,-95,135,-135,180];
+ let bestScore=-Infinity;
+ for(const turn of turns){
   const a=Math.atan2(sx,sz)+turn*Math.PI/180,cx=Math.sin(a),cz=Math.cos(a);
   const nx=p.x+cx*step,nz=p.z+cz*step;
-  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){chosen={x:cx,z:cz,nx,nz};break}
+  if(scpGroundScore(nx,nz,r)!==1||hit(nx,nz,r))continue;
+  const progress=cx*targetX+cz*targetZ;
+  const sideBias=(turn===0?0:(Math.sign(turn)===(ud.steerSide||1)?0.08:0));
+  const score=progress+sideBias;
+  if(score>bestScore){bestScore=score;chosen={x:cx,z:cz,nx,nz}}
  }
  if(!chosen){
   velocity.multiplyScalar(Math.exp(-5*dt));
-  ud.steerX=sx;ud.steerZ=sz;ud.moveDir?.set(0,0,0);return false;
+  ud.steerX=sx;ud.steerZ=sz;ud.moveDir?.set(0,0,0);
+  ud.steerStuck=(ud.steerStuck||0)+dt;
+  if(ud.steerStuck>1.1){ud.steerSide=-(ud.steerSide||1);ud.steerStuck=0}
+  return false;
  }
  ud.steerX=chosen.x;ud.steerZ=chosen.z;
- const desiredVX=chosen.x*speed,desiredVZ=chosen.z*speed,accel=9.0*dt;
+ const desiredVX=chosen.x*speed,desiredVZ=chosen.z*speed,accel=9*dt;
  let vx=desiredVX-velocity.x,vz=desiredVZ-velocity.z,change=Math.hypot(vx,vz);
  if(change>accel&&change>0){vx*=accel/change;vz*=accel/change}
  velocity.x+=vx;velocity.z+=vz;
- let mx=velocity.x*dt,mz=velocity.z*dt;
- let nx=p.x+mx,nz=p.z+mz;
- if(scpGroundScore(nx,nz,r)!==1||hit(nx,nz,r)){
-  // Slide along an AABB face when only one velocity component is blocked.
-  if(scpGroundScore(p.x+mx,p.z,r)===1&&!hit(p.x+mx,p.z,r)){p.x+=mx;velocity.z=0}
-  else velocity.x=0;
-  if(scpGroundScore(p.x,p.z+mz,r)===1&&!hit(p.x,p.z+mz,r)){p.z+=mz;velocity.x=0}
-  else velocity.z=0;
- }else{p.x=nx;p.z=nz}
+ let mx=velocity.x*dt,mz=velocity.z*dt,nx=p.x+mx,nz=p.z+mz,moved=false;
+ if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){p.x=nx;p.z=nz;moved=Math.hypot(mx,mz)>.0001}
+ else{
+  if(scpGroundScore(p.x+mx,p.z,r)===1&&!hit(p.x+mx,p.z,r)){p.x+=mx;moved=true}else velocity.x=0;
+  if(scpGroundScore(p.x,p.z+mz,r)===1&&!hit(p.x,p.z+mz,r)){p.z+=mz;moved=true}else velocity.z=0;
+ }
+ const movedDistance=Math.hypot(p.x-(ud.steerLastX??p.x),p.z-(ud.steerLastZ??p.z));
+ ud.steerProgress=(ud.steerProgress||0)+movedDistance;
+ ud.steerLastX=p.x;ud.steerLastZ=p.z;
+ ud.steerStuck=movedDistance<.012?(ud.steerStuck||0)+dt:0;
+ if(ud.steerStuck>1.1){ud.steerSide=-(ud.steerSide||1);ud.steerStuck=0;ud.steerX=-ud.steerX;ud.steerZ=-ud.steerZ}
  ud.moveDir?.set(velocity.x,0,velocity.z);
  if(velocity.lengthSq()>.001)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- return velocity.lengthSq()>.0025;
+ return moved||velocity.lengthSq()>.0025;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
@@ -500,40 +506,72 @@ function createSurvivor(){
 }
 for(let i=0;i<4;i++){let g=createSurvivor();g.position.set([-8,8,-8,8][i],0,[12,12,-12,-12][i]);scene.add(g);allies.push(g)}
 let zombieTemplate=null,zombieClips={idle:null,walk:null,attack:null},zombieModelReady=false;
+let pendingZombieSpawns=0,damageSinceZombie=0,lastAutomaticZombieSpawn=0;
+function createFallbackZombieModel(){
+ const root=new T.Group();
+ const flesh=new T.MeshStandardMaterial({color:0x66745c,roughness:.95});
+ const dark=new T.MeshStandardMaterial({color:0x252d29,roughness:1});
+ const eye=new T.MeshStandardMaterial({color:0xd7b84a,emissive:0x554000});
+ function part(geo,mat,x,y,z,sx=1,sy=1,sz=1){const m=new T.Mesh(geo,mat);m.position.set(x,y,z);m.scale.set(sx,sy,sz);root.add(m);return m}
+ part(new T.CapsuleGeometry(.27,.62,4,7),flesh,0,1.02,0);
+ part(new T.SphereGeometry(.28,10,8),flesh,0,1.57,-.04,1.1,.85,1);
+ part(new T.BoxGeometry(.48,.18,.22),dark,0,1.45,-.2);
+ part(new T.SphereGeometry(.055,8,6),eye,-.12,1.6,-.27);
+ part(new T.SphereGeometry(.055,8,6),eye,.12,1.6,-.27);
+ part(new T.CapsuleGeometry(.09,.42,3,6),flesh,-.34,1.05,0,.9,1,.9);
+ part(new T.CapsuleGeometry(.09,.42,3,6),flesh,.34,1.05,0,.9,1,.9);
+ part(new T.CapsuleGeometry(.11,.42,3,6),dark,-.14,.35,0,.8,1,.8);
+ part(new T.CapsuleGeometry(.11,.42,3,6),dark,.14,.35,0,.8,1,.8);
+ return root;
+}
+function drainPendingZombieSpawns(){
+ while(pendingZombieSpawns>0&&zombies.length<8){pendingZombieSpawns--;spawnZombie()}
+}
 new GLTFLoader().load('./headcrab_zombie.glb',g=>{
  zombieTemplate=g.scene;
- const findClip=(re)=>g.animations.find(c=>re.test(c.name));
+ const findClip=re=>g.animations.find(c=>re.test(c.name));
  zombieClips.idle=findClip(/idle|stand/i)||null;
  zombieClips.walk=findClip(/walk/i)||null;
  zombieClips.attack=g.animations.find(c=>c.name==='AttackD')||findClip(/^attackd$/i)||findClip(/attackd/i)||null;
  zombieModelReady=true;
  console.info('Zombie GLB ready; embedded animations:',g.animations.map(c=>c.name));
- while(pendingZombieSpawns>0&&zombies.length<8){pendingZombieSpawns--;spawnZombie();}
-},undefined,e=>console.error('headcrab_zombie.glb failed to load',e));
-let pendingZombieSpawns=0,damageSinceZombie=0;
+ drainPendingZombieSpawns();
+},undefined,e=>{
+ console.error('headcrab_zombie.glb failed to load; using procedural zombie fallback',e);
+ zombieModelReady=true;
+ drainPendingZombieSpawns();
+});
 function spawnZombie(){
- if(!zombieModelReady||!zombieTemplate){pendingZombieSpawns++;return false}
+ if(!zombieModelReady){pendingZombieSpawns=Math.min(8,pendingZombieSpawns+1);return false}
  if(zombies.length>=8)return false;
- const model=cloneSkeleton(zombieTemplate),g=new T.Group();
+ const model=zombieTemplate?cloneSkeleton(zombieTemplate):createFallbackZombieModel(),g=new T.Group();
  model.updateMatrixWorld(true);
  const height=Math.max(.01,new T.Box3().setFromObject(model).getSize(new T.Vector3()).y);
- model.scale.setScalar(1.85/height);model.updateMatrixWorld(true);
+ if(zombieTemplate){model.scale.setScalar(1.85/height);model.updateMatrixWorld(true)}
  const bounds=new T.Box3().setFromObject(model);model.position.y-=bounds.min.y;
  g.add(model);
- g.position.set(bad.position.x+(Math.random()-.5)*10,0,bad.position.z+(Math.random()-.5)*10);
+ // Try nearby offsets until the zombie starts outside wall/object bounds.
+ let placed=false;
+ for(let i=0;i<16;i++){
+  const angle=Math.random()*Math.PI*2,range=3+Math.random()*7;
+  const x=bad.position.x+Math.cos(angle)*range,z=bad.position.z+Math.sin(angle)*range;
+  if(!hit(x,z,.42)){g.position.set(x,0,z);placed=true;break}
+ }
+ if(!placed)g.position.set(bad.position.x+6,0,bad.position.z+6);
  const mixer=new T.AnimationMixer(model),actions={};
  for(const [key,clip] of Object.entries(zombieClips))if(clip)actions[key]=mixer.clipAction(clip);
  const initial=actions.idle||actions.walk||actions.attack;
  if(initial)initial.reset().fadeIn(.15).play();
  g.userData.hp=15;g.userData.mixer=mixer;g.userData.actions=actions;g.userData.currentAction=initial||null;
- for(const [key,action] of Object.entries(actions)){action.setLoop(T.LoopRepeat,Infinity);action.clampWhenFinished=false}
+ g.userData.velocity=new T.Vector3();g.userData.steerX=0;g.userData.steerZ=1;g.userData.steerSide=Math.random()<.5?-1:1;
+ for(const action of Object.values(actions)){action.setLoop(T.LoopRepeat,Infinity);action.clampWhenFinished=false}
  g.userData.targetObj=null;g.userData.targetUntil=0;g.userData.attackT=0;g.userData.lastNearbyDamage=0;
  makeAIFOV(g,0xffb84a);
- scene.add(g);zombies.push(g);return true;
+ scene.add(g);zombies.push(g);console.info('Zombie spawned:',zombies.length,'/ 8');return true;
 }
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);damageSinceZombie+=amount;
- // Preserve the 3% chance, with a guaranteed spawn after 900 cumulative boss damage.
- if(Math.random()<.03||damageSinceZombie>=900){if(damageSinceZombie>=900)damageSinceZombie-=900;spawnZombie();}
+ // Random chance plus deterministic reinforcement every 450 damage.
+ if(Math.random()<.03||damageSinceZombie>=450){damageSinceZombie=Math.max(0,damageSinceZombie-450);spawnZombie();}
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
@@ -947,6 +985,8 @@ function frame(now){
  let dt=Math.min(.05,(now-last)/1000);last=now;frameDelta=dt;
  if(active&&!dead){
   streamFacility(now);
+  // Reinforcements also arrive on a timer, even if the boss is not being hit.
+  if(now-lastAutomaticZombieSpawn>28000&&zombies.length<8){lastAutomaticZombieSpawn=now;spawnZombie();}
   if(heatNumbersVisible)refreshHeatNumbers();
   allies.forEach(a=>{if(a.userData.hp<=0){if(!a.userData.respawnAt)a.userData.respawnAt=now+6000;if(now>=a.userData.respawnAt){a.userData.hp=150;a.userData.dead=false;a.visible=true;a.position.set((Math.random()-.5)*18,0,12+Math.random()*12);a.userData.path=[];a.userData.respawnAt=0;}else{a.userData.dead=true;a.visible=false;return;}}
    let dx=bad.position.x-a.position.x,dz=bad.position.z-a.position.z,d=Math.hypot(dx,dz);
@@ -978,7 +1018,7 @@ function frame(now){
    if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
     // Keep pursuing the globally acquired target; local FOV scanning in the
     // shared velocity controller handles obstacle avoidance only.
-    zombieMoved=followSCPVelocity(z,tp.x,tp.z,2.35,dt);
+    zombieMoved=persistentAABBSteerMove(z,tp.x,tp.z,2.35,dt,.42);
     if(z.userData.moveDir?.lengthSq()>.001)z.rotation.y=Math.atan2(z.userData.moveDir.x,z.userData.moveDir.z);
    }else if(target&&d<=1.05){
     z.userData.velocity?.multiplyScalar(Math.exp(-5.5*dt));
@@ -987,7 +1027,7 @@ function frame(now){
     const v=z.userData.velocity||(z.userData.velocity=new T.Vector3());
     const h=z.userData.steeringVector||(z.userData.steeringVector=new T.Vector3(0,0,1));
     if(v.length()<.45)v.set(h.x*1.1,0,h.z*1.1);
-    zombieMoved=followSCPVelocity(z,z.position.x+h.x*8,z.position.z+h.z*8,1.35,dt,true);
+    zombieMoved=persistentAABBSteerMove(z,z.position.x+h.x*8,z.position.z+h.z*8,1.35,dt,.42);
    }
    // Imported GLB: exact AttackD clip while attacking, Walk while travelling, Idle at rest.
    const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
