@@ -177,7 +177,9 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
    if(visited.some(q=>Math.hypot(q.x-nx,q.z-nz)<.7))continue;
    // Permit a small temporary increase in distance to get around a corner,
    // but reject large backward steps so the trail keeps progressing to target.
-   if(nd>remaining+.42)continue;
+   // Allow a short temporary retreat: getting around the side of a wall
+   // often requires moving slightly farther from a target hidden behind it.
+   if(nd>remaining+1.25)continue;
    let clearance=2.5;
    for(const o of solid){
     const gx=Math.max(0,Math.abs(nx-o.x)-o.w/2-r);
@@ -939,7 +941,23 @@ function frame(now){
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
-  const particleRoute=targetValid?buildSCPBreadcrumbRoute(bad,targetObj.position.x,targetObj.position.z,.48):[{x:bad.position.x,z:bad.position.z}];
+  // Keep the particle chain persistent instead of rebuilding it every frame.
+  // Replan only after meaningful target/SCP movement or when its next segment is blocked.
+  let particleRoute=bad.userData.particleRoute||[];
+  if(targetValid){
+   const tx=targetObj.position.x,tz=targetObj.position.z,ud=bad.userData;
+   const last=ud.particleRouteTarget||{x:NaN,z:NaN},origin=ud.particleRouteOrigin||{x:NaN,z:NaN};
+   const targetShift=Math.hypot(tx-last.x,tz-last.z),scpShift=Math.hypot(bad.position.x-origin.x,bad.position.z-origin.z);
+   const routeMissing=particleRoute.length<2;
+   const nextBlocked=!routeMissing&&!breadcrumbSegmentClear(bad.position.x,bad.position.z,particleRoute[Math.min(1,particleRoute.length-1)].x,particleRoute[Math.min(1,particleRoute.length-1)].z,.48);
+   if(routeMissing||targetShift>.7||scpShift>1.1||nextBlocked){
+    particleRoute=buildSCPBreadcrumbRoute(bad,tx,tz,.48);
+    ud.particleRoute=particleRoute;ud.particleRouteTarget={x:tx,z:tz};ud.particleRouteOrigin={x:bad.position.x,z:bad.position.z};
+   }
+  }else{
+   particleRoute=[{x:bad.position.x,z:bad.position.z}];
+   bad.userData.particleRoute=particleRoute;bad.userData.particleRouteTarget=null;bad.userData.particleRouteOrigin={x:bad.position.x,z:bad.position.z};
+  }
   updateSCPParticleTrail(particleRoute);
   const scpMoved=followSCPParticleChain(bad,particleRoute,3.2,dt);
 
