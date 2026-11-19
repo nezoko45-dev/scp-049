@@ -17,7 +17,7 @@ const scpObservedMotion=new WeakMap();
 // SCP acoustic echolocation: expanding wavefronts register geometric contacts,
 // then return echoes to the source. No raycasts or LOS queries are involved.
 const scpEchoViz=new T.Group();scene.add(scpEchoViz);let scpEchoGizmos=true,scpNextPulse=0;
-const scpEchoPulses=[],scpEchoReturns=[],scpEchoObstacles=[],scpEchoMotion=new WeakMap(),scpEchoSeen=new WeakMap();
+const scpEchoPulses=[],scpEchoReturns=[],scpEchoObstacles=[],scpEchoTargetBearings=new WeakMap(),scpEchoMotion=new WeakMap(),scpEchoSeen=new WeakMap();
 const echoRingMat=new T.MeshBasicMaterial({color:0x55eaff,transparent:true,opacity:.72,side:T.DoubleSide,depthWrite:false});
 const returnMat=new T.MeshBasicMaterial({color:0xffd27a,transparent:true,opacity:.8,side:T.DoubleSide,depthWrite:false});
 const echoGeo=new T.TorusGeometry(1,.035,5,48);
@@ -47,36 +47,31 @@ function updateSCPEcho(now,dt,targets){
   for(const t of targets){if(p.hit.has(t.obj))continue;const d=Math.hypot(t.obj.position.x-p.x,t.obj.position.z-p.z);if(d>old&&d<=p.r){p.hit.add(t.obj);registerSCPEcho(t.obj.position.x,t.obj.position.z,t.obj,t.kind,now)}}
   if(p.r>=26){scpEchoViz.remove(p.ring);p.ring.geometry.dispose();scpEchoPulses.splice(i,1)}
  }
- for(let i=scpEchoReturns.length-1;i>=0;i--){const e=scpEchoReturns[i],u=Math.min(1,(now-e.born)/Math.max(1,e.arrive-e.born));e.ring.position.set(e.x+(bad.position.x-e.x)*u,.22,e.z+(bad.position.z-e.z)*u);e.ring.scale.setScalar(.12+u*.28);e.line.geometry.setFromPoints([new T.Vector3(e.x,.22,e.z),new T.Vector3(bad.position.x,.22,bad.position.z)]);e.line.material.opacity=1-u;if(u>=1){if(e.obj){const seen=scpEchoSeen.get(e.obj);if(seen&&now-seen.at<7000)scpEchoSeen.set(e.obj,{speed:seen.speed,at:now,confirmed:true})}else{scpEchoObstacles.push({x:e.x,z:e.z,at:now});if(scpEchoObstacles.length>180)scpEchoObstacles.shift()}scpEchoViz.remove(e.ring,e.line);e.ring.geometry.dispose();e.line.geometry.dispose();e.line.material.dispose();scpEchoReturns.splice(i,1)}}
+ for(let i=scpEchoReturns.length-1;i>=0;i--){const e=scpEchoReturns[i],u=Math.min(1,(now-e.born)/Math.max(1,e.arrive-e.born));e.ring.position.set(e.x+(bad.position.x-e.x)*u,.22,e.z+(bad.position.z-e.z)*u);e.ring.scale.setScalar(.12+u*.28);e.line.geometry.setFromPoints([new T.Vector3(e.x,.22,e.z),new T.Vector3(bad.position.x,.22,bad.position.z)]);e.line.material.opacity=1-u;if(u>=1){if(e.obj){const seen=scpEchoSeen.get(e.obj);if(seen&&now-seen.at<7000){scpEchoSeen.set(e.obj,{speed:seen.speed,at:now,confirmed:true});scpEchoTargetBearings.set(e.obj,{x:e.x,z:e.z,at:now})}}else{scpEchoObstacles.push({x:e.x,z:e.z,at:now});if(scpEchoObstacles.length>180)scpEchoObstacles.shift()}scpEchoViz.remove(e.ring,e.line);e.ring.geometry.dispose();e.line.geometry.dispose();e.line.material.dispose();scpEchoReturns.splice(i,1)}}
  scpEchoViz.visible=scpEchoGizmos;
 }
 function echoSteer(obj,target,speed,dt,now){
  const p=obj.position,ud=obj.userData||(obj.userData={}),v=ud.velocity||(ud.velocity=new T.Vector3()),f=scpForward(obj);
- // Only obstacles whose sound reflections have returned can influence steering.
  for(let i=scpEchoObstacles.length-1;i>=0;i--)if(now-scpEchoObstacles[i].at>9000)scpEchoObstacles.splice(i,1);
- let targetAngle=0;if(target){const dx=target.position.x-p.x,dz=target.position.z-p.z;targetAngle=Math.atan2(dx*f.z-dz*f.x,dx*f.x+dz*f.z)}
+ // Follow the bearing recorded by the returning echo, not the target's live position.
+ const bearing=target?scpEchoTargetBearings.get(target):null;
+ const echoTarget=bearing&&now-bearing.at<9000?bearing:null;
+ let targetAngle=0;if(echoTarget){const dx=echoTarget.x-p.x,dz=echoTarget.z-p.z;targetAngle=Math.atan2(dx*f.z-dz*f.x,dx*f.x+dz*f.z)}
  let best=-Infinity,bestAngle=Math.atan2(f.x,f.z);
  for(let i=0;i<48;i++){
   const a=-Math.PI+(Math.PI*2*i/48),dx=Math.sin(a),dz=Math.cos(a);let penalty=0;
-  for(const o of scpEchoObstacles){
-   const ox=o.x-p.x,oz=o.z-p.z,d=Math.hypot(ox,oz);if(d>9||d<.01)continue;
-   const toward=(ox*dx+oz*dz)/d;
-   if(toward>0)penalty+=toward*toward*(9-d)*2.4;
-  }
-  const align=target?Math.cos(a-targetAngle):dx*f.x+dz*f.z;
-  const score=align*(target?6:1)-penalty;
+  for(const o of scpEchoObstacles){const ox=o.x-p.x,oz=o.z-p.z,d=Math.hypot(ox,oz);if(d>9||d<.01)continue;const toward=(ox*dx+oz*dz)/d;if(toward>0)penalty+=toward*toward*(9-d)*2.4}
+  const align=echoTarget?Math.cos(a-targetAngle):dx*f.x+dz*f.z;
+  const score=align*(echoTarget?8:1)-penalty;
   if(score>best){best=score;bestAngle=a}
  }
  const dx=Math.sin(bestAngle),dz=Math.cos(bestAngle),acc=10*dt;
  v.x+=Math.max(-acc,Math.min(acc,dx*speed-v.x));v.z+=Math.max(-acc,Math.min(acc,dz*speed-v.z));
  const mx=v.x*dt,mz=v.z*dt;let moved=false;
- // Physical collider contact remains the final movement constraint; steering
- // decisions above come exclusively from echoes already received.
  if(!hit(p.x+mx,p.z,.48)){p.x+=mx;moved=Math.abs(mx)>.0001}else v.x=0;
  if(!hit(p.x,p.z+mz,.48)){p.z+=mz;moved=moved||Math.abs(mz)>.0001}else v.z=0;
  if(Math.hypot(v.x,v.z)>.04)obj.rotation.y=Math.atan2(v.x,v.z);ud.moveDir?.set(v.x,0,v.z);return moved;
-}
-let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
+}let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
 const SCP_SCORE_MEMORY='scp049-facility-score-memory-v1';
 let scoreMemorySaveTimer=0,scoreMemoryDirty=false;function saveSCPScoreMemory(){scoreMemoryDirty=true;if(scoreMemorySaveTimer)return;scoreMemorySaveTimer=setTimeout(()=>{scoreMemorySaveTimer=0;if(!scoreMemoryDirty||!navData?.grid)return;scoreMemoryDirty=false;try{localStorage.setItem(SCP_SCORE_MEMORY,JSON.stringify({width:navData.width,height:navData.height,cellSize:navData.cellSize,origin:navData.origin,grid:navData.grid}))}catch(e){console.warn('SCP score memory save failed',e)}},2500)}
 function restoreSCPScoreMemory(){try{const m=JSON.parse(localStorage.getItem(SCP_SCORE_MEMORY)||'null');if(m&&m.grid&&m.width===navData.width&&m.height===navData.height&&m.cellSize===navData.cellSize&&m.origin?.x===navData.origin.x&&m.origin?.z===navData.origin.z&&m.grid.length===navData.height)navData.grid=m.grid.map(row=>row.slice());}catch(e){console.warn('SCP score memory restore failed',e)}}
