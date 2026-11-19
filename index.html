@@ -387,7 +387,38 @@ function gridBridgeMoveSCP(obj,tx,tz,speed,dt){
 // consistent tangential bias to slide around nearby object bounds.
 // Zombies use the same world-coordinate graph and cached bridges as SCP.
 // Only their route cursor/target is per-agent; the navigation grid is shared.
-function zombieLocalGridMove(obj,tx,tz,speed,dt){return gridBridgeMoveSCP(obj,tx,tz,speed,dt)}
+// Continuous movement fallback: if the cached global route is empty/stale,
+// test short AABB-clear bridge steps around the target heading. This prevents
+// a route refresh or target retarget timer from ever freezing an agent.
+function continuousBridgeFallbackMove(obj,tx,tz,speed,dt,r=.48){
+ const p=obj.position,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
+ if(dist<.001)return false;
+ const base=Math.atan2(dx,dz),step=Math.min(Math.max(.08,speed*dt),.42);
+ const turns=[0,18,-18,36,-36,58,-58,82,-82,112,-112,145,-145,180];
+ let best=null,bestScore=-Infinity;
+ for(let i=0;i<turns.length;i++){
+  const a=base+turns[i]*Math.PI/180,vx=Math.sin(a),vz=Math.cos(a);
+  const nx=p.x+vx*step,nz=p.z+vz*step;
+  if(!scpBridgeClear(p.x,p.z,nx,nz,r))continue;
+  const progress=vx*dx/dist+vz*dz/dist;
+  const sideBias=turns[i]===0?0:(Math.sign(turns[i])===(obj.userData.steerSide||1)?.035:0);
+  const score=progress+sideBias;
+  if(score>bestScore){bestScore=score;best={nx,nz,vx,vz}}
+ }
+ if(!best)return false;
+ p.x=best.nx;p.z=best.nz;
+ const ud=obj.userData||(obj.userData={});
+ ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(best.vx*speed,0,best.vz*speed);
+ ud.steerLastX=p.x;ud.steerLastZ=p.z;
+ obj.rotation.y=Math.atan2(best.vx,best.vz);
+ return true;
+}
+function moveContinuously(obj,tx,tz,speed,dt){
+ if(gridBridgeMoveSCP(obj,tx,tz,speed,dt))return true;
+ // Rebuilds may temporarily return no route. Keep moving using local clear bridges.
+ return continuousBridgeFallbackMove(obj,tx,tz,speed,dt);
+}
+function zombieLocalGridMove(obj,tx,tz,speed,dt){return moveContinuously(obj,tx,tz,speed,dt)}
 let zombieBridgeGizmoAt=0;
 function clearZombieRayViz(){
  while(zombieRayViz.children.length){const o=zombieRayViz.children[0];zombieRayViz.remove(o);o.geometry?.dispose()}
@@ -1244,7 +1275,9 @@ function frame(now){
    const choices=movingPool.filter(t=>t.obj!==scpTarget?.obj);
    const ranked=choices.sort((a,b)=>(b.moveSpeed*2-b.distance*.035)-(a.moveSpeed*2-a.distance*.035));
    let pick=ranked[0]||null;
-   if(!pick&&scpTarget&&!currentInvalid)pick=movingPool.find(t=>t.obj===scpTarget.obj)||{kind:scpTarget.kind,obj:scpTarget.obj,index:scpTarget.index,moveSpeed:0,distance:Math.hypot(scpTarget.obj.position.x-bad.position.x,scpTarget.obj.position.z-bad.position.z)};
+   if(!pick&&scpTarget&&!currentInvalid)pick={kind:scpTarget.kind,obj:scpTarget.obj,index:scpTarget.index,moveSpeed:0,distance:Math.hypot(scpTarget.obj.position.x-bad.position.x,scpTarget.obj.position.z-bad.position.z)};
+   // If nobody is currently moving, still pursue the nearest living target.
+   if(!pick)pick=livingPool.map(t=>({...t,distance:Math.hypot(t.obj.position.x-bad.position.x,t.obj.position.z-bad.position.z),moveSpeed:0})).sort((a,b)=>a.distance-b.distance)[0]||null;
    if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
    else{scpTarget=null;scpTargetUntil=now+11000}
   }
@@ -1255,11 +1288,8 @@ function frame(now){
   bad.userData.particleRouteTargetObj=targetObj;
   scpParticleTrail.visible=false;
   let scpMoved=false;
-  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos()}
-  else{
-   const velocity=bad.userData.velocity;
-   if(velocity)velocity.multiplyScalar(Math.exp(-4*dt));
-  }
+  if(targetValid)scpMoved=moveContinuously(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+  if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos()}
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
