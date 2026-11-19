@@ -943,24 +943,46 @@ function frame(now){
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
-  // The target is used only once to lay down a particle route.
-  // After that, SCP follows the stored particles in order; target movement
-  // does not pull or reshape the chain.
+  // Refresh the chain every frame, but preserve its established path.
+  // In open space only the final particle follows the target. Around an
+  // obstacle, rebuild only a short tail from the nearest usable old particle.
   let particleRoute=bad.userData.particleRoute||[];
   if(targetValid){
-   const ud=bad.userData,goal=ud.particleRouteGoal;
+   const ud=bad.userData,tx=targetObj.position.x,tz=targetObj.position.z;
    const newTarget=ud.particleRouteTargetObj!==targetObj;
    const routeMissing=particleRoute.length<2;
-   const index=Math.min(ud.particleIndex||1,Math.max(1,particleRoute.length-1));
-   const next=particleRoute[index];
-   const nextBlocked=!!next&&!breadcrumbSegmentClear(bad.position.x,bad.position.z,next.x,next.z,.48);
-   if(newTarget||routeMissing||nextBlocked){
-    // Only a newly selected target supplies a new destination. If a wall
-    // blocks the existing chain, preserve its original endpoint.
-    const destination=nextBlocked&&!newTarget&&goal?goal:{x:targetObj.position.x,z:targetObj.position.z};
-    particleRoute=buildSCPBreadcrumbRoute(bad,destination.x,destination.z,.48);
-    ud.particleRoute=particleRoute;ud.particleRouteGoal={x:destination.x,z:destination.z};
+   if(newTarget||routeMissing){
+    particleRoute=buildSCPBreadcrumbRoute(bad,tx,tz,.48);
+    ud.particleRoute=particleRoute;ud.particleRouteGoal={x:tx,z:tz};
     ud.particleRouteTargetObj=targetObj;ud.particleIndex=1;
+   }else{
+    // Keep all existing particles in place and move only the trail endpoint.
+    const last=particleRoute[particleRoute.length-1];
+    if(breadcrumbSegmentClear(last.x,last.z,tx,tz,.48)){
+     if(Math.hypot(last.x-tx,last.z-tz)>.025){
+      if(particleRoute.length===1)particleRoute.push({x:tx,z:tz});
+      else particleRoute[particleRoute.length-1]={x:tx,z:tz};
+     }
+    }else{
+     // Target is around/behind an object: replace only the end section.
+     // Search backward for a stable particle from which a clear detour can form.
+     const active=Math.max(1,ud.particleIndex||1);
+     let replanned=false;
+     for(let anchorIndex=particleRoute.length-2;anchorIndex>=Math.max(0,active-1,particleRoute.length-15);anchorIndex--){
+      const anchor=particleRoute[anchorIndex],temp={position:{x:anchor.x,z:anchor.z},userData:{}};
+      const tail=buildSCPBreadcrumbRoute(temp,tx,tz,.48);
+      if(tail.length>1){
+       particleRoute=particleRoute.slice(0,anchorIndex).concat(tail);
+       ud.particleRoute=particleRoute;ud.particleRouteGoal={x:tx,z:tz};
+       ud.particleIndex=Math.max(1,Math.min(active,anchorIndex+1));
+       replanned=true;break;
+      }
+     }
+     // If no tail can be built, leave the current chain untouched rather
+     // than snapping every particle through the obstacle.
+     if(!replanned)ud.particleRouteGoal=ud.particleRouteGoal||{x:tx,z:tz};
+    }
+    ud.particleRoute=particleRoute;
    }
   }else{
    particleRoute=[{x:bad.position.x,z:bad.position.z}];
