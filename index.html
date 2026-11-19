@@ -625,7 +625,8 @@ function makeFacilityChunk(cx,cz){
  const key=cx+','+cz;if(facilityChunks.has(key))return;facilityChunks.add(key);expandNavToChunk(cx,cz);
  const floor=new T.Mesh(new T.BoxGeometry(40,.4,40),mats[0]);floor.position.set(cx+20,-.2,cz+20);scene.add(floor);navMeshes.push(floor);
  // Boundary walls; leave openings for connected hallways on each side.
- const openN=Math.random()<.72,openS=Math.random()<.72,openW=Math.random()<.72,openE=Math.random()<.72;
+ // Global grid chunks must connect at their shared borders; interior partitions still form the maze.
+ const openN=true,openS=true,openW=true,openE=true;
  const chunkWalls=[];const wall=(x,z,w,d)=>{B(x,2,z,w,4,d);chunkWalls.push({x,z,w,d});setFacilityScore(x,z,w,d,0)};
  if(!openN)wall(cx+20,cz,40,1);if(!openS)wall(cx+20,cz+40,40,1);
  if(!openW)wall(cx,cz+20,1,40);if(!openE)wall(cx+40,cz+20,1,40);
