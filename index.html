@@ -566,7 +566,7 @@ function spawnZombie(){
  g.userData.velocity=new T.Vector3();g.userData.steerX=0;g.userData.steerZ=1;g.userData.steerSide=Math.random()<.5?-1:1;
  for(const action of Object.values(actions)){action.setLoop(T.LoopRepeat,Infinity);action.clampWhenFinished=false}
  g.userData.targetObj=null;g.userData.targetUntil=0;g.userData.attackT=0;g.userData.lastNearbyDamage=0;
- makeAIFOV(g,0xffb84a);
+ // No per-zombie FOV helper is defined or needed by the AABB steering AI.
  scene.add(g);zombies.push(g);console.info('Zombie spawned:',zombies.length,'/ 8');return true;
 }
 function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount);damageSinceZombie+=amount;
