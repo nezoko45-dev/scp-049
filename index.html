@@ -1203,8 +1203,18 @@ function buildSCPPolygonNavmesh(ax,az,bx,bz){
  const nodes=[],byKey=new Map(),edgeMap=new Map(),size=SCP_POLYGON_SIZE;
  const add=(cx,cz,ix,iz,tri,verts)=>{
   const x=verts.reduce((v,q)=>v+q.x,0)/3,z=verts.reduce((v,q)=>v+q.z,0)/3;
-  const samples=[{x,z},...verts.map((q,i)=>({x:(q.x+verts[(i+1)%3].x)*.5,z:(q.z+verts[(i+1)%3].z)*.5}))];
-  if(samples.some(q=>hit(q.x,q.z,.39)))return;
+  // Carve each triangle against the actual solid bounds. Dense interior samples
+  // catch narrow props/walls that a centroid-only test could leave embedded.
+  const samples=[{x,z},...verts];
+  for(let i=0;i<3;i++){
+   const a=verts[i],b=verts[(i+1)%3];
+   samples.push({x:(a.x+b.x)*.5,z:(a.z+b.z)*.5});
+  }
+  for(let i=1;i<=4;i++)for(let j=1;j<=4-i;j++){
+   const a=i/5,b=j/5,c=1-a-b;
+   samples.push({x:verts[0].x*a+verts[1].x*b+verts[2].x*c,z:verts[0].z*a+verts[1].z*b+verts[2].z*c});
+  }
+  if(samples.some(q=>hit(q.x,q.z,.48)))return;
   const key=cx+','+cz+':'+ix+','+iz+':'+tri,node={key,x,z,verts,edges:[]};
   nodes.push(node);byKey.set(key,node);
   for(let i=0;i<3;i++){
@@ -1266,34 +1276,39 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
 function scpPolygonRoam(obj,speed,dt,ud){
  const current=nearestSCPPolygon(obj.position.x,obj.position.z);
  if(!current){ud.velocity?.multiplyScalar(.2);return false}
- ud.scpPolyVisited??=new Set();ud.scpPolyStack??=[];ud.scpPolyGoal=null;
- ud.scpPolyVisited.add(current.key);
- if(ud.scpPolyGoal===current.key)ud.scpPolyGoal=null;
- if(!ud.scpPolyGoal){
-  const next=current.edges.map(e=>scpPolygonMesh.byKey.get(e.to)).filter(n=>n&&!ud.scpPolyVisited.has(n.key));
-  if(next.length){
-   next.sort((a,b)=>Math.hypot(a.x-obj.position.x,a.z-obj.position.z)-Math.hypot(b.x-obj.position.x,b.z-obj.position.z));
-   ud.scpPolyStack.push(current.key);ud.scpPolyGoal=next[0].key;
-  }else if(ud.scpPolyStack.length){
-   ud.scpPolyGoal=ud.scpPolyStack.pop();
-  }else if(ud.scpPolyVisited.size>=scpPolygonMesh.nodes.length){
-   ud.scpPolyVisited.clear();ud.scpPolyVisited.add(current.key);
-   const nextCycle=current.edges.map(e=>scpPolygonMesh.byKey.get(e.to)).find(Boolean);
-   if(nextCycle){ud.scpPolyStack.push(current.key);ud.scpPolyGoal=nextCycle.key}
-  }else{
-   // Search back through visited triangles until an unexplored frontier is found.
-   let parent=null;
-   while(ud.scpPolyStack.length&&!parent){
-    const key=ud.scpPolyStack.pop(),node=scpPolygonMesh.byKey.get(key);
-    if(node&&node.edges.some(e=>{const q=scpPolygonMesh.byKey.get(e.to);return q&&!ud.scpPolyVisited.has(q.key)}))parent=key;
-   }
-   ud.scpPolyGoal=parent;
+ // Ordinary waypoint roaming: pick a random reachable polygon and follow its
+ // portal path. No visited set, DFS stack, or systematic backtracking.
+ let goal=ud.scpRoamGoal?scpPolygonMesh.byKey.get(ud.scpRoamGoal):null;
+ if(goal&&goal.key===current.key)goal=null;
+ if(!goal){
+  const candidates=scpPolygonMesh.nodes.filter(n=>{
+   const d=Math.hypot(n.x-obj.position.x,n.z-obj.position.z);
+   return d>=8&&d<=28&&n.key!==current.key;
+  });
+  for(let i=candidates.length-1;i>0;i--){
+   const j=Math.floor(Math.random()*(i+1));[candidates[i],candidates[j]]=[candidates[j],candidates[i]];
   }
+  let route=[];
+  for(const candidate of candidates.slice(0,36)){
+   route=scpPolygonPath(current,candidate);
+   if(route.length>1){goal=candidate;break}
+  }
+  if(!goal){
+   const nearby=current.edges.map(e=>scpPolygonMesh.byKey.get(e.to)).filter(Boolean);
+   if(nearby.length)goal=nearby[Math.floor(Math.random()*nearby.length)];
+   route=goal?scpPolygonPath(current,goal):[];
+  }
+  ud.scpRoamGoal=goal?.key||null;ud.scpPolyPath=route;ud.scpPolyPathIndex=1;
  }
- if(!ud.scpPolyGoal)return false;
- const route=scpPolygonPath(current,scpPolygonMesh.byKey.get(ud.scpPolyGoal));
- ud.scpPolyPath=route;ud.scpPolyPathIndex=1;
- return moveSCPThroughPolygonPath(obj,route,speed,dt,ud);
+ if(!goal)return false;
+ if(!ud.scpPolyPath||ud.scpPolyPath.length<2||ud.scpPolyPath[0]?.key!==current.key){
+  ud.scpPolyPath=scpPolygonPath(current,goal);ud.scpPolyPathIndex=1;
+ }
+ const moved=moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud);
+ if(!moved&&ud.scpPolyPathIndex>=ud.scpPolyPath.length){
+  ud.scpRoamGoal=null;ud.scpPolyPath=null;ud.scpPolyPathIndex=0;
+ }
+ return moved;
 }
 const scpVictimLastSeen=new WeakMap();
 const scpLOSRaycaster=new T.Raycaster(),scpLOSOrigin=new T.Vector3(),scpLOSDirection=new T.Vector3();
