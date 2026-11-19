@@ -955,16 +955,12 @@ function frame(now){
    const next=particleRoute[index];
    const nextBlocked=!!next&&!breadcrumbSegmentClear(bad.position.x,bad.position.z,next.x,next.z,.48);
    if(newTarget||routeMissing||nextBlocked){
-    const tx=targetObj.position.x,tz=targetObj.position.z;
-    particleRoute=buildSCPBreadcrumbRoute(bad,tx,tz,.48);
-    ud.particleRoute=particleRoute;ud.particleRouteGoal={x:tx,z:tz};
+    // Only a newly selected target supplies a new destination. If a wall
+    // blocks the existing chain, preserve its original endpoint.
+    const destination=nextBlocked&&!newTarget&&goal?goal:{x:targetObj.position.x,z:targetObj.position.z};
+    particleRoute=buildSCPBreadcrumbRoute(bad,destination.x,destination.z,.48);
+    ud.particleRoute=particleRoute;ud.particleRouteGoal={x:destination.x,z:destination.z};
     ud.particleRouteTargetObj=targetObj;ud.particleIndex=1;
-   }
-   // If a stored segment becomes obstructed, rebuild toward the original
-   // destination, not the target's latest position.
-   if(nextBlocked&&!newTarget&&goal){
-    particleRoute=buildSCPBreadcrumbRoute(bad,goal.x,goal.z,.48);
-    ud.particleRoute=particleRoute;ud.particleRouteGoal={x:goal.x,z:goal.z};ud.particleIndex=1;
    }
   }else{
    particleRoute=[{x:bad.position.x,z:bad.position.z}];
