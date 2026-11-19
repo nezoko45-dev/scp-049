@@ -255,7 +255,7 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
 // Three.js raycast can travel between them without crossing facility geometry.
 const scpBridgeRaycaster=new T.Raycaster();
 const scpBridgeOrigin=new T.Vector3(),scpBridgeDirection=new T.Vector3();
-const SCP_BRIDGE_STEP=2;
+const SCP_BRIDGE_STEP=1;
 // One shared, world-coordinate bridge graph for every AI agent. Nodes and
 // edges persist across chunks; new chunk geometry invalidates only its region.
 const globalGridNodes=new Map(),globalGridEdges=new Map();
@@ -267,11 +267,27 @@ function globalGridNodeClear(ix,iz){
  const x=ix*SCP_BRIDGE_STEP,z=iz*SCP_BRIDGE_STEP;
  const cx=Math.floor(x/40)*40,cz=Math.floor(z/40)*40;
  const loaded=facilityChunks.has(cx+','+cz);
- const clear=loaded&&!hit(x,z,.48);globalGridNodes.set(key,clear);return clear;
+ // Treat each open node as a navmesh sample with the agent radius carved
+ // out of every AABB, not merely a point that happens to miss a wall.
+ const clear=loaded&&!hit(x,z,.72);globalGridNodes.set(key,clear);return clear;
+}
+function ensureGlobalGridCoverage(ax,az,bx,bz){
+ // Generate a continuous band of chunks between the hunter and its target.
+ // The one-chunk apron gives the route room to go around blocked AABBs.
+ const length=Math.hypot(bx-ax,bz-az),steps=Math.max(1,Math.ceil(length/20));
+ const seen=new Set();
+ for(let i=0;i<=steps;i++){
+  const t=i/steps,x=ax+(bx-ax)*t,z=az+(bz-az)*t;
+  const cx=Math.floor(x/40)*40,cz=Math.floor(z/40)*40;
+  for(let ox=-1;ox<=1;ox++)for(let oz=-1;oz<=1;oz++){
+   const qx=cx+ox*40,qz=cz+oz*40,k=qx+','+qz;
+   if(!seen.has(k)){seen.add(k);makeFacilityChunk(qx,qz)}
+  }
+ }
 }
 function globalGridBridgeClear(ax,az,bx,bz,r=.46){
  const key=globalEdgeKey(ax,az,bx,bz);if(globalGridEdges.has(key))return globalGridEdges.get(key);
- const clear=globalGridNodeClear(ax,az)&&globalGridNodeClear(bx,bz)&&scpBridgeClear(ax*SCP_BRIDGE_STEP,az*SCP_BRIDGE_STEP,bx*SCP_BRIDGE_STEP,bz*SCP_BRIDGE_STEP,r);
+ const clear=globalGridNodeClear(ax,az)&&globalGridNodeClear(bx,bz)&&scpBridgeClear(ax*SCP_BRIDGE_STEP,az*SCP_BRIDGE_STEP,bx*SCP_BRIDGE_STEP,bz*SCP_BRIDGE_STEP,Math.max(r,.58));
  globalGridEdges.set(key,clear);return clear;
 }
 function invalidateGlobalGridChunk(cx,cz){
@@ -303,27 +319,29 @@ function scpBridgeClear(ax,az,bx,bz,r=.46){
 function scpBridgeNodeClear(ix,iz){return globalGridNodeClear(ix,iz)}
 function buildSCPBridgeRoute(obj,tx,tz){
  const p=obj.position,step=SCP_BRIDGE_STEP;
+ ensureGlobalGridCoverage(p.x,p.z,tx,tz);
  let sx=Math.round(p.x/step),sz=Math.round(p.z/step),gx=Math.round(tx/step),gz=Math.round(tz/step);
- const findOpen=(cx,cz)=>{
-  if(scpBridgeNodeClear(cx,cz))return {x:cx,z:cz};
-  for(let radius=1;radius<=5;radius++)for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
+ const findOpen=(cx,cz,fromX=null,fromZ=null)=>{
+  const acceptable=(x,z)=>scpBridgeNodeClear(x,z)&&(fromX===null||scpBridgeClear(fromX,fromZ,x*step,z*step,.58));
+  if(acceptable(cx,cz))return {x:cx,z:cz};
+  for(let radius=1;radius<=12;radius++)for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
    if(Math.max(Math.abs(dx),Math.abs(dz))!==radius)continue;
-   if(scpBridgeNodeClear(cx+dx,cz+dz))return {x:cx+dx,z:cz+dz};
+   if(acceptable(cx+dx,cz+dz))return {x:cx+dx,z:cz+dz};
   }
   return null;
  };
- const start=findOpen(sx,sz),goal=findOpen(gx,gz);
+ const start=findOpen(sx,sz,p.x,p.z),goal=findOpen(gx,gz);
  if(!start||!goal)return [];
  sx=start.x;sz=start.z;gx=goal.x;gz=goal.z;
  if(sx===gx&&sz===gz)return [{x:gx*step,z:gz*step}];
  // Bound the graph to the corridor between SCP and its target.
- const margin=18,minX=Math.min(sx,gx)-margin/step,maxX=Math.max(sx,gx)+margin/step;
+ const margin=32,minX=Math.min(sx,gx)-margin/step,maxX=Math.max(sx,gx)+margin/step;
  const minZ=Math.min(sz,gz)-margin/step,maxZ=Math.max(sz,gz)+margin/step;
  const key=(x,z)=>x+','+z,startKey=key(sx,sz),goalKey=key(gx,gz);
  const queue=[{x:sx,z:sz}],parent=new Map([[startKey,null]]);
  const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
  let found=false,head=0,visited=0;
- while(head<queue.length&&visited<9000){
+ while(head<queue.length&&visited<50000){
   const cur=queue[head++],ck=key(cur.x,cur.z);visited++;
   if(ck===goalKey){found=true;break}
   for(const [ox,oz] of dirs){
@@ -336,7 +354,11 @@ function buildSCPBridgeRoute(obj,tx,tz){
  if(!found)return [];
  const route=[];let k=goalKey;
  while(k&&k!==startKey){const [x,z]=k.split(',').map(Number);route.push({x:x*step,z:z*step});k=parent.get(k)}
- route.reverse();return route;
+ route.reverse();
+ // Include the safe entry node so SCP first moves onto the carved grid,
+ // rather than cutting diagonally from its off-grid spawn position.
+ if(start)route.unshift({x:start.x*step,z:start.z*step});
+ return route;
 }
 function gridBridgeMoveSCP(obj,tx,tz,speed,dt){
  const p=obj.position,ud=obj.userData||(obj.userData={});
@@ -623,10 +645,11 @@ function streamFacility(now){
  if(navReady&&facilityScoreSolidCount!==solid.length)rebuildFacilityScoreMap();
  if(!navReady)return;
  const p=ctl.getObject().position,chunkX=Math.floor(p.x/40)*40,chunkZ=Math.floor(p.z/40)*40;makeFacilityChunk(chunkX,chunkZ);
- // Grow A* data as the player crosses the current grid borders.
- // The live facility has no fixed JSON grid bounds; chunks expand around the player.
- // Build connected rooms and hallways in every direction around the player.
+ // Keep the player neighborhood loaded, and ensure the hunter's current
+ // neighborhood exists even before it has a target.
  for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)makeFacilityChunk(chunkX+dx*40,chunkZ+dz*40);
+ const bx=Math.floor(bad.position.x/40)*40,bz=Math.floor(bad.position.z/40)*40;
+ for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)makeFacilityChunk(bx+dx*40,bz+dz*40);
  // Keep current paths fresh against the expanded navigation grid.
  if(navPath.length&&now-lastPathAt>900){navPath=[];lastPathAt=0}
  allies.forEach(a=>{if(a.userData.hp>0&&a.userData.pathAt&&now-a.userData.pathAt>1400)a.userData.path=[]});
