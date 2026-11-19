@@ -15,7 +15,6 @@ let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPa
 const heatNumberGroup=new T.Group();scene.add(heatNumberGroup);heatNumberGroup.visible=false;const heatNumberTextures=new Map();let heatNumberRefreshAt=0,heatNumberFieldKey='';
 const scpObservedMotion=new WeakMap();
 // SCP particle-chain pursuit: AABB-only trail generation and velocity following.
-const scpObservedMotion=new WeakMap();
 const scpParticleCapacity=420,scpParticlePositions=new Float32Array(scpParticleCapacity*3);
 const scpParticleGeometry=new T.BufferGeometry();
 scpParticleGeometry.setAttribute('position',new T.BufferAttribute(scpParticlePositions,3).setUsage(T.DynamicDrawUsage));
