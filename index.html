@@ -225,6 +225,82 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
  ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=!complete&&route.length<2;
  return route;
 }
+// Persistent steering vector: target attraction plus AABB repulsion and a
+// consistent tangential bias to slide around nearby object bounds.
+function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
+ const p=obj.position,ud=obj.userData||(obj.userData={});
+ const velocity=ud.velocity||(ud.velocity=new T.Vector3());
+ let dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
+ if(dist<.001){velocity.multiplyScalar(Math.exp(-4*dt));return false}
+ const targetX=dx/dist,targetZ=dz/dist;
+ let forceX=targetX,forceZ=targetZ,avoidX=0,avoidZ=0,nearest=Infinity;
+ const influence=4.8;
+ for(const o of solid){
+  const hx=o.w/2+r,hz=o.d/2+r;
+  const qx=Math.max(o.x-hx,Math.min(p.x,o.x+hx));
+  const qz=Math.max(o.z-hz,Math.min(p.z,o.z+hz));
+  let ax=p.x-qx,az=p.z-qz,d=Math.hypot(ax,az);
+  if(d>influence)continue;
+  if(d<.001){
+   const exits=[
+    {x:-(hx-(p.x-o.x)),z:0,d:hx-(p.x-o.x)},
+    {x:hx+(p.x-o.x),z:0,d:hx+(p.x-o.x)},
+    {x:0,z:-(hz-(p.z-o.z)),d:hz-(p.z-o.z)},
+    {x:0,z:hz+(p.z-o.z),d:hz+(p.z-o.z)}
+   ].sort((a,b)=>a.d-b.d);
+   ax=exits[0].x;az=exits[0].z;d=Math.max(.05,Math.hypot(ax,az));
+  }
+  const nx=ax/d,nz=az/d,w=Math.pow(Math.max(0,(influence-d)/influence),2);
+  avoidX+=nx*w*3.2;avoidZ+=nz*w*3.2;nearest=Math.min(nearest,d);
+  // Add a tangent that travels around the same side instead of reversing
+  // the avoidance direction every frame.
+  const side=ud.steerSide||1;
+  let txv=-nz*side,tzv=nx*side;
+  if(txv*targetX+tzv*targetZ<0){ud.steerSide=-side;txv=-txv;tzv=-tzv}
+  const tangentWeight=w*(d<1.4?1.35:.55);
+  avoidX+=txv*tangentWeight;avoidZ+=tzv*tangentWeight;
+ }
+ forceX+=avoidX;forceZ+=avoidZ;
+ let fl=Math.hypot(forceX,forceZ);
+ if(fl<.001){forceX=targetX;forceZ=targetZ;fl=1}
+ forceX/=fl;forceZ/=fl;
+ // Persist and smoothly rotate the steering vector rather than recomputing
+ // a route or snapping to a new heading every frame.
+ let sx=ud.steerX??targetX,sz=ud.steerZ??targetZ;
+ const blend=1-Math.exp(-Math.max(0,dt)*5.5);
+ sx+=(forceX-sx)*blend;sz+=(forceZ-sz)*blend;
+ let sl=Math.hypot(sx,sz)||1;sx/=sl;sz/=sl;
+ // Keep the vector from pointing into a blocked AABB. Try small rotations
+ // in the remembered wall-follow direction until a clear step is found.
+ const step=speed*dt;
+ let chosen=null;
+ for(const turn of [0,25,-25,50,-50,80,-80,115,-115,160,-160,180]){
+  const a=Math.atan2(sx,sz)+turn*Math.PI/180,cx=Math.sin(a),cz=Math.cos(a);
+  const nx=p.x+cx*step,nz=p.z+cz*step;
+  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){chosen={x:cx,z:cz,nx,nz};break}
+ }
+ if(!chosen){
+  velocity.multiplyScalar(Math.exp(-5*dt));
+  ud.steerX=sx;ud.steerZ=sz;ud.moveDir?.set(0,0,0);return false;
+ }
+ ud.steerX=chosen.x;ud.steerZ=chosen.z;
+ const desiredVX=chosen.x*speed,desiredVZ=chosen.z*speed,accel=9.0*dt;
+ let vx=desiredVX-velocity.x,vz=desiredVZ-velocity.z,change=Math.hypot(vx,vz);
+ if(change>accel&&change>0){vx*=accel/change;vz*=accel/change}
+ velocity.x+=vx;velocity.z+=vz;
+ let mx=velocity.x*dt,mz=velocity.z*dt;
+ let nx=p.x+mx,nz=p.z+mz;
+ if(scpGroundScore(nx,nz,r)!==1||hit(nx,nz,r)){
+  // Slide along an AABB face when only one velocity component is blocked.
+  if(scpGroundScore(p.x+mx,p.z,r)===1&&!hit(p.x+mx,p.z,r)){p.x+=mx;velocity.z=0}
+  else velocity.x=0;
+  if(scpGroundScore(p.x,p.z+mz,r)===1&&!hit(p.x,p.z+mz,r)){p.z+=mz;velocity.x=0}
+  else velocity.z=0;
+ }else{p.x=nx;p.z=nz}
+ ud.moveDir?.set(velocity.x,0,velocity.z);
+ if(velocity.lengthSq()>.001)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
+ return velocity.lengthSq()>.0025;
+}
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
  let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
@@ -965,29 +1041,16 @@ function frame(now){
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
-  // Rebuild a simple AABB breadcrumb route only when the target has moved
-  // enough; keep the existing path stable between replans.
-  let particleRoute=bad.userData.particleRoute||[];
-  if(targetValid){
-   const ud=bad.userData,tx=targetObj.position.x,tz=targetObj.position.z,nowRoute=performance.now();
-   const newTarget=ud.particleRouteTargetObj!==targetObj;
-   const routeMissing=particleRoute.length<2;
-   const goal=ud.particleRouteGoal;
-   const targetMoved=!goal||Math.hypot(tx-goal.x,tz-goal.z)>.85;
-   const replanDue=nowRoute-(ud.particleRouteAt||0)>450;
-   if(newTarget||routeMissing||(targetMoved&&replanDue)){
-    particleRoute=buildSCPBreadcrumbRoute(bad,tx,tz,.48);
-    ud.particleRoute=particleRoute;ud.particleRouteGoal={x:tx,z:tz};
-    ud.particleRouteTargetObj=targetObj;ud.particleRouteAt=nowRoute;ud.particleIndex=1;
-   }
-  }else{
-   particleRoute=[{x:bad.position.x,z:bad.position.z}];
-   bad.userData.particleRoute=particleRoute;bad.userData.particleRouteGoal=null;
-   bad.userData.particleRouteTargetObj=null;bad.userData.particleIndex=1;
+  // Persistent steering replaces the breadcrumb generator and particle chain.
+  bad.userData.particleRoute=null;bad.userData.particleRouteGoal=null;
+  bad.userData.particleRouteTargetObj=targetObj;
+  scpParticleTrail.visible=false;
+  let scpMoved=false;
+  if(targetValid)scpMoved=persistentAABBSteerMove(bad,targetObj.position.x,targetObj.position.z,3.2,dt,.48);
+  else{
+   const velocity=bad.userData.velocity;
+   if(velocity)velocity.multiplyScalar(Math.exp(-4*dt));
   }
-  updateSCPParticleTrail(particleRoute);
-  const scpMoved=followSCPParticleChain(bad,particleRoute,3.2,dt);
-
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
