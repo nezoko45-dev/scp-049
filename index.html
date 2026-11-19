@@ -14,97 +14,19 @@ let bad=new T.Group();bad.position.set(0,0,-45);scene.add(bad);
 let navData=null,navReady=false,gridRayChecks=0,gridRayBlocks=0,navPath=[],navPathAt=0,lastPathAt=0,scpTarget=null,scpTargetUntil=0;
 const heatNumberGroup=new T.Group();scene.add(heatNumberGroup);heatNumberGroup.visible=false;const heatNumberTextures=new Map();let heatNumberRefreshAt=0,heatNumberFieldKey='';
 const scpObservedMotion=new WeakMap();
-// SCP acoustic echolocation: expanding wavefronts register geometric contacts,
-// then return echoes to the source. No raycasts or LOS queries are involved.
-const scpEchoViz=new T.Group();scene.add(scpEchoViz);let scpEchoGizmos=true,scpNextPulse=0;
-const scpEchoPulses=[],scpEchoReturns=[],scpEchoObstacles=[],scpEchoTargetBearings=new WeakMap(),scpEchoMotion=new WeakMap(),scpEchoSeen=new WeakMap();
-const echoRingMat=new T.MeshBasicMaterial({color:0x55eaff,transparent:true,opacity:.72,side:T.DoubleSide,depthWrite:false});
-const returnMat=new T.MeshBasicMaterial({color:0xffd27a,transparent:true,opacity:.8,side:T.DoubleSide,depthWrite:false});
-const echoGeo=new T.TorusGeometry(1,.035,5,48);
-function echoRing(mat){const m=new T.Mesh(echoGeo,mat);m.rotation.x=Math.PI/2;scpEchoViz.add(m);return m}
-function emitSCPEcho(now){
- const ring=echoRing(echoRingMat);ring.position.set(bad.position.x,.18,bad.position.z);
- scpEchoPulses.push({ring,x:bad.position.x,z:bad.position.z,r:0,last:0,hit:new Set(),born:now});
-}
-function registerSCPEcho(x,z,obj,kind,now){
- const ring=echoRing(returnMat);ring.position.set(x,.22,z);ring.scale.setScalar(.12);
- const lineGeo=new T.BufferGeometry().setFromPoints([new T.Vector3(x,.22,z),new T.Vector3(bad.position.x,.22,bad.position.z)]);
- const line=new T.Line(lineGeo,new T.LineBasicMaterial({color:0xffd27a,transparent:true,opacity:.75}));
- scpEchoViz.add(line);scpEchoReturns.push({ring,line,x,z,born:now,arrive:now+Math.max(120,Math.hypot(x-bad.position.x,z-bad.position.z)/13*1000),obj,kind});
- if(obj){const old=scpEchoMotion.get(obj),elapsed=old?Math.max(.016,(now-old.at)/1000):0;
-  const speed=old?Math.hypot(obj.position.x-old.x,obj.position.z-old.z)/elapsed:0;
-  scpEchoMotion.set(obj,{x:obj.position.x,z:obj.position.z,at:now});
-  if(speed>.32)scpEchoSeen.set(obj,{speed,at:now});
- }
-}
-function updateSCPEcho(now,dt,targets){
- if(now>=scpNextPulse){emitSCPEcho(now);scpNextPulse=now+2100}
- for(let i=scpEchoPulses.length-1;i>=0;i--){
-  const p=scpEchoPulses[i],old=p.r;p.r=Math.min(26,p.r+9*dt);
-  p.ring.position.set(p.x,.18,p.z);p.ring.scale.setScalar(Math.max(.01,p.r));
-  // A wavefront touches each solid AABB when its radius reaches the nearest point.
-  for(let k=0;k<solid.length;k++){if(p.hit.has('s'+k))continue;const o=solid[k],nx=Math.max(o.x-o.w/2,Math.min(p.x,o.x+o.w/2)),nz=Math.max(o.z-o.d/2,Math.min(p.z,o.z+o.d/2)),d=Math.hypot(nx-p.x,nz-p.z);if(d>old&&d<=p.r){p.hit.add('s'+k);registerSCPEcho(nx,nz,null,'object',now)}}
-  for(const t of targets){if(p.hit.has(t.obj))continue;const d=Math.hypot(t.obj.position.x-p.x,t.obj.position.z-p.z);if(d>old&&d<=p.r){p.hit.add(t.obj);registerSCPEcho(t.obj.position.x,t.obj.position.z,t.obj,t.kind,now)}}
-  if(p.r>=26){scpEchoViz.remove(p.ring);p.ring.geometry.dispose();scpEchoPulses.splice(i,1)}
- }
- for(let i=scpEchoReturns.length-1;i>=0;i--){const e=scpEchoReturns[i],u=Math.min(1,(now-e.born)/Math.max(1,e.arrive-e.born));e.ring.position.set(e.x+(bad.position.x-e.x)*u,.22,e.z+(bad.position.z-e.z)*u);e.ring.scale.setScalar(.12+u*.28);e.line.geometry.setFromPoints([new T.Vector3(e.x,.22,e.z),new T.Vector3(bad.position.x,.22,bad.position.z)]);e.line.material.opacity=1-u;if(u>=1){if(e.obj){const seen=scpEchoSeen.get(e.obj);if(seen&&now-seen.at<7000){scpEchoSeen.set(e.obj,{speed:seen.speed,at:now,confirmed:true});scpEchoTargetBearings.set(e.obj,{x:e.x,z:e.z,at:now})}}else{scpEchoObstacles.push({x:e.x,z:e.z,at:now});if(scpEchoObstacles.length>180)scpEchoObstacles.shift()}scpEchoViz.remove(e.ring,e.line);e.ring.geometry.dispose();e.line.geometry.dispose();e.line.material.dispose();scpEchoReturns.splice(i,1)}}
- scpEchoViz.visible=scpEchoGizmos;
-}
-function echoSteer(obj,target,speed,dt,now){
- const p=obj.position,ud=obj.userData||(obj.userData={}),v=ud.velocity||(ud.velocity=new T.Vector3()),f=scpForward(obj);
- for(let i=scpEchoObstacles.length-1;i>=0;i--)if(now-scpEchoObstacles[i].at>9000)scpEchoObstacles.splice(i,1);
- const bearing=target?scpEchoTargetBearings.get(target):null;
- const echoTarget=bearing&&now-bearing.at<9000?bearing:null;
- const targetAngle=echoTarget?Math.atan2(echoTarget.x-p.x,echoTarget.z-p.z):Math.atan2(f.x,f.z);
- const blocked=(a,reach=1.25)=>{
-  const dx=Math.sin(a),dz=Math.cos(a);
-  for(const d of [.35,.7,reach])if(hit(p.x+dx*d,p.z+dz*d,.48))return true;
-  return false;
- };
- // Behavior tree: a priority selector runs obstacle steering when pursuit is blocked;
- // otherwise it runs the direct pursuit action.
- const actions={
-  steerAroundObjects(){
-   if(!blocked(targetAngle,1.35))return false;
-   let best=-Infinity,chosen=targetAngle,found=false;
-   const offsets=[-2.35,2.35,-1.85,1.85,-1.35,1.35,-.95,.95,-.62,.62,-.34,.34,Math.PI];
-   for(const offset of offsets){
-    const a=targetAngle+offset;
-    if(blocked(a,1.5))continue;
-    found=true;
-    const align=Math.cos(offset),momentum=Math.cos(a-Math.atan2(v.x,v.z));
-    let clearance=0;
-    for(const d of [.6,1.1,1.7,2.3])if(!hit(p.x+Math.sin(a)*d,p.z+Math.cos(a)*d,.48))clearance++;
-    const score=align*3+momentum*.35+clearance*.22;
-    if(score>best){best=score;chosen=a}
-   }
-   if(!found){
-    // Tight corner: test short steps and pick the least obstructed direction.
-    let escape=-Infinity;
-    for(let k=0;k<24;k++){
-     const a=k*Math.PI/12,dx=Math.sin(a),dz=Math.cos(a);
-     const score=(!hit(p.x+dx*.24,p.z+dz*.24,.38)?10:0)+(!hit(p.x+dx*.48,p.z+dz*.48,.38)?5:0);
-     if(score>escape){escape=score;chosen=a}
-    }
-   }
-   ud.btAction="steer around objects";
-   return chosen;
-  },
-  pursuit(){
-   ud.btAction="pursuit";
-   return targetAngle;
-  }
- };
- const avoid=actions.steerAroundObjects();
- const heading=avoid!==false?avoid:actions.pursuit();
- const dx=Math.sin(heading),dz=Math.cos(heading),acc=10*dt;
- v.x+=Math.max(-acc,Math.min(acc,dx*speed-v.x));v.z+=Math.max(-acc,Math.min(acc,dz*speed-v.z));
- const mx=v.x*dt,mz=v.z*dt;let moved=false;
- if(!hit(p.x+mx,p.z,.48)){p.x+=mx;moved=Math.abs(mx)>.0001}else v.x=0;
- if(!hit(p.x,p.z+mz,.48)){p.z+=mz;moved=moved||Math.abs(mz)>.0001}else v.z=0;
- if(Math.hypot(v.x,v.z)>.04)obj.rotation.y=Math.atan2(v.x,v.z);
- ud.moveDir?.set(v.x,0,v.z);
- return moved;
+// SCP particle-chain pursuit: AABB-only trail generation and velocity following.
+const scpObservedMotion=new WeakMap();
+const scpParticleCapacity=420,scpParticlePositions=new Float32Array(scpParticleCapacity*3);
+const scpParticleGeometry=new T.BufferGeometry();
+scpParticleGeometry.setAttribute('position',new T.BufferAttribute(scpParticlePositions,3).setUsage(T.DynamicDrawUsage));
+const scpParticleTrail=new T.Points(scpParticleGeometry,new T.PointsMaterial({color:0xffd34d,size:.19,sizeAttenuation:true,transparent:true,opacity:.95,depthTest:false}));
+scene.add(scpParticleTrail);
+function updateSCPParticleTrail(route){
+ const count=Math.min(route.length,scpParticleCapacity);
+ for(let i=0;i<count;i++){const q=route[i],k=i*3;scpParticlePositions[k]=q.x;scpParticlePositions[k+1]=.24;scpParticlePositions[k+2]=q.z}
+ scpParticleGeometry.attributes.position.needsUpdate=true;
+ scpParticleGeometry.setDrawRange(0,count);
+ scpParticleGeometry.computeBoundingSphere();
 }
 let facilityJSON=null;fetch('./facility-nav.json').then(r=>{if(!r.ok)throw Error('facility-nav.json '+r.status);return r.json()}).then(j=>{if(j.format==='scp049-facility-navmap-v1'&&j.scores)facilityJSON=j;else throw Error('Invalid facility score JSON')}).catch(e=>console.warn('Facility JSON map unavailable; using generated fallback',e));
 const SCP_SCORE_MEMORY='scp049-facility-score-memory-v1';
@@ -169,6 +91,31 @@ const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),s
 const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.style.display='none';
 const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
+function followSCPParticleChain(obj,route,speed,dt){
+ const p=obj.position,ud=obj.userData||(obj.userData={}),v=ud.velocity||(ud.velocity=new T.Vector3()),moveDir=ud.moveDir||(ud.moveDir=new T.Vector3());
+ if(!route||route.length<2){v.multiplyScalar(Math.exp(-2.2*dt));return v.lengthSq()>.0025}
+ // The chain is rebuilt from the live target every frame, so its first particle
+ // is always the next local waypoint for SCP to follow.
+ let index=1;
+ while(index<route.length-1&&Math.hypot(route[index].x-p.x,route[index].z-p.z)<.24)index++;
+ const waypoint=route[index],dx=waypoint.x-p.x,dz=waypoint.z-p.z,dist=Math.hypot(dx,dz);
+ if(dist<.001)return false;
+ const desiredSpeed=Math.min(speed,Math.sqrt(2*9.5*Math.max(.02,dist-.08))),desiredX=dx/dist*desiredSpeed,desiredZ=dz/dist*desiredSpeed,acc=9.5*dt;
+ let ax=desiredX-v.x,az=desiredZ-v.z,change=Math.hypot(ax,az);
+ if(change>acc&&change>0){ax*=acc/change;az*=acc/change}
+ v.x+=ax;v.z+=az;
+ const nx=p.x+v.x*dt,nz=p.z+v.z*dt;
+ let moved=false;
+ if(breadcrumbSegmentClear(p.x,p.z,nx,nz,.48)){p.x=nx;p.z=nz;moved=Math.hypot(v.x,v.z)>.04}
+ else{
+  // AABB corner case: attempt each axis independently to slide along the wall.
+  if(breadcrumbSegmentClear(p.x,p.z,nx,p.z,.48)){p.x=nx;moved=true}else v.x=0;
+  if(breadcrumbSegmentClear(p.x,p.z,p.x,nz,.48)){p.z=nz;moved=true}else v.z=0;
+ }
+ moveDir.set(v.x,0,v.z);
+ if(v.lengthSq()>.001)obj.rotation.y=Math.atan2(v.x,v.z);
+ return moved;
+}
 function drawSCPBreadcrumbs(obj){
  if(scpRayGizmos){scpChainViz.visible=false;return}
  const ud=obj.userData||{},route=ud.breadcrumbRoute||[],idx=ud.breadcrumbIndex||1;
@@ -251,7 +198,7 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
  }
  const ud=obj.userData;
  ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=false;
- drawSCPBreadcrumbs(obj);return route;
+ return route;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
@@ -489,7 +436,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpEchoGizmos=!scpEchoGizmos;scpEchoViz.visible=scpEchoGizmos}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpParticleTrail.visible=!scpParticleTrail.visible}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -969,9 +916,14 @@ function frame(now){
   let ex=p.x-bad.position.x,ez=p.z-bad.position.z,dist=Math.hypot(ex,ez);
   const playerObj=ctl.getObject();
   const livingPool=[{kind:'player',obj:playerObj,index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));
-  // Targets are only discovered when an emitted sound wave returns an echo.
-  updateSCPEcho(now,dt,livingPool);
-  const movingPool=livingPool.map(t=>{const seen=scpEchoSeen.get(t.obj);return seen&&seen.confirmed&&now-seen.at<7000?{...t,moveSpeed:seen.speed,distance:Math.hypot(t.obj.position.x-bad.position.x,t.obj.position.z-bad.position.z)}:null}).filter(Boolean);
+  // Measure real target position changes every frame; no sound-wave detection.
+  const movingPool=livingPool.map(t=>{
+   const previous=scpObservedMotion.get(t.obj);
+   const elapsed=previous?Math.max(.001,(now-previous.at)/1000):0;
+   const moveSpeed=previous?Math.hypot(t.obj.position.x-previous.x,t.obj.position.z-previous.z)/elapsed:0;
+   scpObservedMotion.set(t.obj,{x:t.obj.position.x,z:t.obj.position.z,at:now});
+   return {...t,moveSpeed,distance:Math.hypot(t.obj.position.x-bad.position.x,t.obj.position.z-bad.position.z)};
+  }).filter(t=>t.moveSpeed>.32);
   const currentObj=scpTarget?.obj||null;
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
   if(currentInvalid){scpTarget=null;scpTargetUntil=0}
@@ -987,10 +939,9 @@ function frame(now){
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
-  const scpMoved=echoSteer(bad,targetValid?targetObj:null,3.2,dt,now);
-  // Face the selected movement heading, not the moving target's position.
-if(bad.userData.moveDir?.lengthSq()>.001)bad.rotation.y=Math.atan2(bad.userData.moveDir.x,bad.userData.moveDir.z);
-  // Returning sound reflections now steer SCP around remembered obstacles.
+  const particleRoute=targetValid?buildSCPBreadcrumbRoute(bad,targetObj.position.x,targetObj.position.z,.48):[{x:bad.position.x,z:bad.position.z}];
+  updateSCPParticleTrail(particleRoute);
+  const scpMoved=followSCPParticleChain(bad,particleRoute,3.2,dt);
 
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
