@@ -53,12 +53,9 @@ function updateSCPEcho(now,dt,targets){
 function echoSteer(obj,target,speed,dt,now){
  const p=obj.position,ud=obj.userData||(obj.userData={}),v=ud.velocity||(ud.velocity=new T.Vector3()),f=scpForward(obj);
  for(let i=scpEchoObstacles.length-1;i>=0;i--)if(now-scpEchoObstacles[i].at>9000)scpEchoObstacles.splice(i,1);
- // Target attraction comes from returned sound echoes, not live target LOS.
  const bearing=target?scpEchoTargetBearings.get(target):null;
  const echoTarget=bearing&&now-bearing.at<9000?bearing:null;
  const targetAngle=echoTarget?Math.atan2(echoTarget.x-p.x,echoTarget.z-p.z):Math.atan2(f.x,f.z);
- // Cast a horizontal 360-degree fan from SCP into the actual wall meshes.
- // Opposing clearance differences pull him toward the middle of corridors.
  if(scpObstacleMeshCount!==navMeshes.length)refreshSCPObstacles();
  const rayCount=48,maxReach=7,originY=1.05,clearances=new Array(rayCount);
  let centerX=0,centerZ=0;
@@ -69,19 +66,35 @@ function echoSteer(obj,target,speed,dt,now){
   const hits=scpRaycaster.intersectObjects(scpRayObstacles,false);
   clearances[i]=hits.length?Math.min(maxReach,hits[0].distance):maxReach;
  }
+ // Compare opposite rays: bias toward the side with more room to keep SCP centered.
  for(let i=0;i<rayCount/2;i++){
   const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a),difference=clearances[i]-clearances[i+rayCount/2];
   centerX+=dx*difference;centerZ+=dz*difference;
  }
  const centerLen=Math.hypot(centerX,centerZ)||1;centerX/=centerLen;centerZ/=centerLen;
- let best=-Infinity,bestAngle=targetAngle;
+ let best=-Infinity,bestAngle=targetAngle,foundClear=false;
  for(let i=0;i<rayCount;i++){
-  const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a),clearance=clearances[i];let penalty=0;
-  for(const o of scpEchoObstacles){const ox=o.x-p.x,oz=o.z-p.z,d=Math.hypot(ox,oz);if(d>9||d<.01)continue;const toward=(ox*dx+oz*dz)/d;if(toward>0)penalty+=toward*toward*(9-d)*2.4}
+  const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a),clearance=clearances[i];
+  // Reject headings whose next short movement would collide; sample the whole step.
+  let blocked=false;for(const d of [.35,.7,1.05])if(hit(p.x+dx*d,p.z+dz*d,.46)){blocked=true;break}
+  let echoPenalty=0;
+  for(const o of scpEchoObstacles){const ox=o.x-p.x,oz=o.z-p.z,d=Math.hypot(ox,oz);if(d>9||d<.01)continue;const toward=(ox*dx+oz*dz)/d;if(toward>0)echoPenalty+=toward*toward*(9-d)*1.8}
   const align=Math.cos(a-targetAngle),centerBias=dx*centerX+dz*centerZ;
-  const wallPenalty=clearance<.8?16:clearance<1.5?7:clearance<2.5?2:0;
-  const score=align*(echoTarget?7:1)+clearance*.65+centerBias*2.6-wallPenalty-penalty;
+  const wallPenalty=clearance<.75?18:clearance<1.25?7:0;
+  const score=align*(echoTarget?12:1.2)+centerBias*2.0+Math.min(clearance,3)*.12-wallPenalty-echoPenalty-(blocked?40:0);
+  if(!blocked)foundClear=true;
   if(score>best){best=score;bestAngle=a}
+ }
+ // If boxed in or overlapping a collider, stop pushing into it and search for the
+ // nearest short collision-free escape heading rather than freezing permanently.
+ if(!foundClear){
+  let escape=-Infinity;
+  for(let i=0;i<rayCount;i++){
+   const a=-Math.PI+(Math.PI*2*i/rayCount),dx=Math.sin(a),dz=Math.cos(a);
+   const free=!hit(p.x+dx*.22,p.z+dz*.22,.32);
+   const score=(free?100:0)+clearances[i];
+   if(score>escape){escape=score;bestAngle=a}
+  }
  }
  const dx=Math.sin(bestAngle),dz=Math.cos(bestAngle),acc=10*dt;
  v.x+=Math.max(-acc,Math.min(acc,dx*speed-v.x));v.z+=Math.max(-acc,Math.min(acc,dz*speed-v.z));
