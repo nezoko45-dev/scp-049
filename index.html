@@ -135,16 +135,40 @@ function drawSCPBreadcrumbs(obj){
 function drawSCPRayChain(obj){drawSCPBreadcrumbs(obj)}
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
+let scpBridgeGizmoAt=0;
 function drawSCPRayGizmos(obj){
- if(!scpRayGizmos)return;
+ if(!scpRayGizmos){scpRayViz.visible=false;rayHUD.style.display='none';return}
+ const now=performance.now();
+ if(now-scpBridgeGizmoAt<650)return;
+ scpBridgeGizmoAt=now;
  clearSCPRayViz();
- scpRayViz.visible=false;
- setAIFOVVisible(true);
- const scpObjects=scanAIFOVObstacles(bad).length;
- let zombieObjects=0;
- for(const z of zombies)zombieObjects+=scanAIFOVObstacles(z).length;
- scpChainViz.visible=false;scpSteeringViz.visible=false;
- rayHUD.textContent='GEOMETRIC FOV ON · 120° · NO RAYCASTS · SCP OBJECTS '+scpObjects+' · ZOMBIE OBJECTS '+zombieObjects+' · RANGE '+AI_FOV_RANGE;
+ const step=SCP_BRIDGE_STEP,centerX=Math.round(obj.position.x/step),centerZ=Math.round(obj.position.z/step);
+ const radius=7,clearVerts=[],blockedVerts=[];
+ let clearCount=0,blockedCount=0;
+ // Draw every unique neighboring bridge in a rolling grid around SCP.
+ // Each connection is tested by the exact same raycast/AABB gate used by movement.
+ for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
+  const ax=centerX+dx,az=centerZ+dz;
+  if(!scpBridgeNodeClear(ax,az))continue;
+  for(const [ox,oz] of [[1,0],[0,1],[1,1],[-1,1]]){
+   const bx=ax+ox,bz=az+oz;
+   if(Math.abs(bx-centerX)>radius||Math.abs(bz-centerZ)>radius||!scpBridgeNodeClear(bx,bz))continue;
+   const ok=scpBridgeClear(ax*step,az*step,bx*step,bz*step,.46);
+   const verts=ok?clearVerts:blockedVerts;
+   verts.push(ax*step,.16,az*step,bx*step,.16,bz*step);
+   if(ok)clearCount++;else blockedCount++;
+  }
+ }
+ if(clearVerts.length){
+  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(clearVerts,3));
+  scpRayViz.add(new T.LineSegments(g,scpRayMatClear));
+ }
+ if(blockedVerts.length){
+  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(blockedVerts,3));
+  scpRayViz.add(new T.LineSegments(g,scpRayMatHit));
+ }
+ scpRayViz.visible=true;rayHUD.style.display='block';
+ rayHUD.textContent='LIVE GRID BRIDGES · CYAN CLEAR '+clearCount+' · RED BLOCKED '+blockedCount+' · G TOGGLE';
 }
 // Breadcrumb collision validation against every streamed facility solid.
 function breadcrumbClear(x,z,r=.48){
@@ -662,7 +686,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpParticleTrail.visible=!scpParticleTrail.visible}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';scpBridgeGizmoAt=0;}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -1173,7 +1197,7 @@ function frame(now){
   bad.userData.particleRouteTargetObj=targetObj;
   scpParticleTrail.visible=false;
   let scpMoved=false;
-  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);if(scpRayGizmos)drawSCPRayGizmos(bad);
   else{
    const velocity=bad.userData.velocity;
    if(velocity)velocity.multiplyScalar(Math.exp(-4*dt));
