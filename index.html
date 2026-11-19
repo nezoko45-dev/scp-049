@@ -145,7 +145,7 @@ function drawSCPRayGizmos(obj){
  scpBridgeGizmoAt=now;
  clearSCPRayViz();
  const step=SCP_BRIDGE_STEP,centerX=Math.round(obj.position.x/step),centerZ=Math.round(obj.position.z/step);
- const radius=7,clearVerts=[],blockedVerts=[];
+ const radius=14,clearVerts=[],blockedVerts=[];
  let clearCount=0,blockedCount=0;
  // Draw every unique neighboring bridge in a rolling grid around SCP.
  // Each connection is tested by the exact same raycast/AABB gate used by movement.
@@ -155,7 +155,7 @@ function drawSCPRayGizmos(obj){
   for(const [ox,oz] of [[1,0],[0,1],[1,1],[-1,1]]){
    const bx=ax+ox,bz=az+oz;
    if(Math.abs(bx-centerX)>radius||Math.abs(bz-centerZ)>radius||!scpBridgeNodeClear(bx,bz))continue;
-   const ok=scpBridgeClear(ax*step,az*step,bx*step,bz*step,.46);
+   const ok=globalGridBridgeClear(ax,az,bx,bz,.46);
    const verts=ok?clearVerts:blockedVerts;
    verts.push(ax*step,.16,az*step,bx*step,.16,bz*step);
    if(ok)clearCount++;else blockedCount++;
@@ -170,7 +170,7 @@ function drawSCPRayGizmos(obj){
   scpRayViz.add(new T.LineSegments(g,scpRayMatHit));
  }
  scpRayViz.visible=true;rayHUD.style.display='block';
- rayHUD.textContent='LIVE GRID BRIDGES · CYAN CLEAR '+clearCount+' · RED BLOCKED '+blockedCount+' · G TOGGLE';
+ rayHUD.textContent='SHARED GLOBAL GRID · CYAN CLEAR '+clearCount+' · RED BLOCKED '+blockedCount+' · G TOGGLE';
 }
 // Breadcrumb collision validation against every streamed facility solid.
 function breadcrumbClear(x,z,r=.48){
@@ -256,6 +256,32 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
 const scpBridgeRaycaster=new T.Raycaster();
 const scpBridgeOrigin=new T.Vector3(),scpBridgeDirection=new T.Vector3();
 const SCP_BRIDGE_STEP=2;
+// One shared, world-coordinate bridge graph for every AI agent. Nodes and
+// edges persist across chunks; new chunk geometry invalidates only its region.
+const globalGridNodes=new Map(),globalGridEdges=new Map();
+const GLOBAL_GRID_DIRS=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+const globalNodeKey=(x,z)=>x+','+z;
+const globalEdgeKey=(ax,az,bx,bz)=>{const a=globalNodeKey(ax,az),b=globalNodeKey(bx,bz);return a<b?a+'|'+b:b+'|'+a};
+function globalGridNodeClear(ix,iz){
+ const key=globalNodeKey(ix,iz);if(globalGridNodes.has(key))return globalGridNodes.get(key);
+ const x=ix*SCP_BRIDGE_STEP,z=iz*SCP_BRIDGE_STEP;
+ const cx=Math.floor(x/40)*40,cz=Math.floor(z/40)*40;
+ const loaded=facilityChunks.has(cx+','+cz);
+ const clear=loaded&&!hit(x,z,.48);globalGridNodes.set(key,clear);return clear;
+}
+function globalGridBridgeClear(ax,az,bx,bz,r=.46){
+ const key=globalEdgeKey(ax,az,bx,bz);if(globalGridEdges.has(key))return globalGridEdges.get(key);
+ const clear=globalGridNodeClear(ax,az)&&globalGridNodeClear(bx,bz)&&scpBridgeClear(ax*SCP_BRIDGE_STEP,az*SCP_BRIDGE_STEP,bx*SCP_BRIDGE_STEP,bz*SCP_BRIDGE_STEP,r);
+ globalGridEdges.set(key,clear);return clear;
+}
+function invalidateGlobalGridChunk(cx,cz){
+ const minX=Math.floor((cx-2)/SCP_BRIDGE_STEP),maxX=Math.ceil((cx+42)/SCP_BRIDGE_STEP);
+ const minZ=Math.floor((cz-2)/SCP_BRIDGE_STEP),maxZ=Math.ceil((cz+42)/SCP_BRIDGE_STEP);
+ for(let z=minZ;z<=maxZ;z++)for(let x=minX;x<=maxX;x++){
+  globalGridNodes.delete(globalNodeKey(x,z));
+  for(const [dx,dz] of GLOBAL_GRID_DIRS)globalGridEdges.delete(globalEdgeKey(x,z,x+dx,z+dz));
+ }
+}
 function scpBridgeClear(ax,az,bx,bz,r=.46){
  const dx=bx-ax,dz=bz-az,len=Math.hypot(dx,dz);
  if(len<.001)return true;
@@ -274,10 +300,7 @@ function scpBridgeClear(ax,az,bx,bz,r=.46){
  }
  return true;
 }
-function scpBridgeNodeClear(ix,iz){
- const x=ix*SCP_BRIDGE_STEP,z=iz*SCP_BRIDGE_STEP;
- return !hit(x,z,.48);
-}
+function scpBridgeNodeClear(ix,iz){return globalGridNodeClear(ix,iz)}
 function buildSCPBridgeRoute(obj,tx,tz){
  const p=obj.position,step=SCP_BRIDGE_STEP;
  let sx=Math.round(p.x/step),sz=Math.round(p.z/step),gx=Math.round(tx/step),gz=Math.round(tz/step);
@@ -306,7 +329,7 @@ function buildSCPBridgeRoute(obj,tx,tz){
   for(const [ox,oz] of dirs){
    const x=cur.x+ox,z=cur.z+oz,k=key(x,z);
    if(x<minX||x>maxX||z<minZ||z>maxZ||parent.has(k)||!scpBridgeNodeClear(x,z))continue;
-   if(!scpBridgeClear(cur.x*step,cur.z*step,x*step,z*step,.46))continue;
+   if(!globalGridBridgeClear(cur.x,cur.z,x,z,.46))continue;
    parent.set(k,ck);queue.push({x,z});
   }
  }
@@ -340,87 +363,14 @@ function gridBridgeMoveSCP(obj,tx,tz,speed,dt){
 }
 // Persistent steering vector: target attraction plus AABB repulsion and a
 // consistent tangential bias to slide around nearby object bounds.
-// Each zombie owns a rolling 2-unit grid. It connects neighboring nodes
-// only when the bridge rays and AABB corridor are clear; blocked edges stop routes.
-const ZOMBIE_GRID_RADIUS=5;
-function buildZombieLocalBridgeRoute(obj,tx,tz){
- const step=SCP_BRIDGE_STEP,p=obj.position,centerX=Math.round(p.x/step),centerZ=Math.round(p.z/step),r=ZOMBIE_GRID_RADIUS;
- const minX=centerX-r,maxX=centerX+r,minZ=centerZ-r,maxZ=centerZ+r;
- const nearestOpen=(cx,cz)=>{
-  for(let radius=0;radius<=3;radius++)for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
-   if(Math.max(Math.abs(dx),Math.abs(dz))!==radius)continue;
-   const x=cx+dx,z=cz+dz;if(x<minX||x>maxX||z<minZ||z>maxZ)continue;
-   if(scpBridgeNodeClear(x,z))return {x,z};
-  }
-  return null;
- };
- const start=nearestOpen(centerX,centerZ);
- const goalX=Math.max(minX,Math.min(maxX,Math.round(tx/step))),goalZ=Math.max(minZ,Math.min(maxZ,Math.round(tz/step)));
- const goal=nearestOpen(goalX,goalZ);
- if(!start||!goal)return [];
- const key=(x,z)=>x+','+z,startKey=key(start.x,start.z),goalKey=key(goal.x,goal.z);
- const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
- const queue=[start],parent=new Map([[startKey,null]]);let head=0,found=false;
- while(head<queue.length&&head<160){
-  const cur=queue[head++],ck=key(cur.x,cur.z);
-  if(ck===goalKey){found=true;break}
-  for(const [ox,oz] of dirs){
-   const x=cur.x+ox,z=cur.z+oz,k=key(x,z);
-   if(x<minX||x>maxX||z<minZ||z>maxZ||parent.has(k)||!scpBridgeNodeClear(x,z))continue;
-   if(!scpBridgeClear(cur.x*step,cur.z*step,x*step,z*step,.42))continue;
-   parent.set(k,ck);queue.push({x,z});
-  }
- }
- if(!found)return [];
- const route=[];let k=goalKey;
- while(k&&k!==startKey){const [x,z]=k.split(',').map(Number);route.push({x:x*step,z:z*step});k=parent.get(k)}
- route.reverse();return route;
-}
-function zombieLocalGridMove(obj,tx,tz,speed,dt){
- const p=obj.position,ud=obj.userData||(obj.userData={}),now=performance.now();
- const shifted=Math.hypot(tx-(ud.localGridTargetX??Infinity),tz-(ud.localGridTargetZ??Infinity));
- let route=ud.localGridRoute||[];
- if(!ud.localGridAt||now-ud.localGridAt>650||shifted>1.1||!route.length){
-  route=buildZombieLocalBridgeRoute(obj,tx,tz);ud.localGridRoute=route;ud.localGridAt=now;
-  ud.localGridTargetX=tx;ud.localGridTargetZ=tz;ud.localGridIndex=0;
- }
- while(ud.localGridIndex<route.length&&Math.hypot(route[ud.localGridIndex].x-p.x,route[ud.localGridIndex].z-p.z)<.38)ud.localGridIndex++;
- if(ud.localGridIndex>=route.length)return false;
- const node=route[ud.localGridIndex],dx=node.x-p.x,dz=node.z-p.z,d=Math.hypot(dx,dz);
- if(d<.001)return false;
- const amount=Math.min(d,speed*Math.max(0,dt)),nx=p.x+dx/d*amount,nz=p.z+dz/d*amount;
- if(!scpBridgeClear(p.x,p.z,nx,nz,.42)){ud.localGridAt=0;return false}
- p.x=nx;p.z=nz;ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
- ud.moveDir||(ud.moveDir=new T.Vector3());ud.moveDir.set(dx/d,0,dz/d);
- obj.rotation.y=Math.atan2(dx,dz);return amount>.0001;
-}
+// Zombies use the same world-coordinate graph and cached bridges as SCP.
+// Only their route cursor/target is per-agent; the navigation grid is shared.
+function zombieLocalGridMove(obj,tx,tz,speed,dt){return gridBridgeMoveSCP(obj,tx,tz,speed,dt)}
 let zombieBridgeGizmoAt=0;
 function clearZombieRayViz(){
  while(zombieRayViz.children.length){const o=zombieRayViz.children[0];zombieRayViz.remove(o);o.geometry?.dispose()}
 }
-function drawZombieLocalGridGizmos(list){
- if(!scpRayGizmos){zombieRayViz.visible=false;return}
- const now=performance.now();if(now-zombieBridgeGizmoAt<650)return;zombieBridgeGizmoAt=now;
- clearZombieRayViz();let clearCount=0,blockedCount=0;
- const step=SCP_BRIDGE_STEP,radius=ZOMBIE_GRID_RADIUS,clearVerts=[],blockedVerts=[];
- for(const zombie of list){
-  const cx=Math.round(zombie.position.x/step),cz=Math.round(zombie.position.z/step);
-  for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
-   const ax=cx+dx,az=cz+dz;if(!scpBridgeNodeClear(ax,az))continue;
-   for(const [ox,oz] of [[1,0],[0,1],[1,1],[-1,1]]){
-    const bx=ax+ox,bz=az+oz;
-    if(Math.abs(bx-cx)>radius||Math.abs(bz-cz)>radius)continue;
-    const open=scpBridgeNodeClear(bx,bz),ok=open&&scpBridgeClear(ax*step,az*step,bx*step,bz*step,.42);
-    const verts=ok?clearVerts:blockedVerts;verts.push(ax*step,.19,az*step,bx*step,.19,bz*step);
-    if(ok)clearCount++;else blockedCount++;
-   }
-  }
- }
- if(clearVerts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(clearVerts,3));zombieRayViz.add(new T.LineSegments(g,zombieRayMatClear))}
- if(blockedVerts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(blockedVerts,3));zombieRayViz.add(new T.LineSegments(g,zombieRayMatHit))}
- zombieRayViz.visible=true;
- rayHUD.style.display='block';rayHUD.textContent='SCP: CYAN/RED GRID · ZOMBIES: AMBER CLEAR / PINK BLOCKED · ZOMBIE BRIDGES '+clearCount+' CLEAR / '+blockedCount+' CUT · G TOGGLE';
-}
+function drawZombieLocalGridGizmos(){zombieRayViz.visible=false}
 function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
  const p=obj.position,ud=obj.userData||(obj.userData={});
  const velocity=ud.velocity||(ud.velocity=new T.Vector3());
@@ -663,6 +613,7 @@ function makeFacilityChunk(cx,cz){
   else{let x=cx+8+Math.random()*24,gap=cz+8+Math.random()*24;wall(x,cz+(gap-cz-4)/2,1,gap-cz-4);wall(x,gap+4+(cz+40-gap-4)/2,1,cz+40-gap-4)}
  }
  scanGeneratedMap(cx,cz,40);saveSCPScoreMemory();
+ invalidateGlobalGridChunk(cx,cz);
  // Lamps and props.
  let lamp=new T.PointLight(0x8cb8d2,2.2,16);lamp.position.set(cx+20,3,cz+20);scene.add(lamp);/* Local grid backend disabled: JSON score map is authoritative. */
 }
@@ -1280,7 +1231,7 @@ function frame(now){
   bad.userData.particleRouteTargetObj=targetObj;
   scpParticleTrail.visible=false;
   let scpMoved=false;
-  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos(zombies)}
+  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos()}
   else{
    const velocity=bad.userData.velocity;
    if(velocity)velocity.multiplyScalar(Math.exp(-4*dt));
