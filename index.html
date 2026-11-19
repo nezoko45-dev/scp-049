@@ -225,6 +225,93 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
  ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=!complete&&route.length<2;
  return route;
 }
+// Grid-bridge pursuit: adjacent grid nodes are connected only when a
+// Three.js raycast can travel between them without crossing facility geometry.
+const scpBridgeRaycaster=new T.Raycaster();
+const scpBridgeOrigin=new T.Vector3(),scpBridgeDirection=new T.Vector3();
+const SCP_BRIDGE_STEP=2;
+function scpBridgeClear(ax,az,bx,bz,r=.46){
+ const dx=bx-ax,dz=bz-az,len=Math.hypot(dx,dz);
+ if(len<.001)return true;
+ // AABB samples provide a reliable fallback for generated colliders; the
+ // three parallel mesh rays make each bridge wide enough for SCP's body.
+ const samples=Math.max(2,Math.ceil(len/.35));
+ for(let i=0;i<=samples;i++){const t=i/samples;if(hit(ax+dx*t,az+dz*t,r))return false}
+ if(!navMeshes.length)return true;
+ const nx=-dz/len,nz=dx/len;
+ for(const offset of [-r,0,r]){
+  scpBridgeOrigin.set(ax+nx*offset,.9,az+nz*offset);
+  scpBridgeDirection.set(dx/len,0,dz/len);
+  scpBridgeRaycaster.set(scpBridgeOrigin,scpBridgeDirection);
+  scpBridgeRaycaster.near=0;scpBridgeRaycaster.far=len;
+  if(scpBridgeRaycaster.intersectObjects(navMeshes,false).length)return false;
+ }
+ return true;
+}
+function scpBridgeNodeClear(ix,iz){
+ const x=ix*SCP_BRIDGE_STEP,z=iz*SCP_BRIDGE_STEP;
+ return !hit(x,z,.48);
+}
+function buildSCPBridgeRoute(obj,tx,tz){
+ const p=obj.position,step=SCP_BRIDGE_STEP;
+ let sx=Math.round(p.x/step),sz=Math.round(p.z/step),gx=Math.round(tx/step),gz=Math.round(tz/step);
+ const findOpen=(cx,cz)=>{
+  if(scpBridgeNodeClear(cx,cz))return {x:cx,z:cz};
+  for(let radius=1;radius<=5;radius++)for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
+   if(Math.max(Math.abs(dx),Math.abs(dz))!==radius)continue;
+   if(scpBridgeNodeClear(cx+dx,cz+dz))return {x:cx+dx,z:cz+dz};
+  }
+  return null;
+ };
+ const start=findOpen(sx,sz),goal=findOpen(gx,gz);
+ if(!start||!goal)return [];
+ sx=start.x;sz=start.z;gx=goal.x;gz=goal.z;
+ if(sx===gx&&sz===gz)return [{x:gx*step,z:gz*step}];
+ // Bound the graph to the corridor between SCP and its target.
+ const margin=18,minX=Math.min(sx,gx)-margin/step,maxX=Math.max(sx,gx)+margin/step;
+ const minZ=Math.min(sz,gz)-margin/step,maxZ=Math.max(sz,gz)+margin/step;
+ const key=(x,z)=>x+','+z,startKey=key(sx,sz),goalKey=key(gx,gz);
+ const queue=[{x:sx,z:sz}],parent=new Map([[startKey,null]]);
+ const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+ let found=false,head=0,visited=0;
+ while(head<queue.length&&visited<9000){
+  const cur=queue[head++],ck=key(cur.x,cur.z);visited++;
+  if(ck===goalKey){found=true;break}
+  for(const [ox,oz] of dirs){
+   const x=cur.x+ox,z=cur.z+oz,k=key(x,z);
+   if(x<minX||x>maxX||z<minZ||z>maxZ||parent.has(k)||!scpBridgeNodeClear(x,z))continue;
+   if(!scpBridgeClear(cur.x*step,cur.z*step,x*step,z*step,.46))continue;
+   parent.set(k,ck);queue.push({x,z});
+  }
+ }
+ if(!found)return [];
+ const route=[];let k=goalKey;
+ while(k&&k!==startKey){const [x,z]=k.split(',').map(Number);route.push({x:x*step,z:z*step});k=parent.get(k)}
+ route.reverse();return route;
+}
+function gridBridgeMoveSCP(obj,tx,tz,speed,dt){
+ const p=obj.position,ud=obj.userData||(obj.userData={});
+ const now=performance.now();
+ let route=ud.bridgeRoute||[];
+ const targetShift=Math.hypot(tx-(ud.bridgeTargetX??Infinity),tz-(ud.bridgeTargetZ??Infinity));
+ if(!ud.bridgeRouteAt||now-ud.bridgeRouteAt>700||targetShift>1.4||!route.length){
+  route=buildSCPBridgeRoute(obj,tx,tz);ud.bridgeRoute=route;ud.bridgeRouteAt=now;
+  ud.bridgeTargetX=tx;ud.bridgeTargetZ=tz;ud.bridgeIndex=0;
+ }
+ while(ud.bridgeIndex<route.length&&Math.hypot(route[ud.bridgeIndex].x-p.x,route[ud.bridgeIndex].z-p.z)<.42)ud.bridgeIndex++;
+ if(ud.bridgeIndex>=route.length){
+  const d=Math.hypot(tx-p.x,tz-p.z);
+  if(d<1.25)return false;
+  // Never improvise a direct move when no connected bridge reaches the target.
+  return false;
+ }
+ const node=route[ud.bridgeIndex],dx=node.x-p.x,dz=node.z-p.z,d=Math.hypot(dx,dz);
+ if(d<.001)return false;
+ const amount=Math.min(d,speed*Math.max(0,dt)),nx=p.x+dx/d*amount,nz=p.z+dz/d*amount;
+ if(!scpBridgeClear(p.x,p.z,nx,nz,.46)){ud.bridgeRouteAt=0;return false}
+ p.x=nx;p.z=nz;ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
+ obj.rotation.y=Math.atan2(dx,dz);return amount>.0001;
+}
 // Persistent steering vector: target attraction plus AABB repulsion and a
 // consistent tangential bias to slide around nearby object bounds.
 function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
@@ -1086,7 +1173,7 @@ function frame(now){
   bad.userData.particleRouteTargetObj=targetObj;
   scpParticleTrail.visible=false;
   let scpMoved=false;
-  if(targetValid)scpMoved=persistentAABBSteerMove(bad,targetObj.position.x,targetObj.position.z,3.2,dt,.48);
+  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
   else{
    const velocity=bad.userData.velocity;
    if(velocity)velocity.multiplyScalar(Math.exp(-4*dt));
