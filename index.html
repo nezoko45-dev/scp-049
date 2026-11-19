@@ -1179,6 +1179,161 @@ function followSCPVelocity(obj,tx,tz,speed,dt){
  }
  moveDir.copy(velocity);return moved
 }
+
+/* SCP-049 polygon navigation: each walkable floor square is split into two
+   convex triangles. Shared triangle edges become ray-checked portals. */
+let scpPolygonMesh={nodes:[],byKey:new Map(),chunkCount:0};
+const SCP_POLYGON_SIZE=2;
+function scpPolygonChunkSet(ax,az,bx,bz){
+ const dx=bx-ax,dz=bz-az,len=Math.hypot(dx,dz),steps=Math.max(1,Math.ceil(len/20)),keys=new Set();
+ for(let i=0;i<=steps;i++){
+  const t=i/steps,x=ax+dx*t,z=az+dz*t,cx=Math.floor(x/40)*40,cz=Math.floor(z/40)*40;
+  for(let ox=-1;ox<=1;ox++)for(let oz=-1;oz<=1;oz++)keys.add((cx+ox*40)+','+(cz+oz*40));
+ }
+ for(const key of keys){const [x,z]=key.split(',').map(Number);makeFacilityChunk(x,z)}
+ return keys;
+}
+function scpPolygonEdgeKey(a,b){
+ const point=q=>Math.round(q.x*100)+','+Math.round(q.z*100);
+ const x=point(a),y=point(b);return x<y?x+'|'+y:y+'|'+x;
+}
+function buildSCPPolygonNavmesh(ax,az,bx,bz){
+ const chunkKeys=scpPolygonChunkSet(ax,az,bx,bz),nodes=[],byKey=new Map(),edgeMap=new Map(),size=SCP_POLYGON_SIZE;
+ const add=(cx,cz,ix,iz,tri,verts)=>{
+  const x=verts.reduce((v,q)=>v+q.x,0)/3,z=verts.reduce((v,q)=>v+q.z,0)/3;
+  const samples=[{x,z},...verts.map((q,i)=>({x:(q.x+verts[(i+1)%3].x)*.5,z:(q.z+verts[(i+1)%3].z)*.5}))];
+  if(samples.some(q=>hit(q.x,q.z,.39)))return;
+  const key=cx+','+cz+':'+ix+','+iz+':'+tri,node={key,x,z,verts,edges:[]};
+  nodes.push(node);byKey.set(key,node);
+  for(let i=0;i<3;i++){
+   const a=verts[i],b=verts[(i+1)%3],ek=scpPolygonEdgeKey(a,b);
+   let list=edgeMap.get(ek);if(!list)edgeMap.set(ek,list=[]);list.push({node,a,b});
+  }
+ };
+ for(const chunk of chunkKeys){
+  const [cx,cz]=chunk.split(',').map(Number);
+  for(let iz=0;iz<20;iz++)for(let ix=0;ix<20;ix++){
+   const x=cx+ix*size,z=cz+iz*size;
+   const nw={x,z},ne={x:x+size,z},se={x:x+size,z:z+size},sw={x,z:z+size};
+   add(cx,cz,ix,iz,0,[nw,ne,se]);
+   add(cx,cz,ix,iz,1,[nw,se,sw]);
+  }
+ }
+ for(const list of edgeMap.values())if(list.length===2){
+  const [a,b]=list,mid={x:(a.a.x+a.b.x)*.5,z:(a.a.z+a.b.z)*.5};
+  if(!scpBridgeClear(a.node.x,a.node.z,b.node.x,b.node.z,.43))continue;
+  a.node.edges.push({to:b.node.key,midpoint:mid});
+  b.node.edges.push({to:a.node.key,midpoint:mid});
+ }
+ scpPolygonMesh={nodes,byKey,chunkCount:chunkKeys.size};
+ return scpPolygonMesh;
+}
+function nearestSCPPolygon(x,z){
+ let best=null,distance=Infinity;
+ for(const n of scpPolygonMesh.nodes){const d=(n.x-x)**2+(n.z-z)**2;if(d<distance){distance=d;best=n}}
+ return best;
+}
+function scpPolygonPath(start,goal){
+ if(!start||!goal)return [];
+ const open=[{node:start,g:0,f:Math.hypot(goal.x-start.x,goal.z-start.z),parent:null}],best=new Map([[start.key,0]]),closed=new Set();
+ while(open.length){
+  open.sort((a,b)=>a.f-b.f);const cur=open.shift();
+  if(closed.has(cur.node.key))continue;
+  if(cur.node.key===goal.key){const path=[];let q=cur;while(q){path.push(q.node);q=q.parent}return path.reverse()}
+  closed.add(cur.node.key);
+  for(const edge of cur.node.edges){
+   const next=scpPolygonMesh.byKey.get(edge.to);if(!next||closed.has(next.key))continue;
+   const g=cur.g+Math.hypot(next.x-cur.node.x,next.z-cur.node.z);
+   if(g>=(best.get(next.key)??Infinity))continue;
+   best.set(next.key,g);open.push({node:next,g,f:g+Math.hypot(goal.x-next.x,goal.z-next.z),parent:cur});
+  }
+ }
+ return [];
+}
+function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
+ if(!path||path.length<2)return false;
+ let i=ud.scpPolyPathIndex||1;
+ while(i<path.length&&Math.hypot(path[i].x-obj.position.x,path[i].z-obj.position.z)<.42)i++;
+ ud.scpPolyPathIndex=i;if(i>=path.length)return false;
+ const n=path[i],dx=n.x-obj.position.x,dz=n.z-obj.position.z,d=Math.hypot(dx,dz);
+ if(d<.001)return false;
+ const step=Math.min(d,speed*dt),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
+ if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.46)){ud.scpPolyPathIndex=0;return false}
+ obj.position.x=nx;obj.position.z=nz;ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return step>.0001;
+}
+function scpPolygonRoam(obj,speed,dt,ud){
+ const current=nearestSCPPolygon(obj.position.x,obj.position.z);
+ if(!current){ud.velocity?.multiplyScalar(.2);return false}
+ ud.scpPolyVisited??=new Set();ud.scpPolyStack??=[];ud.scpPolyGoal=null;
+ ud.scpPolyVisited.add(current.key);
+ if(ud.scpPolyGoal===current.key)ud.scpPolyGoal=null;
+ if(!ud.scpPolyGoal){
+  const next=current.edges.map(e=>scpPolygonMesh.byKey.get(e.to)).filter(n=>n&&!ud.scpPolyVisited.has(n.key));
+  if(next.length){
+   next.sort((a,b)=>Math.hypot(a.x-obj.position.x,a.z-obj.position.z)-Math.hypot(b.x-obj.position.x,b.z-obj.position.z));
+   ud.scpPolyStack.push(current.key);ud.scpPolyGoal=next[0].key;
+  }else if(ud.scpPolyStack.length){
+   ud.scpPolyGoal=ud.scpPolyStack.pop();
+  }else if(ud.scpPolyVisited.size>=scpPolygonMesh.nodes.length){
+   ud.scpPolyVisited.clear();ud.scpPolyVisited.add(current.key);
+   const nextCycle=current.edges.map(e=>scpPolygonMesh.byKey.get(e.to)).find(Boolean);
+   if(nextCycle){ud.scpPolyStack.push(current.key);ud.scpPolyGoal=nextCycle.key}
+  }else{
+   // Search back through visited triangles until an unexplored frontier is found.
+   let parent=null;
+   while(ud.scpPolyStack.length&&!parent){
+    const key=ud.scpPolyStack.pop(),node=scpPolygonMesh.byKey.get(key);
+    if(node&&node.edges.some(e=>{const q=scpPolygonMesh.byKey.get(e.to);return q&&!ud.scpPolyVisited.has(q.key)}))parent=key;
+   }
+   ud.scpPolyGoal=parent;
+  }
+ }
+ if(!ud.scpPolyGoal)return false;
+ const route=scpPolygonPath(current,scpPolygonMesh.byKey.get(ud.scpPolyGoal));
+ ud.scpPolyPath=route;ud.scpPolyPathIndex=1;
+ return moveSCPThroughPolygonPath(obj,route,speed,dt,ud);
+}
+const scpVictimLastSeen=new WeakMap();
+const scpLOSRaycaster=new T.Raycaster(),scpLOSOrigin=new T.Vector3(),scpLOSDirection=new T.Vector3();
+function scpVictimVisible(obj,target){
+ scpLOSOrigin.set(obj.position.x,1.35,obj.position.z);
+ const tp=target.position;scpLOSDirection.set(tp.x-scpLOSOrigin.x,Math.max(-.1,tp.y+.9-1.35),tp.z-scpLOSOrigin.z);
+ const distance=scpLOSDirection.length();if(distance<.01)return true;
+ scpLOSDirection.normalize();scpLOSRaycaster.set(scpLOSOrigin,scpLOSDirection);scpLOSRaycaster.near=.05;scpLOSRaycaster.far=Math.max(.05,distance-.25);
+ return scpLOSRaycaster.intersectObjects(navMeshes,false).length===0;
+}
+function moveSCPPolygonAI(obj,target,speed,dt){
+ const ud=obj.userData||(obj.userData={}),p=obj.position;
+ const visible=!!target&&scpVictimVisible(obj,target);
+ if(visible){
+  scpVictimLastSeen.set(target,{x:target.position.x,z:target.position.z,at:performance.now()});
+  ud.scpLastSeenTarget=target;ud.scpLastSeenX=target.position.x;ud.scpLastSeenZ=target.position.z;
+  ud.scpSearching=false;ud.scpPolyPath=null;ud.scpPolyPathIndex=0;
+  const dx=target.position.x-p.x,dz=target.position.z-p.z,d=Math.hypot(dx,dz);
+  if(d<.001)return false;
+  const step=Math.min(d,speed*dt),nx=p.x+dx/d*step,nz=p.z+dz/d*step;
+  if(scpBridgeClear(p.x,p.z,nx,nz,.46)){p.x=nx;p.z=nz;ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return true}
+  // Visible target behind a low/partial obstruction: use polygon portals, not a straight-line shove.
+  const mesh=buildSCPPolygonNavmesh(p.x,p.z,target.position.x,target.position.z);
+  const path=scpPolygonPath(nearestSCPPolygon(p.x,p.z),nearestSCPPolygon(target.position.x,target.position.z));
+  ud.scpPolyPath=path;ud.scpPolyPathIndex=1;return moveSCPThroughPolygonPath(obj,path,speed,dt,ud);
+ }
+ if(target){
+  const last=scpVictimLastSeen.get(target);
+  if(last){ud.scpLastSeenX=last.x;ud.scpLastSeenZ=last.z;ud.scpLastSeenAt=last.at}
+ }
+ ud.scpSearching=true;
+ const lx=ud.scpLastSeenX??p.x,lz=ud.scpLastSeenZ??p.z;
+ buildSCPPolygonNavmesh(p.x,p.z,lx,lz);
+ const here=nearestSCPPolygon(p.x,p.z),last=nearestSCPPolygon(lx,lz);
+ if(last&&Math.hypot(lx-p.x,lz-p.z)>1.15){
+  const path=scpPolygonPath(here,last);
+  ud.scpPolyPath=path;ud.scpPolyPathIndex=1;
+  if(moveSCPThroughPolygonPath(obj,path,speed,dt,ud))return true;
+ }
+ return scpPolygonRoam(obj,speed,dt,ud);
+}
+
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
  requestAnimationFrame(frame);
@@ -1288,7 +1443,7 @@ function frame(now){
   bad.userData.particleRouteTargetObj=targetObj;
   scpParticleTrail.visible=false;
   let scpMoved=false;
-  if(targetValid)scpMoved=moveContinuously(bad,targetObj.position.x,targetObj.position.z,3.2,dt);
+  if(targetValid)scpMoved=moveSCPPolygonAI(bad,targetObj,3.2,dt);
   if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos()}
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
