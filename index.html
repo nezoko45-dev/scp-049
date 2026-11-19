@@ -87,6 +87,8 @@ function scpGroundScore(x,z,r=.42){
 let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
 const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),scpRayMatHit=new T.LineBasicMaterial({color:0xff2222,depthTest:false});
+const zombieRayViz=new T.Group();scene.add(zombieRayViz);zombieRayViz.visible=false;
+const zombieRayMatClear=new T.LineBasicMaterial({color:0xffb000,depthTest:false}),zombieRayMatHit=new T.LineBasicMaterial({color:0xff3355,depthTest:false});
 const rayHUD=document.createElement('div');rayHUD.style.cssText='position:fixed;top:58px;left:18px;z-index:99999;color:#00ffff;background:#00151ddd;border:2px solid #00ffff;padding:8px 12px;font:bold 14px monospace;display:block;pointer-events:none';document.body.appendChild(rayHUD);rayHUD.style.display='none';
 const scpChainViz=new T.Group();scene.add(scpChainViz);scpChainViz.visible=true;
 const scpChainMat=new T.LineBasicMaterial({color:0xffd400,depthTest:false});
@@ -338,6 +340,87 @@ function gridBridgeMoveSCP(obj,tx,tz,speed,dt){
 }
 // Persistent steering vector: target attraction plus AABB repulsion and a
 // consistent tangential bias to slide around nearby object bounds.
+// Each zombie owns a rolling 2-unit grid. It connects neighboring nodes
+// only when the bridge rays and AABB corridor are clear; blocked edges stop routes.
+const ZOMBIE_GRID_RADIUS=5;
+function buildZombieLocalBridgeRoute(obj,tx,tz){
+ const step=SCP_BRIDGE_STEP,p=obj.position,centerX=Math.round(p.x/step),centerZ=Math.round(p.z/step),r=ZOMBIE_GRID_RADIUS;
+ const minX=centerX-r,maxX=centerX+r,minZ=centerZ-r,maxZ=centerZ+r;
+ const nearestOpen=(cx,cz)=>{
+  for(let radius=0;radius<=3;radius++)for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
+   if(Math.max(Math.abs(dx),Math.abs(dz))!==radius)continue;
+   const x=cx+dx,z=cz+dz;if(x<minX||x>maxX||z<minZ||z>maxZ)continue;
+   if(scpBridgeNodeClear(x,z))return {x,z};
+  }
+  return null;
+ };
+ const start=nearestOpen(centerX,centerZ);
+ const goalX=Math.max(minX,Math.min(maxX,Math.round(tx/step))),goalZ=Math.max(minZ,Math.min(maxZ,Math.round(tz/step)));
+ const goal=nearestOpen(goalX,goalZ);
+ if(!start||!goal)return [];
+ const key=(x,z)=>x+','+z,startKey=key(start.x,start.z),goalKey=key(goal.x,goal.z);
+ const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+ const queue=[start],parent=new Map([[startKey,null]]);let head=0,found=false;
+ while(head<queue.length&&head<160){
+  const cur=queue[head++],ck=key(cur.x,cur.z);
+  if(ck===goalKey){found=true;break}
+  for(const [ox,oz] of dirs){
+   const x=cur.x+ox,z=cur.z+oz,k=key(x,z);
+   if(x<minX||x>maxX||z<minZ||z>maxZ||parent.has(k)||!scpBridgeNodeClear(x,z))continue;
+   if(!scpBridgeClear(cur.x*step,cur.z*step,x*step,z*step,.42))continue;
+   parent.set(k,ck);queue.push({x,z});
+  }
+ }
+ if(!found)return [];
+ const route=[];let k=goalKey;
+ while(k&&k!==startKey){const [x,z]=k.split(',').map(Number);route.push({x:x*step,z:z*step});k=parent.get(k)}
+ route.reverse();return route;
+}
+function zombieLocalGridMove(obj,tx,tz,speed,dt){
+ const p=obj.position,ud=obj.userData||(obj.userData={}),now=performance.now();
+ const shifted=Math.hypot(tx-(ud.localGridTargetX??Infinity),tz-(ud.localGridTargetZ??Infinity));
+ let route=ud.localGridRoute||[];
+ if(!ud.localGridAt||now-ud.localGridAt>650||shifted>1.1||!route.length){
+  route=buildZombieLocalBridgeRoute(obj,tx,tz);ud.localGridRoute=route;ud.localGridAt=now;
+  ud.localGridTargetX=tx;ud.localGridTargetZ=tz;ud.localGridIndex=0;
+ }
+ while(ud.localGridIndex<route.length&&Math.hypot(route[ud.localGridIndex].x-p.x,route[ud.localGridIndex].z-p.z)<.38)ud.localGridIndex++;
+ if(ud.localGridIndex>=route.length)return false;
+ const node=route[ud.localGridIndex],dx=node.x-p.x,dz=node.z-p.z,d=Math.hypot(dx,dz);
+ if(d<.001)return false;
+ const amount=Math.min(d,speed*Math.max(0,dt)),nx=p.x+dx/d*amount,nz=p.z+dz/d*amount;
+ if(!scpBridgeClear(p.x,p.z,nx,nz,.42)){ud.localGridAt=0;return false}
+ p.x=nx;p.z=nz;ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
+ ud.moveDir||(ud.moveDir=new T.Vector3());ud.moveDir.set(dx/d,0,dz/d);
+ obj.rotation.y=Math.atan2(dx,dz);return amount>.0001;
+}
+let zombieBridgeGizmoAt=0;
+function clearZombieRayViz(){
+ while(zombieRayViz.children.length){const o=zombieRayViz.children[0];zombieRayViz.remove(o);o.geometry?.dispose()}
+}
+function drawZombieLocalGridGizmos(list){
+ if(!scpRayGizmos){zombieRayViz.visible=false;return}
+ const now=performance.now();if(now-zombieBridgeGizmoAt<650)return;zombieBridgeGizmoAt=now;
+ clearZombieRayViz();let clearCount=0,blockedCount=0;
+ const step=SCP_BRIDGE_STEP,radius=ZOMBIE_GRID_RADIUS,clearVerts=[],blockedVerts=[];
+ for(const zombie of list){
+  const cx=Math.round(zombie.position.x/step),cz=Math.round(zombie.position.z/step);
+  for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
+   const ax=cx+dx,az=cz+dz;if(!scpBridgeNodeClear(ax,az))continue;
+   for(const [ox,oz] of [[1,0],[0,1],[1,1],[-1,1]]){
+    const bx=ax+ox,bz=az+oz;
+    if(Math.abs(bx-cx)>radius||Math.abs(bz-cz)>radius)continue;
+    const open=scpBridgeNodeClear(bx,bz),ok=open&&scpBridgeClear(ax*step,az*step,bx*step,bz*step,.42);
+    const verts=ok?clearVerts:blockedVerts;verts.push(ax*step,.19,az*step,bx*step,.19,bz*step);
+    if(ok)clearCount++;else blockedCount++;
+   }
+  }
+ }
+ if(clearVerts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(clearVerts,3));zombieRayViz.add(new T.LineSegments(g,zombieRayMatClear))}
+ if(blockedVerts.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(blockedVerts,3));zombieRayViz.add(new T.LineSegments(g,zombieRayMatHit))}
+ zombieRayViz.visible=true;
+ rayHUD.style.display='block';rayHUD.textContent='SCP: CYAN/RED GRID · ZOMBIES: AMBER CLEAR / PINK BLOCKED · ZOMBIE BRIDGES '+clearCount+' CLEAR / '+blockedCount+' CUT · G TOGGLE';
+}
 function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
  const p=obj.position,ud=obj.userData||(obj.userData={});
  const velocity=ud.velocity||(ud.velocity=new T.Vector3());
@@ -686,7 +769,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';scpBridgeGizmoAt=0;}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;zombieRayViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';scpBridgeGizmoAt=0;zombieBridgeGizmoAt=0;}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
@@ -1129,7 +1212,7 @@ function frame(now){
    if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
     // Keep pursuing the globally acquired target; local FOV scanning in the
     // shared velocity controller handles obstacle avoidance only.
-    zombieMoved=persistentAABBSteerMove(z,tp.x,tp.z,2.35,dt,.42);
+    zombieMoved=zombieLocalGridMove(z,tp.x,tp.z,2.35,dt);
     if(z.userData.moveDir?.lengthSq()>.001)z.rotation.y=Math.atan2(z.userData.moveDir.x,z.userData.moveDir.z);
    }else if(target&&d<=1.05){
     z.userData.velocity?.multiplyScalar(Math.exp(-5.5*dt));
@@ -1138,7 +1221,7 @@ function frame(now){
     const v=z.userData.velocity||(z.userData.velocity=new T.Vector3());
     const h=z.userData.steeringVector||(z.userData.steeringVector=new T.Vector3(0,0,1));
     if(v.length()<.45)v.set(h.x*1.1,0,h.z*1.1);
-    zombieMoved=persistentAABBSteerMove(z,z.position.x+h.x*8,z.position.z+h.z*8,1.35,dt,.42);
+    zombieMoved=zombieLocalGridMove(z,z.position.x+h.x*8,z.position.z+h.z*8,1.35,dt);
    }
    // Imported GLB: exact AttackD clip while attacking, Walk while travelling, Idle at rest.
    const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
@@ -1197,7 +1280,7 @@ function frame(now){
   bad.userData.particleRouteTargetObj=targetObj;
   scpParticleTrail.visible=false;
   let scpMoved=false;
-  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);if(scpRayGizmos)drawSCPRayGizmos(bad);
+  if(targetValid)scpMoved=gridBridgeMoveSCP(bad,targetObj.position.x,targetObj.position.z,3.2,dt);if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos(zombies)}
   else{
    const velocity=bad.userData.velocity;
    if(velocity)velocity.multiplyScalar(Math.exp(-4*dt));
