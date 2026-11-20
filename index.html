@@ -317,18 +317,14 @@ function invalidateGlobalGridChunk(cx,cz){
 function scpBridgeClear(ax,az,bx,bz,r=.46){
  const dx=bx-ax,dz=bz-az,len=Math.hypot(dx,dz);
  if(len<.001)return true;
- // AABB samples provide a reliable fallback for generated colliders; the
- // three parallel mesh rays make each bridge wide enough for SCP's body.
- const samples=Math.max(2,Math.ceil(len/.35));
- for(let i=0;i<=samples;i++){const t=i/samples;if(hit(ax+dx*t,az+dz*t,r))return false}
- if(!navMeshes.length)return true;
- const nx=-dz/len,nz=dx/len;
- for(const offset of [-r,0,r]){
-  scpBridgeOrigin.set(ax+nx*offset,.9,az+nz*offset);
-  scpBridgeDirection.set(dx/len,0,dz/len);
-  scpBridgeRaycaster.set(scpBridgeOrigin,scpBridgeDirection);
-  scpBridgeRaycaster.near=0;scpBridgeRaycaster.far=len;
-  if(scpBridgeRaycaster.intersectObjects(navMeshes,false).length)return false;
+ // The facility's solid AABBs are the authoritative collision geometry.
+ // Raycasting the rendered box meshes at a fixed height can falsely reject
+ // open corridors (especially at box edges and corners), disconnecting valid
+ // polygon portals. Sample the full swept body corridor against those bounds.
+ const samples=Math.max(2,Math.ceil(len/.2));
+ for(let i=0;i<=samples;i++){
+  const t=i/samples;
+  if(hit(ax+dx*t,az+dz*t,r))return false;
  }
  return true;
 }
