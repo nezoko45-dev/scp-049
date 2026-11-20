@@ -92,9 +92,26 @@ function nearestOpen(x,z){
 // multi-sample ground-score steering as FPE: open=1, solid=0, direction-driven.
 function findNavPath(){return []}
 function scpGroundScore(x,z,r=.42){
- // Spatially query only colliders near this sample; clear ground=1.
- for(const o of nearbySolid(x,z,r+2))if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return 0;
- return 1
+ // SCP reads the shared, facility-wide score map: 1=walkable, 0=blocked.
+ // First test the center cell, then the swept body footprint so desk/wall corners
+ // cannot be clipped even when the center cell itself is still open.
+ if(!navReady||!navData?.grid||!navData.origin)return 0;
+ const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z;
+ const scoreAt=(px,pz)=>{
+  const ix=Math.floor((px-ox)/cs),iz=Math.floor((pz-oz)/cs);
+  if(ix<0||iz<0||ix>=navData.width||iz>=navData.height)return 0;
+  return navData.grid[iz]?.[ix]===1?1:0;
+ };
+ if(scoreAt(x,z)!==1)return 0;
+ if(r>0){
+  const n=Math.max(1,Math.ceil(r/(cs*.35)));
+  for(let iz=-n;iz<=n;iz++)for(let ix=-n;ix<=n;ix++){
+   const dx=ix*cs*.35,dz=iz*cs*.35;
+   if(dx*dx+dz*dz>r*r)continue;
+   if(scoreAt(x+dx,z+dz)!==1)return 0;
+  }
+ }
+ return 1;
 }
 let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
