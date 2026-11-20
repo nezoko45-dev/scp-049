@@ -134,6 +134,60 @@ function getGlobalObjectBoundRays(){
  globalObjectBoundRayCache=rays;globalObjectBoundRayRevision=navData.revision;globalObjectBoundRaySolidCount=solid.length;
  return rays;
 }
+let objectRayGraphRevision=-1,objectRayGraph=[];
+function getObjectRayGraph(){
+ const rays=getGlobalObjectBoundRays();
+ if(objectRayGraphRevision===navData.revision&&objectRayGraph.length)return objectRayGraph;
+ const nodes=rays.filter(q=>q.clear).map(q=>({x:q.ex,z:q.ez,links:[]}));
+ const cell=2.6,buckets=new Map(),key=(x,z)=>Math.floor(x/cell)+','+Math.floor(z/cell);
+ for(let i=0;i<nodes.length;i++){
+  const n=nodes[i],cx=Math.floor(n.x/cell),cz=Math.floor(n.z/cell);
+  for(let oz=-1;oz<=1;oz++)for(let ox=-1;ox<=1;ox++){
+   const list=buckets.get((cx+ox)+','+(cz+oz))||[];
+   for(const j of list){
+    const q=nodes[j],d=Math.hypot(q.x-n.x,q.z-n.z);
+    if(d<.18||d>2.55)continue;
+    let clear=true;for(let t=.25;t<d;t+=.35){const f=t/d;if(scpGroundScore(n.x+(q.x-n.x)*f,n.z+(q.z-n.z)*f,.42)!==1){clear=false;break}}
+    if(clear){n.links.push(j);q.links.push(i)}
+   }
+  }
+  const k=key(n.x,n.z);if(!buckets.has(k))buckets.set(k,[]);buckets.get(k).push(i);
+ }
+ objectRayGraph=nodes;objectRayGraphRevision=navData.revision;return nodes;
+}
+function getSCPObjectRayWaypoint(obj,tx,tz){
+ const nodes=getObjectRayGraph(),p=obj.position,ud=obj.userData;
+ if(!nodes.length)return null;
+ const now=performance.now(),targetCell=Math.floor(tx/4)+','+Math.floor(tz/4);
+ if(!ud.objectRayPath||ud.objectRayRevision!==navData.revision||ud.objectRayTarget!==targetCell||now-(ud.objectRayAt||0)>650){
+  let start=-1,goal=-1,sd=Infinity,gd=Infinity;
+  for(let i=0;i<nodes.length;i++){
+   const n=nodes[i],a=Math.hypot(n.x-p.x,n.z-p.z),b=Math.hypot(n.x-tx,n.z-tz);
+   if(a<sd){sd=a;start=i}if(b<gd){gd=b;goal=i}
+  }
+  let path=[];
+  if(start>=0&&goal>=0&&sd<9&&gd<10){
+   const prev=new Int32Array(nodes.length);prev.fill(-1);
+   const seen=new Uint8Array(nodes.length),queue=[start];seen[start]=1;
+   for(let h=0;h<queue.length&&!seen[goal]&&h<18000;h++){
+    const at=queue[h];for(const next of nodes[at].links)if(!seen[next]){seen[next]=1;prev[next]=at;queue.push(next);if(next===goal)break}
+   }
+   if(seen[goal]){for(let at=goal;at!==-1;at=prev[at])path.push(at);path.reverse()}
+  }
+  ud.objectRayPath=path;ud.objectRayPathIndex=1;ud.objectRayRevision=navData.revision;ud.objectRayTarget=targetCell;ud.objectRayAt=now;
+ }
+ const path=ud.objectRayPath||[];
+ if(!path.length){
+  let best=null,bestScore=-Infinity;
+  for(const n of nodes){const d=Math.hypot(n.x-p.x,n.z-p.z);if(d>5)continue;const gain=Math.hypot(tx-p.x,tz-p.z)-Math.hypot(tx-n.x,tz-n.z),score=gain-d*.12;if(score>bestScore){bestScore=score;best=n}}
+  return best;
+ }
+ let index=Math.max(1,ud.objectRayPathIndex||1);
+ while(index<path.length-1&&Math.hypot(nodes[path[index]].x-p.x,nodes[path[index]].z-p.z)<.65)index++;
+ ud.objectRayPathIndex=index;
+ if(index>=path.length-1&&Math.hypot(tx-p.x,tz-p.z)<Math.hypot(nodes[path[index]].x-p.x,nodes[path[index]].z-p.z)+1.2)return {x:tx,z:tz};
+ return nodes[path[index]];
+}
 let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
 const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),scpRayMatHit=new T.LineBasicMaterial({color:0xff2222,depthTest:false});
@@ -532,25 +586,12 @@ function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- // Use the global 360-degree object-bound ray fan. Every solid contributes
- // outward walkable samples; SCP selects the nearby perimeter sample that
- // makes the most progress toward its target, then follows that contour.
- let boundTrace=null,boundTraceScore=-Infinity;
- for(const ray of getGlobalObjectBoundRays()){
-  if(!ray.clear)continue;
-  const sx=ray.ex,sz=ray.ez,d=Math.hypot(sx-p.x,sz-p.z);
-  if(d<.35||d>14)continue;
-  const toward=Math.hypot(tx-sx,tz-sz),gain=dist-toward;
-  const value=gain*1.7-d*.16;
-  if(value>boundTraceScore){boundTraceScore=value;boundTrace={x:sx,z:sz}}
- }
- let traceX=0,traceZ=0,traceWeight=0;
- if(boundTrace){
-  const d=Math.hypot(boundTrace.x-p.x,boundTrace.z-p.z)||1;
-  traceX=(boundTrace.x-p.x)/d;traceZ=(boundTrace.z-p.z)/d;
-  traceWeight=Math.max(0,Math.min(1.8,boundTraceScore*.12+.35));
- }
- let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
+ // SCP follows a connected route through the global object-bound ray graph.
+ // Target coordinates select the route endpoint; movement itself follows ray nodes.
+ const rayWaypoint=getSCPObjectRayWaypoint(obj,tx,tz);
+ const routeDX=rayWaypoint?rayWaypoint.x-p.x:0,routeDZ=rayWaypoint?rayWaypoint.z-p.z:0;
+ const routeDist=Math.hypot(routeDX,routeDZ);
+ let desiredX=routeDist>.08?routeDX/routeDist:0,desiredZ=routeDist>.08?routeDZ/routeDist:0;
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
@@ -638,7 +679,7 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   // When the direct target lane is blocked, soften target pull and prioritize
   // clearance/contour instead of repeatedly pushing into the wall.
   // No direct target ray/chase: targetGain comes only from reachable open samples.
-  const boundTraceGain=(vx*traceX+vz*traceZ)*traceWeight*10;
+  const boundTraceGain=(vx*desiredX+vz*desiredZ)*14;
   const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*18+cornerRoute*13+boundTraceGain;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
@@ -653,7 +694,7 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
    let clear=0;for(const d of [.5,1,1.5,2,3,4])if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1&&!hit(p.x+vx*d,p.z+vz*d,r))clear++;
    const momentum=ud.velocity?.lengthSq()>.0001?(vx*ud.velocity.x+vz*ud.velocity.z)/(ud.velocity.length()||1):0;
    const toward=vx*desiredX+vz*desiredZ;
-   const value=clear*12+toward*4+momentum*5;
+   const value=clear*12+toward*12+momentum*5;
    if(value>escapeScore){escapeScore=value;escape={vx,vz}}
   }
   best=escape;
