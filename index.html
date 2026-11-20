@@ -379,23 +379,26 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
    if(blocker)break;
   }
   if(!blocker)break;
-  const pad=r+.16,halfW=blocker.w/2+pad,halfD=blocker.d/2+pad;
-  const options=[
-   {x:blocker.x-halfW,z:blocker.z-halfD},
-   {x:blocker.x-halfW,z:blocker.z+halfD},
-   {x:blocker.x+halfW,z:blocker.z-halfD},
-   {x:blocker.x+halfW,z:blocker.z+halfD}
-  ];
+  const pad=r+.18,halfW=blocker.w/2+pad,halfD=blocker.d/2+pad,particleSpacing=.68;
+  // Emit actual navigation particles around all four expanded AABB sides.
+  // The particle is usable only when SCP can stand there and reach it safely.
+  const options=[],addSide=(ax,az,bx,bz)=>{
+   const length=Math.hypot(bx-ax,bz-az),count=Math.max(1,Math.ceil(length/particleSpacing));
+   for(let j=0;j<=count;j++){const t=j/count;options.push({x:ax+(bx-ax)*t,z:az+(bz-az)*t})}
+  };
+  addSide(blocker.x-halfW,blocker.z-halfD,blocker.x+halfW,blocker.z-halfD);
+  addSide(blocker.x+halfW,blocker.z-halfD,blocker.x+halfW,blocker.z+halfD);
+  addSide(blocker.x+halfW,blocker.z+halfD,blocker.x-halfW,blocker.z+halfD);
+  addSide(blocker.x-halfW,blocker.z+halfD,blocker.x-halfW,blocker.z-halfD);
   let best=null,bestScore=Infinity;
   for(const q of options){
-   if(!breadcrumbClear(q.x,q.z,r))continue;
-   if(!breadcrumbSegmentClear(x,z,q.x,q.z,r))continue;
-   if(cornersVisited.some(v=>Math.hypot(v.x-q.x,v.z-q.z)<.5))continue;
-   const toTarget=Math.hypot(tx-q.x,tz-q.z);
+   if(!breadcrumbClear(q.x,q.z,r)||!breadcrumbSegmentClear(x,z,q.x,q.z,r))continue;
+   if(cornersVisited.some(v=>Math.hypot(v.x-q.x,v.z-q.z)<.42))continue;
+   const toTarget=Math.hypot(tx-q.x,tz-q.z),fromHere=Math.hypot(q.x-x,q.z-z);
    const directAfter=breadcrumbSegmentClear(q.x,q.z,tx,tz,r);
-   // Prefer a corner that clears the target corridor; otherwise choose the
-   // shortest reachable corner route and let the next pass handle later bounds.
-   const score=Math.hypot(q.x-x,q.z-z)+toTarget+(directAfter?0:1000);
+   // Prefer particles that expose a clear exit toward the target, while
+   // retaining a small distance penalty so the route doesn't jump sides.
+   const score=fromHere+toTarget+(directAfter?-Math.min(8,toTarget)*.35:0);
    if(score<bestScore){bestScore=score;best=q}
   }
   if(!best)break;
@@ -670,7 +673,30 @@ function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- // SCP follows a connected route through the global object-bound ray graph.
+ // When the target corridor is blocked, SCP switches to a real particle chain
+ // emitted around the blocking AABBs. The particle follower owns movement until
+ // the corridor opens again; ordinary direct steering then resumes immediately.
+ const directClear=breadcrumbSegmentClear(p.x,p.z,tx,tz,.48);
+ if(!directClear){
+  const targetKey=Math.floor(tx/2)+','+Math.floor(tz/2),now=performance.now();
+  const route=ud.breadcrumbRoute;
+  const routeStale=!Array.isArray(route)||route.length<2||ud.breadcrumbTargetKey!==targetKey||
+   now-(ud.breadcrumbRouteAt||0)>420||ud.breadcrumbRevision!==navData.revision;
+  if(routeStale){
+   buildSCPBreadcrumbRoute(obj,tx,tz,.48);
+   ud.breadcrumbTargetKey=targetKey;ud.breadcrumbRevision=navData.revision;
+   ud.particleIndex=1;
+  }
+  const particleRoute=ud.breadcrumbRoute;
+  if(particleRoute&&particleRoute.length>1){
+   followSCPParticleChain(obj,particleRoute,speed,dt);
+   if(scpRayGizmos)drawSCPBreadcrumbs(obj);
+   return true;
+  }
+ }
+ // Clear target corridor: discard the particle chain and return to direct pursuit.
+ ud.breadcrumbRoute=[];ud.particleIndex=1;
+ // Legacy global ray graph remains available as a fallback for normal scoring.
  // Target coordinates select the route endpoint; movement itself follows ray nodes.
  const rayWaypoint=getSCPObjectRayWaypoint(obj,tx,tz);
  const routeDX=rayWaypoint?rayWaypoint.x-p.x:0,routeDZ=rayWaypoint?rayWaypoint.z-p.z:0;
