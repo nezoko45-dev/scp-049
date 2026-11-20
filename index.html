@@ -164,66 +164,87 @@ function getObjectRayGraph(){
 }
 function getSCPObjectRayWaypoint(obj,tx,tz){
  const p=obj.position,ud=obj.userData,targetCell=Math.floor(tx/4)+','+Math.floor(tz/4);
- // Re-evaluate visibility every update: blocked means follow ray endpoints;
- // clear means immediately return to direct target pursuit.
+ // Clear line of travel always wins: resume direct pursuit immediately.
  const lineDist=Math.hypot(tx-p.x,tz-p.z),lineSteps=Math.max(1,Math.ceil(lineDist/.35));
  let targetBlocked=false;
  for(let i=1;i<=lineSteps;i++){const f=i/lineSteps,qx=p.x+(tx-p.x)*f,qz=p.z+(tz-p.z)*f;if(scpGroundScore(qx,qz,.42)!==1||hit(qx,qz,.42)){targetBlocked=true;break}}
  ud.objectRayBlocked=targetBlocked;
  if(!targetBlocked){
-  ud.objectRayPath=[];ud.objectRayPathIndex=1;ud.objectRayVisitedTarget=targetCell;ud.objectRayVisited=[];
+  ud.objectRayPath=[];ud.objectRayPathIndex=1;ud.objectRayGoalIndex=-1;
+  ud.objectRayVisitedTarget=targetCell;ud.objectRayVisited=[];
   ud.objectRayTarget=targetCell;ud.objectRayAt=performance.now();
   return {x:tx,z:tz};
  }
  const nodes=getObjectRayGraph();
  if(!nodes.length)return null;
- if(ud.objectRayVisitedTarget!==targetCell){ud.objectRayVisitedTarget=targetCell;ud.objectRayVisited=[];ud.objectRayPath=[];ud.objectRayPathIndex=1}
+ if(ud.objectRayVisitedTarget!==targetCell){
+  ud.objectRayVisitedTarget=targetCell;ud.objectRayVisited=[];ud.objectRayPath=[];ud.objectRayPathIndex=1;ud.objectRayGoalIndex=-1;
+ }
  if(!Array.isArray(ud.objectRayVisited))ud.objectRayVisited=[];
- const visited=new Set(ud.objectRayVisited);
- const now=performance.now();
- if(!ud.objectRayPath||ud.objectRayRevision!==navData.revision||ud.objectRayTarget!==targetCell||now-(ud.objectRayAt||0)>650){
-  let start=-1,goal=-1,sd=Infinity,gd=Infinity;
-  for(let i=0;i<nodes.length;i++){
-   const n=nodes[i],a=Math.hypot(n.x-p.x,n.z-p.z),b=Math.hypot(n.x-tx,n.z-tz);
-   if(a<sd){sd=a;start=i}if(b<gd){gd=b;goal=i}
-  }
-  let path=[];
-  if(start>=0&&goal>=0&&sd<9&&gd<10){
-   const prev=new Int32Array(nodes.length);prev.fill(-1);
-   const seen=new Uint8Array(nodes.length),queue=[start];seen[start]=1;
-   for(let h=0;h<queue.length&&!seen[goal]&&h<18000;h++){
-    const at=queue[h];for(const next of nodes[at].links)if(!seen[next]){seen[next]=1;prev[next]=at;queue.push(next);if(next===goal)break}
-   }
-   if(seen[goal]){for(let at=goal;at!==-1;at=prev[at])path.push(at);path.reverse()}
-  }
-  ud.objectRayPath=path;ud.objectRayPathIndex=1;ud.objectRayRevision=navData.revision;ud.objectRayTarget=targetCell;ud.objectRayAt=now;
+ const visited=new Set(ud.objectRayVisited),now=performance.now();
+ const validPath=Array.isArray(ud.objectRayPath)&&ud.objectRayPath.length>0&&ud.objectRayPath.every(i=>Number.isInteger(i)&&i>=0&&i<nodes.length);
+ let index=Math.min(ud.objectRayPath.length-1,Math.max(1,Number.isInteger(ud.objectRayPathIndex)?ud.objectRayPathIndex:1));
+ // Advance only after SCP physically reaches the current emitted ray endpoint.
+ while(validPath&&index<ud.objectRayPath.length&&Math.hypot(nodes[ud.objectRayPath[index]].x-p.x,nodes[ud.objectRayPath[index]].z-p.z)<.55){
+  visited.add(ud.objectRayPath[index]);index++;
  }
- const path=Array.isArray(ud.objectRayPath)?ud.objectRayPath:[];
- // A path can contain only the start node when SCP and target resolve to the
- // same graph node. Also discard stale/invalid indices before dereferencing.
- const validPath=path.length>0&&path.every(i=>Number.isInteger(i)&&i>=0&&i<nodes.length);
- if(!validPath||path.length<2){
-  ud.objectRayPath=[];ud.objectRayPathIndex=1;
-  // Once a ray endpoint is reached, retire it and continue to the best
-  // nearby unvisited endpoint instead of camping on the final node.
-  let best=null,bestIndex=-1,bestScore=-Infinity;
-  for(let i=0;i<nodes.length;i++){
-   const n=nodes[i],d=Math.hypot(n.x-p.x,n.z-p.z);if(d>9||visited.has(i))continue;
-   const gain=Math.hypot(tx-p.x,tz-p.z)-Math.hypot(tx-n.x,tz-n.z),score=gain-d*.16;
-   if(score>bestScore){bestScore=score;best=n;bestIndex=i}
-  }
-  if(!best&&visited.size){ud.objectRayVisited=[];visited.clear();for(let i=0;i<nodes.length;i++){const n=nodes[i],d=Math.hypot(n.x-p.x,n.z-p.z);if(d>9)continue;const gain=Math.hypot(tx-p.x,tz-p.z)-Math.hypot(tx-n.x,tz-n.z),score=gain-d*.16;if(score>bestScore){bestScore=score;best=n;bestIndex=i}}}
-  if(best&&Math.hypot(best.x-p.x,best.z-p.z)<.65){visited.add(bestIndex);ud.objectRayVisited=[...visited];return null}
-  if(best){ud.objectRayVisited=[...visited];ud.objectRayFallbackIndex=bestIndex}
-  return best;
- }
- let index=Math.min(path.length-1,Math.max(1,Number.isInteger(ud.objectRayPathIndex)?ud.objectRayPathIndex:1));
- while(index<path.length&&Math.hypot(nodes[path[index]].x-p.x,nodes[path[index]].z-p.z)<.65){visited.add(path[index]);index++}
  ud.objectRayVisited=[...visited];
- if(index>=path.length){ud.objectRayPath=[];ud.objectRayPathIndex=1;ud.objectRayAt=0;return null}
- ud.objectRayPathIndex=index;
- const waypoint=nodes[path[index]];
- return waypoint||null;
+ if(validPath&&index<ud.objectRayPath.length){
+  ud.objectRayPathIndex=index;
+  const n=nodes[ud.objectRayPath[index]];
+  return {x:n.x,z:n.z};
+ }
+ if(validPath&&index>=ud.objectRayPath.length&&ud.objectRayGoalIndex>=0)visited.add(ud.objectRayGoalIndex);
+ ud.objectRayVisited=[...visited];
+ ud.objectRayPath=[];ud.objectRayPathIndex=1;ud.objectRayGoalIndex=-1;
+ // Find the nearest graph node, then flood its connected ray-endpoint network.
+ // Every graph node is an actual clear endpoint emitted from an object's bounds.
+ let start=-1,startDist=Infinity;
+ for(let i=0;i<nodes.length;i++){const d=Math.hypot(nodes[i].x-p.x,nodes[i].z-p.z);if(d<startDist){startDist=d;start=i}}
+ if(start<0||startDist>12)return null;
+ const prev=new Int32Array(nodes.length);prev.fill(-1);
+ const distance=new Float32Array(nodes.length);distance.fill(Infinity);
+ const seen=new Uint8Array(nodes.length),queue=[start];seen[start]=1;distance[start]=0;
+ for(let h=0;h<queue.length&&h<30000;h++){
+  const at=queue[h];
+  for(const next of nodes[at].links)if(!seen[next]){
+   seen[next]=1;prev[next]=at;
+   distance[next]=distance[at]+Math.hypot(nodes[next].x-nodes[at].x,nodes[next].z-nodes[at].z);
+   queue.push(next);
+  }
+ }
+ // Pick an unvisited emitted endpoint that makes useful progress toward the
+ // target, while preferring short connected routes. This is global, not a
+ // 9-metre local search, so SCP can keep traversing endpoint-to-endpoint.
+ let goal=-1,bestScore=-Infinity;
+ for(let i=0;i<nodes.length;i++){
+  if(!seen[i]||i===start||visited.has(i))continue;
+  const n=nodes[i],remaining=Math.hypot(tx-n.x,tz-n.z),progress=lineDist-remaining;
+  const score=progress*1.8-distance[i]*.42-remaining*.08;
+  if(score>bestScore){bestScore=score;goal=i}
+ }
+ if(goal<0&&visited.size){
+  // Once every reachable endpoint has been visited, begin another pass.
+  ud.objectRayVisited=[];visited.clear();
+  for(let i=0;i<nodes.length;i++){
+   if(!seen[i]||i===start)continue;
+   const n=nodes[i],remaining=Math.hypot(tx-n.x,tz-n.z),progress=lineDist-remaining;
+   const score=progress*1.8-distance[i]*.42-remaining*.08;
+   if(score>bestScore){bestScore=score;goal=i}
+  }
+ }
+ if(goal<0)return null;
+ const path=[];
+ for(let at=goal;at!==-1;at=prev[at])path.push(at);
+ path.reverse();
+ ud.objectRayPath=path;ud.objectRayPathIndex=path.length>1?1:0;
+ ud.objectRayGoalIndex=goal;ud.objectRayRevision=navData.revision;ud.objectRayTarget=targetCell;ud.objectRayAt=now;
+ if(path.length<2){
+  visited.add(goal);ud.objectRayVisited=[...visited];ud.objectRayPath=[];ud.objectRayGoalIndex=-1;
+  return null;
+ }
+ const waypoint=nodes[path[1]];
+ return {x:waypoint.x,z:waypoint.z};
 }
 let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
