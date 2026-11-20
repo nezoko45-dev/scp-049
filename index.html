@@ -165,6 +165,14 @@ function getObjectRayGraph(){
 function getSCPObjectRayWaypoint(obj,tx,tz){
  const nodes=getObjectRayGraph(),p=obj.position,ud=obj.userData;
  if(!nodes.length)return null;
+ const targetCell=Math.floor(tx/4)+','+Math.floor(tz/4);
+ // Once SCP reaches the last ray endpoint, keep direct pursuit active for this
+ // target cell instead of rebuilding the wall route and oscillating back to it.
+ if(ud.objectRayDirectChase&&ud.objectRayDirectTarget===targetCell){
+  ud.objectRayBlocked=false;
+  return {x:tx,z:tz};
+ }
+ if(ud.objectRayDirectTarget!==targetCell)ud.objectRayDirectChase=false;
  // If the straight route to the target crosses carved ground or a collider,
  // lock navigation to the selected ray-endpoint path. Target motion must not
  // make SCP swap between opposite sides of the same wall every few frames.
@@ -172,7 +180,7 @@ function getSCPObjectRayWaypoint(obj,tx,tz){
  let targetBlocked=false;
  for(let i=1;i<=lineSteps;i++){const f=i/lineSteps,qx=p.x+(tx-p.x)*f,qz=p.z+(tz-p.z)*f;if(scpGroundScore(qx,qz,.42)!==1||hit(qx,qz,.42)){targetBlocked=true;break}}
  ud.objectRayBlocked=targetBlocked;
- const now=performance.now(),targetCell=Math.floor(tx/4)+','+Math.floor(tz/4);
+ const now=performance.now();
  const routeExpired=!targetBlocked&&now-(ud.objectRayAt||0)>650;
  if(!ud.objectRayPath||ud.objectRayRevision!==navData.revision||(!targetBlocked&&ud.objectRayTarget!==targetCell)||routeExpired){
   let start=-1,goal=-1,sd=Infinity,gd=Infinity;
@@ -207,7 +215,15 @@ function getSCPObjectRayWaypoint(obj,tx,tz){
  ud.objectRayPathIndex=index;
  const waypoint=nodes[path[index]];
  if(!waypoint)return null;
- if(index>=path.length-1&&Math.hypot(tx-p.x,tz-p.z)<Math.hypot(waypoint.x-p.x,waypoint.z-p.z)+1.2)return {x:tx,z:tz};
+ // The final graph node is the last ray endpoint on the target side of the
+ // obstacle. Once SCP gets close to it, hand steering back to direct pursuit.
+ if(index>=path.length-1&&Math.hypot(waypoint.x-p.x,waypoint.z-p.z)<1.15){
+  ud.objectRayDirectChase=true;
+  ud.objectRayDirectTarget=targetCell;
+  ud.objectRayBlocked=false;
+  ud.objectRayPath=[];
+  return {x:tx,z:tz};
+ }
  return waypoint;
 }
 let scpRayGizmos=false;
