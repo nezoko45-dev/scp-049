@@ -1415,7 +1415,9 @@ function moveSCPPolygonAI(obj,target,speed,dt){
   ud.scpPolyPath=path;ud.scpPolyPathIndex=1;
   if(moveSCPThroughPolygonPath(obj,path,speed,dt,ud))return true;
  }
- return scpPolygonRoam(obj,speed,dt,ud);
+ // With no active moving target, SCP must not start an idle patrol.
+ // While a moving target is hidden, continue polygon-by-polygon searching.
+ return target?scpPolygonExplore(obj,speed,dt,ud):false;
 }
 
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
@@ -1498,21 +1500,20 @@ function frame(now){
    const moveSpeed=previous?Math.hypot(t.obj.position.x-previous.x,t.obj.position.z-previous.z)/elapsed:0;
    scpObservedMotion.set(t.obj,{x:t.obj.position.x,z:t.obj.position.z,at:now});
    return {...t,moveSpeed,distance:Math.hypot(t.obj.position.x-bad.position.x,t.obj.position.z-bad.position.z)};
-  }).filter(t=>t.moveSpeed>.32);
+  }).filter(t=>t.moveSpeed>.015);
   const currentObj=scpTarget?.obj||null;
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
-  if(currentInvalid){scpTarget=null;scpTargetUntil=0}
-  // Hold each selected target for exactly 11 seconds, then choose a different
-  // moving target based on its measured position-change speed.
+  const currentMoving=!!currentObj&&movingPool.some(t=>t.obj===currentObj);
+  if(currentInvalid|| (scpTarget&&!currentMoving)){scpTarget=null;scpTargetUntil=0}
+  // Pursue any target showing real movement, with no minimum walking-speed
+  // requirement. Keep a moving target for up to 11 seconds to prevent flicker.
   if(!scpTarget||now>=scpTargetUntil){
    const choices=movingPool.filter(t=>t.obj!==scpTarget?.obj);
    const ranked=choices.sort((a,b)=>(b.moveSpeed*2-b.distance*.035)-(a.moveSpeed*2-a.distance*.035));
-   let pick=ranked[0]||null;
-   if(!pick&&scpTarget&&!currentInvalid)pick={kind:scpTarget.kind,obj:scpTarget.obj,index:scpTarget.index,moveSpeed:0,distance:Math.hypot(scpTarget.obj.position.x-bad.position.x,scpTarget.obj.position.z-bad.position.z)};
-   // If nobody is currently moving, still pursue the nearest living target.
-   if(!pick)pick=livingPool.map(t=>({...t,distance:Math.hypot(t.obj.position.x-bad.position.x,t.obj.position.z-bad.position.z),moveSpeed:0})).sort((a,b)=>a.distance-b.distance)[0]||null;
+   const held=movingPool.find(t=>t.obj===scpTarget?.obj)||null;
+   const pick=ranked[0]||held;
    if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
-   else{scpTarget=null;scpTargetUntil=now+11000}
+   else{scpTarget=null;scpTargetUntil=0}
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
@@ -1522,6 +1523,13 @@ function frame(now){
   scpParticleTrail.visible=false;
   let scpMoved=false;
   if(targetValid)scpMoved=moveSCPPolygonAI(bad,targetObj,3.2,dt);
+  else{
+   // No moving targets: stand still instead of resuming an idle patrol.
+   bad.userData.velocity||(bad.userData.velocity=new T.Vector3());
+   bad.userData.velocity.multiplyScalar(Math.exp(-8*dt));
+   bad.userData.scpPolyPath=null;bad.userData.scpPolyPathIndex=0;
+   bad.userData.scpChaseGoalKey=null;bad.userData.scpExploreGoal=null;
+  }
   if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos()}
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
   if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
