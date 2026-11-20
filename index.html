@@ -143,34 +143,38 @@ function drawSCPRayGizmos(obj){
  const now=performance.now();
  if(now-scpBridgeGizmoAt<650)return;
  scpBridgeGizmoAt=now;
+ // Ensure the shared graph includes every currently generated facility chunk.
+ buildSCPPolygonNavmesh(obj.position.x,obj.position.z,obj.position.x,obj.position.z);
  clearSCPRayViz();
- const step=SCP_BRIDGE_STEP,centerX=Math.round(obj.position.x/step),centerZ=Math.round(obj.position.z/step);
- const radius=14,clearVerts=[],blockedVerts=[];
- let clearCount=0,blockedCount=0;
- // Draw every unique neighboring bridge in a rolling grid around SCP.
- // Each connection is tested by the exact same raycast/AABB gate used by movement.
- for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
-  const ax=centerX+dx,az=centerZ+dz;
-  if(!scpBridgeNodeClear(ax,az))continue;
-  for(const [ox,oz] of [[1,0],[0,1],[1,1],[-1,1]]){
-   const bx=ax+ox,bz=az+oz;
-   if(Math.abs(bx-centerX)>radius||Math.abs(bz-centerZ)>radius||!scpBridgeNodeClear(bx,bz))continue;
-   const ok=globalGridBridgeClear(ax,az,bx,bz,.46);
-   const verts=ok?clearVerts:blockedVerts;
-   verts.push(ax*step,.16,az*step,bx*step,.16,bz*step);
-   if(ok)clearCount++;else blockedCount++;
+ const polygonVerts=[],portalVerts=[];
+ const seenEdges=new Set();
+ for(const node of scpPolygonMesh.nodes){
+  const v=node.verts;
+  for(let i=0;i<3;i++){
+   const a=v[i],b=v[(i+1)%3];
+   polygonVerts.push(a.x,.13,a.z,b.x,.13,b.z);
+  }
+  // Draw each real shared portal once, using the graph's connected edges.
+  for(const edge of node.edges){
+   const other=scpPolygonMesh.byKey.get(edge.to);
+   if(!other)continue;
+   const pair=node.key<other.key?node.key+'|'+other.key:other.key+'|'+node.key;
+   if(seenEdges.has(pair))continue;
+   seenEdges.add(pair);
+   const mid=edge.midpoint;
+   portalVerts.push(mid.x,.19,mid.z,(node.x+other.x)*.5,.19,(node.z+other.z)*.5);
   }
  }
- if(clearVerts.length){
-  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(clearVerts,3));
+ if(polygonVerts.length){
+  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(polygonVerts,3));
   scpRayViz.add(new T.LineSegments(g,scpRayMatClear));
  }
- if(blockedVerts.length){
-  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(blockedVerts,3));
-  scpRayViz.add(new T.LineSegments(g,scpRayMatHit));
+ if(portalVerts.length){
+  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(portalVerts,3));
+  scpRayViz.add(new T.LineSegments(g,scpChainMat));
  }
  scpRayViz.visible=true;rayHUD.style.display='block';
- rayHUD.textContent='SHARED GLOBAL GRID · CYAN CLEAR '+clearCount+' · RED BLOCKED '+blockedCount+' · G TOGGLE';
+ rayHUD.textContent='GLOBAL POLYGON NAVMESH · '+scpPolygonMesh.nodes.length+' TRIANGLES · '+seenEdges.size+' PORTALS · G TOGGLE';
 }
 // Breadcrumb collision validation against every streamed facility solid.
 function breadcrumbClear(x,z,r=.48){
