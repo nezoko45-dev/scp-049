@@ -342,12 +342,15 @@ let scpBridgeGizmoAt=0;
 function drawSCPRayGizmos(obj){scpRayViz.visible=false;rayHUD.style.display='none'}
 // Breadcrumb collision validation against every streamed facility solid.
 function breadcrumbClear(x,z,r=.48){
+ // A particle is valid only when BOTH the live score map and swept AABB
+ // footprint say the full SCP body can stand there.
+ if(!navReady||scpGroundScore(x,z,r)!==1||hit(x,z,r))return false;
  for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return false;
  return true;
 }
 // Check the full corridor between two breadcrumb positions at 18 cm intervals.
 function breadcrumbSegmentClear(ax,az,bx,bz,r=.48){
- const length=Math.hypot(bx-ax,bz-az),steps=Math.max(2,Math.ceil(length/.18));
+ const length=Math.hypot(bx-ax,bz-az),steps=Math.max(2,Math.ceil(length/.12));
  for(let q=1;q<=steps;q++){const t=q/steps;if(!breadcrumbClear(ax+(bx-ax)*t,az+(bz-az)*t,r))return false}
  return true;
 }
@@ -702,12 +705,15 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   }
   const particleRoute=ud.breadcrumbRoute;
   if(particleRoute&&particleRoute.length>1){
+   // Render the exact particles SCP is following so the route is inspectable.
+   updateSCPParticleTrail(particleRoute);scpParticleTrail.visible=true;
    followSCPParticleChain(obj,particleRoute,speed,dt);
    if(scpRayGizmos)drawSCPBreadcrumbs(obj);
    return true;
   }
  }
  // Clear target corridor: discard the particle chain and return to direct pursuit.
+ scpParticleTrail.visible=false;scpParticleGeometry.setDrawRange(0,0);
  ud.breadcrumbRoute=[];ud.particleIndex=1;
  // Legacy global ray graph remains available as a fallback for normal scoring.
  // Target coordinates select the route endpoint; movement itself follows ray nodes.
