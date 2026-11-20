@@ -1284,38 +1284,107 @@ function scpPolygonPath(start,goal){
  }
  return [];
 }
+// When a portal ray intersects an object's AABB, scan that exact bounds
+// outline for reachable open points. This makes SCP walk around the box rather
+// than repeatedly pushing into its face or abandoning the polygon route.
+function scpRaycastOpenBounds(x,z,tx,tz,r=.48,ud=null){
+ const dx=tx-x,dz=tz-z,len=Math.hypot(dx,dz);
+ if(len<.001)return null;
+ let blocker=null,blockAt=Infinity;
+ const samples=Math.max(2,Math.ceil(len/.10));
+ for(let i=1;i<=samples;i++){
+  const t=i/samples,sx=x+dx*t,sz=z+dz*t;
+  for(const o of nearbySolid(sx,sz,r+2)){
+   if(Math.abs(sx-o.x)<o.w/2+r&&Math.abs(sz-o.z)<o.d/2+r){
+    const along=len*t;
+    if(along<blockAt){blockAt=along;blocker=o}
+   }
+  }
+  if(blocker)break;
+ }
+ if(!blocker)return null;
+ // The outline is the collider's expanded perimeter, not its center or a
+ // guessed steering angle. Sample every side so narrow openings are visible.
+ const pad=r+.14,hw=blocker.w/2+pad,hd=blocker.d/2+pad;
+ const minX=blocker.x-hw,maxX=blocker.x+hw,minZ=blocker.z-hd,maxZ=blocker.z+hd;
+ const perimeter=2*(2*hw+2*hd),count=Math.max(16,Math.ceil(perimeter/.32));
+ const candidates=[];
+ for(let i=0;i<count;i++){
+  const q=i/count*perimeter;
+  let px,pz,remain=q;
+  if(remain<2*hw){px=minX+remain;pz=minZ}
+  else if((remain-=2*hw)<2*hd){px=maxX;pz=minZ+remain}
+  else if((remain-=2*hd)<2*hw){px=maxX-remain;pz=maxZ}
+  else{remain-=2*hw;px=minX;pz=maxZ-remain}
+  if(!scpBridgeClear(x,z,px,pz,r))continue;
+  if(hit(px,pz,r))continue;
+  const toTarget=Math.hypot(tx-px,tz-pz);
+  const clearsTarget=scpBridgeClear(px,pz,tx,tz,r);
+  const forward=((px-x)*dx+(pz-z)*dz)/(len||1);
+  const repeat=ud?.scpBoundsVisited?.some(v=>Math.hypot(v.x-px,v.z-pz)<.55);
+  if(repeat)continue;
+  // Prefer an open outline point that restores line-of-sight to the portal;
+  // otherwise select the reachable corner that makes the most progress.
+  const score=Math.hypot(px-x,pz-z)+toTarget+(clearsTarget?-3.5:0)-Math.max(0,forward)*.18;
+  candidates.push({x:px,z:pz,score});
+ }
+ candidates.sort((a,b)=>a.score-b.score);
+ if(!candidates.length)return null;
+ const best=candidates[0];
+ if(ud){
+  ud.scpBoundsVisited||(ud.scpBoundsVisited=[]);
+  ud.scpBoundsVisited.push({x:best.x,z:best.z});
+  if(ud.scpBoundsVisited.length>8)ud.scpBoundsVisited.shift();
+ }
+ return best;
+}
 function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  if(!path||path.length<2)return false;
  // Traverse the navmesh edge-to-edge: each waypoint is the midpoint of the
  // shared portal on the next polygon. Never steer toward polygon centroids.
  if(ud.scpPolyPathActive!==path){
-  ud.scpPolyPathActive=path;ud.scpPolyPathIndex=1;
+  ud.scpPolyPathActive=path;ud.scpPolyPathIndex=1;ud.scpBoundsDetour=null;ud.scpBoundsVisited=[];
  }
  let i=ud.scpPolyPathIndex??1;
- // Consume a portal only when SCP actually reaches its opening. The next
- // portal then lies on the boundary of the polygon just entered.
  while(i<path.length){
   const portal=path[i].via;
   if(!portal){
-   ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;
+   ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;ud.scpBoundsDetour=null;
    return false;
   }
   const pd=Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z);
   if(pd>.20)break;
-  i++;
-  ud.scpPolyPathIndex=i;
+  i++;ud.scpPolyPathIndex=i;ud.scpBoundsDetour=null;ud.scpBoundsVisited=[];
  }
  if(i>=path.length)return false;
- const waypoint=path[i].via;
+ const portal=path[i].via;
+ // Finish an existing outline detour before aiming back at the portal.
+ let waypoint=ud.scpBoundsDetour;
+ if(waypoint&&Math.hypot(waypoint.x-obj.position.x,waypoint.z-obj.position.z)<.24){
+  ud.scpBoundsDetour=null;waypoint=null;
+ }
+ if(!waypoint){
+  waypoint=portal;
+  const probe=Math.min(Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z),Math.max(.12,speed*Math.max(0,dt)));
+  const d=Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z);
+  const nx=obj.position.x+(portal.x-obj.position.x)/(d||1)*probe;
+  const nz=obj.position.z+(portal.z-obj.position.z)/(d||1)*probe;
+  if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.48)){
+   const detour=scpRaycastOpenBounds(obj.position.x,obj.position.z,portal.x,portal.z,.48,ud);
+   if(!detour){ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;return false}
+   ud.scpBoundsDetour=detour;waypoint=detour;
+  }
+ }
  const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);
  if(d<.001)return false;
  const step=Math.min(d,speed*Math.max(0,dt)),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
  if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.48)){
-  // Preserve the route cursor; the caller can rebuild from the current
-  // polygon without oscillating between a centroid and its incoming portal.
-  ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;
-  ud.scpPolyBlockedAt=performance.now();
-  return false;
+  // Re-scan the currently blocking bounds outline instead of discarding the
+  // polygon route; this can select the opposite corner if the first is closed.
+  const detour=scpRaycastOpenBounds(obj.position.x,obj.position.z,portal.x,portal.z,.48,ud);
+  if(detour){ud.scpBoundsDetour=detour;return false}
+  ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;ud.scpBoundsDetour=null;
+  ud.scpPolyBlockedAt=performance.now();return false;
  }
  obj.position.x=nx;obj.position.z=nz;
  ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
