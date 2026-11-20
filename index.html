@@ -1265,13 +1265,19 @@ function scpPolygonPath(start,goal){
  while(open.length){
   open.sort((a,b)=>a.f-b.f);const cur=open.shift();
   if(closed.has(cur.node.key))continue;
-  if(cur.node.key===goal.key){const path=[];let q=cur;while(q){path.push(q.node);q=q.parent}return path.reverse()}
+  if(cur.node.key===goal.key){
+   const chain=[];let q=cur;while(q){chain.push({node:q.node,via:q.via||null});q=q.parent}
+   chain.reverse();
+   // Preserve each connecting portal midpoint so movement traces the walkable
+   // opening between object bounds instead of cutting diagonally through them.
+   return chain.map((entry)=>Object.assign({},entry.node,{via:entry.via}));
+  }
   closed.add(cur.node.key);
   for(const edge of cur.node.edges){
    const next=scpPolygonMesh.byKey.get(edge.to);if(!next||closed.has(next.key))continue;
    const g=cur.g+Math.hypot(next.x-cur.node.x,next.z-cur.node.z);
    if(g>=(best.get(next.key)??Infinity))continue;
-   best.set(next.key,g);open.push({node:next,g,f:g+Math.hypot(goal.x-next.x,goal.z-next.z),parent:cur});
+   best.set(next.key,g);open.push({node:next,via:edge.midpoint,g,f:g+Math.hypot(goal.x-next.x,goal.z-next.z),parent:cur});
   }
  }
  return [];
@@ -1281,7 +1287,13 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  let i=ud.scpPolyPathIndex||1;
  while(i<path.length&&Math.hypot(path[i].x-obj.position.x,path[i].z-obj.position.z)<.42)i++;
  ud.scpPolyPathIndex=i;if(i>=path.length)return false;
- const n=path[i],dx=n.x-obj.position.x,dz=n.z-obj.position.z,d=Math.hypot(dx,dz);
+ const n=path[i];
+ // Approach the shared portal first, then enter the neighboring polygon's
+ // center. This makes the route trace openings around carved object bounds.
+ const via=n.via;
+ const usePortal=!!via&&Math.hypot(via.x-obj.position.x,via.z-obj.position.z)>.28;
+ const tx=usePortal?via.x:n.x,tz=usePortal?via.z:n.z;
+ const dx=tx-obj.position.x,dz=tz-obj.position.z,d=Math.hypot(dx,dz);
  if(d<.001)return false;
  const step=Math.min(d,speed*dt),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
  if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.46)){ud.scpPolyPathIndex=0;return false}
