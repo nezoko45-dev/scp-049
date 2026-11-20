@@ -530,6 +530,30 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
    const before=dist,after=Math.hypot(tx-(p.x+vx*d),tz-(p.z+vz*d));
    targetGain+=Math.max(-1.5,Math.min(1.5,before-after))/(.5+d*.12);
   }
+  // Two-leg lookahead: a useful cornering heading may initially move sideways
+  // or slightly away from the target while it follows a long wall. Preview a
+  // second turn from a point down this lane so those routes beat dead-end
+  // headings that only look good over a straight-line target pull.
+  let cornerRoute=0;
+  const previewX=p.x+vx*3.2,previewZ=p.z+vz*3.2;
+  if(scpGroundScore(previewX,previewZ,r)===1&&!hit(previewX,previewZ,r)){
+   let bestExit=-Infinity;
+   for(let turn=-180;turn<180;turn+=15){
+    const ta=a+turn*Math.PI/180,txd=Math.sin(ta),tzd=Math.cos(ta);
+    let exitOpen=0;
+    for(const d of [1,2,3.5,5.5]){
+     const qx=previewX+txd*d,qz=previewZ+tzd*d;
+     if(scpGroundScore(qx,qz,r)===1&&!hit(qx,qz,r))exitOpen++;else break;
+    }
+    if(!exitOpen)continue;
+    const endX=previewX+txd*Math.min(5.5,exitOpen===4?5.5:exitOpen===3?3.5:exitOpen===2?2:1);
+    const endZ=previewZ+tzd*Math.min(5.5,exitOpen===4?5.5:exitOpen===3?3.5:exitOpen===2?2:1);
+    const gain=dist-Math.hypot(tx-endX,tz-endZ);
+    const routeScore=gain*1.8+exitOpen*.55;
+    if(routeScore>bestExit)bestExit=routeScore;
+   }
+   if(bestExit>-Infinity)cornerRoute=bestExit;
+  }
   const progress=vx*desiredX+vz*desiredZ;
   // Repulsion/attraction field: every score-1 sample pulls this heading
   // forward; every score-0 sample pushes it away. Near samples weigh most.
@@ -553,7 +577,7 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   // When the direct target lane is blocked, soften target pull and prioritize
   // clearance/contour instead of repeatedly pushing into the wall.
   // No direct target ray/chase: targetGain comes only from reachable open samples.
-  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*24;
+  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*18+cornerRoute*13;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
