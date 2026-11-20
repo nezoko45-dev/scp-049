@@ -143,9 +143,31 @@ function getGlobalObjectBoundRays(){
 }
 let objectRayGraphRevision=-1,objectRayGraph=[];
 function getObjectRayGraph(){
- const rays=getGlobalObjectBoundRays();
  if(objectRayGraphRevision===navData.revision&&objectRayGraph.length)return objectRayGraph;
- const nodes=rays.filter(q=>q.clear).map(q=>({x:q.ex,z:q.ez,links:[],rayX:q.dx,rayZ:q.dz,reach:q.reach,source:q.object}));
+ // Generate actual ground positions around each object's AABB perimeter.
+ // These are the points SCP walks to when its direct route to a target is blocked.
+ const nodes=[],seenPoints=new Set(),spacing=.7,offset=.72;
+ const addPoint=(x,z,o)=>{
+  if(scpGroundScore(x,z,.42)!==1||hit(x,z,.42))return;
+  const key=Math.round(x*10)+','+Math.round(z*10);
+  if(seenPoints.has(key))return;
+  seenPoints.add(key);nodes.push({x,z,links:[],source:o});
+ };
+ for(const o of solid){
+  const hw=Math.max(.01,o.w/2),hd=Math.max(.01,o.d/2);
+  const nx=Math.max(1,Math.ceil(o.w/spacing)),nz=Math.max(1,Math.ceil(o.d/spacing));
+  // Sample all four sides just outside the object's bounds, including corners.
+  for(let i=0;i<=nx;i++){
+   const f=i/nx,x=o.x-hw+o.w*f;
+   addPoint(x,o.z-hd-offset,o);addPoint(x,o.z+hd+offset,o);
+  }
+  for(let i=0;i<=nz;i++){
+   const f=i/nz,z=o.z-hd+o.d*f;
+   addPoint(o.x-hw-offset,z,o);addPoint(o.x+hw+offset,z,o);
+  }
+ }
+ // Connect nearby generated perimeter positions only when the whole ground
+ // segment between them is walkable and clear of solid bounds.
  const cell=2.6,buckets=new Map(),key=(x,z)=>Math.floor(x/cell)+','+Math.floor(z/cell);
  for(let i=0;i<nodes.length;i++){
   const n=nodes[i],cx=Math.floor(n.x/cell),cz=Math.floor(n.z/cell);
@@ -154,7 +176,11 @@ function getObjectRayGraph(){
    for(const j of list){
     const q=nodes[j],d=Math.hypot(q.x-n.x,q.z-n.z);
     if(d<.18||d>2.55)continue;
-    let clear=true;for(let t=.25;t<d;t+=.35){const f=t/d;if(scpGroundScore(n.x+(q.x-n.x)*f,n.z+(q.z-n.z)*f,.42)!==1){clear=false;break}}
+    let clear=true;
+    for(let t=.2;t<d;t+=.3){
+     const f=t/d,x=n.x+(q.x-n.x)*f,z=n.z+(q.z-n.z)*f;
+     if(scpGroundScore(x,z,.42)!==1||hit(x,z,.42)){clear=false;break}
+    }
     if(clear){n.links.push(j);q.links.push(i)}
    }
   }
