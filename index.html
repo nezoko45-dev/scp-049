@@ -183,17 +183,24 @@ function getSCPObjectRayWaypoint(obj,tx,tz){
   }
   ud.objectRayPath=path;ud.objectRayPathIndex=1;ud.objectRayRevision=navData.revision;ud.objectRayTarget=targetCell;ud.objectRayAt=now;
  }
- const path=ud.objectRayPath||[];
- if(!path.length){
+ const path=Array.isArray(ud.objectRayPath)?ud.objectRayPath:[];
+ // A path can contain only the start node when SCP and target resolve to the
+ // same graph node. Also discard stale/invalid indices before dereferencing.
+ const validPath=path.length>0&&path.every(i=>Number.isInteger(i)&&i>=0&&i<nodes.length);
+ if(!validPath||path.length<2){
+  ud.objectRayPath=[];
+  ud.objectRayPathIndex=1;
   let best=null,bestScore=-Infinity;
   for(const n of nodes){const d=Math.hypot(n.x-p.x,n.z-p.z);if(d>5)continue;const gain=Math.hypot(tx-p.x,tz-p.z)-Math.hypot(tx-n.x,tz-n.z),score=gain-d*.12;if(score>bestScore){bestScore=score;best=n}}
   return best;
  }
- let index=Math.max(1,ud.objectRayPathIndex||1);
+ let index=Math.min(path.length-1,Math.max(1,Number.isInteger(ud.objectRayPathIndex)?ud.objectRayPathIndex:1));
  while(index<path.length-1&&Math.hypot(nodes[path[index]].x-p.x,nodes[path[index]].z-p.z)<.65)index++;
  ud.objectRayPathIndex=index;
- if(index>=path.length-1&&Math.hypot(tx-p.x,tz-p.z)<Math.hypot(nodes[path[index]].x-p.x,nodes[path[index]].z-p.z)+1.2)return {x:tx,z:tz};
- return nodes[path[index]];
+ const waypoint=nodes[path[index]];
+ if(!waypoint)return null;
+ if(index>=path.length-1&&Math.hypot(tx-p.x,tz-p.z)<Math.hypot(waypoint.x-p.x,waypoint.z-p.z)+1.2)return {x:tx,z:tz};
+ return waypoint;
 }
 let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
