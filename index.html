@@ -544,6 +544,15 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  if(!ud.wallSide)ud.wallSide=1;
  for(let deg=0;deg<360;deg+=5){
   const a=headings[deg],vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,reach=0;
+  // Cast a continuous ground-score ray along this heading. Any blocked sample
+  // invalidates the whole ray, so SCP chooses a neighboring clear direction
+  // rather than steering through an obstacle that lies between coarse samples.
+  let groundRayClear=true,groundRayEnd=Math.min(10,Math.max(3.5,dist));
+  for(let rayD=.3;rayD<=groundRayEnd;rayD+=.3){
+   const rx=p.x+vx*rayD,rz=p.z+vz*rayD;
+   if(scpGroundScore(rx,rz,r)!==1||hit(rx,rz,r)){groundRayClear=false;break}
+  }
+  if(!groundRayClear)continue;
   for(const d of samples){if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;reach=d}else blocked++}
   let edge=0,edgeToward=0,px=-vz,pz=vx;
   for(const d of [1.2,2.5,4,6,8]){
