@@ -1420,6 +1420,8 @@ function frame(now){
    if(target&&d>1.05)zombieMoved=moveSCPPolygonAI(z,target,2.35,dt);
    else if(target&&d<=1.05)ud.velocity?.multiplyScalar(Math.exp(-5.5*dt));
    else zombieMoved=moveSCPPolygonAI(z,null,1.35,dt);
+   // Advance each zombie's AnimationMixer every frame; without this, GLB clips freeze.
+   ud.mixer?.update(dt);
    const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
    const next=ud.actions?.[wanted]||ud.actions?.idle||ud.actions?.walk;
    if(next&&next!==ud.currentAction){next.reset().fadeIn(.18).play();ud.currentAction?.fadeOut(.18);ud.currentAction=next;}
