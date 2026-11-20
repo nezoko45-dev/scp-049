@@ -163,23 +163,23 @@ function getObjectRayGraph(){
  objectRayGraph=nodes;objectRayGraphRevision=navData.revision;return nodes;
 }
 function getSCPObjectRayWaypoint(obj,tx,tz){
- const nodes=getObjectRayGraph(),p=obj.position,ud=obj.userData;
- if(!nodes.length)return null;
- const targetCell=Math.floor(tx/4)+','+Math.floor(tz/4);
+ const p=obj.position,ud=obj.userData,targetCell=Math.floor(tx/4)+','+Math.floor(tz/4);
  // Re-evaluate visibility every update: blocked means follow ray endpoints;
- // clear means immediately return to direct target pursuit. This repeats as
- // often as needed if SCP rounds one obstacle and encounters another.
+ // clear means immediately return to direct target pursuit.
  const lineDist=Math.hypot(tx-p.x,tz-p.z),lineSteps=Math.max(1,Math.ceil(lineDist/.35));
  let targetBlocked=false;
  for(let i=1;i<=lineSteps;i++){const f=i/lineSteps,qx=p.x+(tx-p.x)*f,qz=p.z+(tz-p.z)*f;if(scpGroundScore(qx,qz,.42)!==1||hit(qx,qz,.42)){targetBlocked=true;break}}
  ud.objectRayBlocked=targetBlocked;
  if(!targetBlocked){
-  ud.objectRayPath=[];
-  ud.objectRayPathIndex=1;
-  ud.objectRayTarget=targetCell;
-  ud.objectRayAt=performance.now();
+  ud.objectRayPath=[];ud.objectRayPathIndex=1;ud.objectRayVisitedTarget=targetCell;ud.objectRayVisited=[];
+  ud.objectRayTarget=targetCell;ud.objectRayAt=performance.now();
   return {x:tx,z:tz};
  }
+ const nodes=getObjectRayGraph();
+ if(!nodes.length)return null;
+ if(ud.objectRayVisitedTarget!==targetCell){ud.objectRayVisitedTarget=targetCell;ud.objectRayVisited=[];ud.objectRayPath=[];ud.objectRayPathIndex=1}
+ if(!Array.isArray(ud.objectRayVisited))ud.objectRayVisited=[];
+ const visited=new Set(ud.objectRayVisited);
  const now=performance.now();
  if(!ud.objectRayPath||ud.objectRayRevision!==navData.revision||ud.objectRayTarget!==targetCell||now-(ud.objectRayAt||0)>650){
   let start=-1,goal=-1,sd=Infinity,gd=Infinity;
@@ -203,21 +203,27 @@ function getSCPObjectRayWaypoint(obj,tx,tz){
  // same graph node. Also discard stale/invalid indices before dereferencing.
  const validPath=path.length>0&&path.every(i=>Number.isInteger(i)&&i>=0&&i<nodes.length);
  if(!validPath||path.length<2){
-  ud.objectRayPath=[];
-  ud.objectRayPathIndex=1;
-  let best=null,bestScore=-Infinity;
-  for(const n of nodes){const d=Math.hypot(n.x-p.x,n.z-p.z);if(d>5)continue;const gain=Math.hypot(tx-p.x,tz-p.z)-Math.hypot(tx-n.x,tz-n.z),score=gain-d*.12;if(score>bestScore){bestScore=score;best=n}}
+  ud.objectRayPath=[];ud.objectRayPathIndex=1;
+  // Once a ray endpoint is reached, retire it and continue to the best
+  // nearby unvisited endpoint instead of camping on the final node.
+  let best=null,bestIndex=-1,bestScore=-Infinity;
+  for(let i=0;i<nodes.length;i++){
+   const n=nodes[i],d=Math.hypot(n.x-p.x,n.z-p.z);if(d>9||visited.has(i))continue;
+   const gain=Math.hypot(tx-p.x,tz-p.z)-Math.hypot(tx-n.x,tz-n.z),score=gain-d*.16;
+   if(score>bestScore){bestScore=score;best=n;bestIndex=i}
+  }
+  if(!best&&visited.size){ud.objectRayVisited=[];visited.clear();for(let i=0;i<nodes.length;i++){const n=nodes[i],d=Math.hypot(n.x-p.x,n.z-p.z);if(d>9)continue;const gain=Math.hypot(tx-p.x,tz-p.z)-Math.hypot(tx-n.x,tz-n.z),score=gain-d*.16;if(score>bestScore){bestScore=score;best=n;bestIndex=i}}}
+  if(best&&Math.hypot(best.x-p.x,best.z-p.z)<.65){visited.add(bestIndex);ud.objectRayVisited=[...visited];return null}
+  if(best){ud.objectRayVisited=[...visited];ud.objectRayFallbackIndex=bestIndex}
   return best;
  }
  let index=Math.min(path.length-1,Math.max(1,Number.isInteger(ud.objectRayPathIndex)?ud.objectRayPathIndex:1));
- while(index<path.length-1&&Math.hypot(nodes[path[index]].x-p.x,nodes[path[index]].z-p.z)<.65)index++;
+ while(index<path.length&&Math.hypot(nodes[path[index]].x-p.x,nodes[path[index]].z-p.z)<.65){visited.add(path[index]);index++}
+ ud.objectRayVisited=[...visited];
+ if(index>=path.length){ud.objectRayPath=[];ud.objectRayPathIndex=1;ud.objectRayAt=0;return null}
  ud.objectRayPathIndex=index;
  const waypoint=nodes[path[index]];
- if(!waypoint)return null;
- // Stay on the final endpoint while the direct route remains blocked.
- // The next update rechecks clearance and switches to direct chase only when
- // the obstacle is genuinely no longer between SCP and its target.
- return waypoint;
+ return waypoint||null;
 }
 let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
