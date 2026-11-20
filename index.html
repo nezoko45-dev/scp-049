@@ -166,23 +166,22 @@ function getSCPObjectRayWaypoint(obj,tx,tz){
  const nodes=getObjectRayGraph(),p=obj.position,ud=obj.userData;
  if(!nodes.length)return null;
  const targetCell=Math.floor(tx/4)+','+Math.floor(tz/4);
- // Once SCP reaches the last ray endpoint, keep direct pursuit active for this
- // target cell instead of rebuilding the wall route and oscillating back to it.
- if(ud.objectRayDirectChase&&ud.objectRayDirectTarget===targetCell){
-  ud.objectRayBlocked=false;
-  return {x:tx,z:tz};
- }
- if(ud.objectRayDirectTarget!==targetCell)ud.objectRayDirectChase=false;
- // If the straight route to the target crosses carved ground or a collider,
- // lock navigation to the selected ray-endpoint path. Target motion must not
- // make SCP swap between opposite sides of the same wall every few frames.
+ // Re-evaluate visibility every update: blocked means follow ray endpoints;
+ // clear means immediately return to direct target pursuit. This repeats as
+ // often as needed if SCP rounds one obstacle and encounters another.
  const lineDist=Math.hypot(tx-p.x,tz-p.z),lineSteps=Math.max(1,Math.ceil(lineDist/.35));
  let targetBlocked=false;
  for(let i=1;i<=lineSteps;i++){const f=i/lineSteps,qx=p.x+(tx-p.x)*f,qz=p.z+(tz-p.z)*f;if(scpGroundScore(qx,qz,.42)!==1||hit(qx,qz,.42)){targetBlocked=true;break}}
  ud.objectRayBlocked=targetBlocked;
+ if(!targetBlocked){
+  ud.objectRayPath=[];
+  ud.objectRayPathIndex=1;
+  ud.objectRayTarget=targetCell;
+  ud.objectRayAt=performance.now();
+  return {x:tx,z:tz};
+ }
  const now=performance.now();
- const routeExpired=!targetBlocked&&now-(ud.objectRayAt||0)>650;
- if(!ud.objectRayPath||ud.objectRayRevision!==navData.revision||(!targetBlocked&&ud.objectRayTarget!==targetCell)||routeExpired){
+ if(!ud.objectRayPath||ud.objectRayRevision!==navData.revision||ud.objectRayTarget!==targetCell||now-(ud.objectRayAt||0)>650){
   let start=-1,goal=-1,sd=Infinity,gd=Infinity;
   for(let i=0;i<nodes.length;i++){
    const n=nodes[i],a=Math.hypot(n.x-p.x,n.z-p.z),b=Math.hypot(n.x-tx,n.z-tz);
@@ -215,15 +214,9 @@ function getSCPObjectRayWaypoint(obj,tx,tz){
  ud.objectRayPathIndex=index;
  const waypoint=nodes[path[index]];
  if(!waypoint)return null;
- // The final graph node is the last ray endpoint on the target side of the
- // obstacle. Once SCP gets close to it, hand steering back to direct pursuit.
- if(index>=path.length-1&&Math.hypot(waypoint.x-p.x,waypoint.z-p.z)<1.15){
-  ud.objectRayDirectChase=true;
-  ud.objectRayDirectTarget=targetCell;
-  ud.objectRayBlocked=false;
-  ud.objectRayPath=[];
-  return {x:tx,z:tz};
- }
+ // Stay on the final endpoint while the direct route remains blocked.
+ // The next update rechecks clearance and switches to direct chase only when
+ // the obstacle is genuinely no longer between SCP and its target.
  return waypoint;
 }
 let scpRayGizmos=false;
