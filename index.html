@@ -1382,7 +1382,17 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
   // Re-scan the currently blocking bounds outline instead of discarding the
   // polygon route; this can select the opposite corner if the first is closed.
   const detour=scpRaycastOpenBounds(obj.position.x,obj.position.z,portal.x,portal.z,.48,ud);
-  if(detour){ud.scpBoundsDetour=detour;return false}
+  if(detour){
+   ud.scpBoundsDetour=detour;
+   const ddx=detour.x-obj.position.x,ddz=detour.z-obj.position.z,dd=Math.hypot(ddx,ddz);
+   const ds=Math.min(dd,speed*Math.max(0,dt)),dnx=obj.position.x+ddx/(dd||1)*ds,dnz=obj.position.z+ddz/(dd||1)*ds;
+   if(ds>.0001&&scpBridgeClear(obj.position.x,obj.position.z,dnx,dnz,.48)){
+    obj.position.x=dnx;obj.position.z=dnz;
+    ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(ddx/(dd||1)*speed,0,ddz/(dd||1)*speed);
+    obj.rotation.y=Math.atan2(ddx,ddz);return true;
+   }
+   return false;
+  }
   ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;ud.scpBoundsDetour=null;
   ud.scpPolyBlockedAt=performance.now();return false;
  }
