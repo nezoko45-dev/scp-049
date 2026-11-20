@@ -1353,7 +1353,7 @@ function scpPolygonRoam(obj,speed,dt,ud){
   ud.scpRoamGoal=goal?.key||null;ud.scpPolyPath=route;ud.scpPolyPathIndex=1;
  }
  if(!goal)return false;
- if(!ud.scpPolyPath||ud.scpPolyPath.length<2||ud.scpPolyPath[0]?.key!==current.key){
+ if(!ud.scpPolyPath||ud.scpPolyPath.length<2){
   ud.scpPolyPath=scpPolygonPath(current,goal);ud.scpPolyPathIndex=1;
  }
  const moved=moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud);
@@ -1381,7 +1381,7 @@ function scpPolygonExplore(obj,speed,dt,ud){
   goal=choices[Math.floor(Math.random()*choices.length)];
   ud.scpExploreGoal=goal.key;ud.scpPolyPath=scpPolygonPath(current,goal);ud.scpPolyPathIndex=1;
  }
- if(!ud.scpPolyPath||ud.scpPolyPath.length<2||ud.scpPolyPath[0]?.key!==current.key){
+ if(!ud.scpPolyPath||ud.scpPolyPath.length<2){
   ud.scpPolyPath=scpPolygonPath(current,goal);ud.scpPolyPathIndex=1;
  }
  return moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud);
@@ -1408,8 +1408,10 @@ function moveSCPPolygonAI(obj,target,speed,dt){
   buildSCPPolygonNavmesh(p.x,p.z,target.position.x,target.position.z);
   const current=nearestSCPPolygon(p.x,p.z),goal=nearestSCPPolygon(target.position.x,target.position.z);
   if(!current||!goal){ud.velocity?.multiplyScalar(.2);return false}
-  if(ud.scpChaseGoalKey!==goal.key||!ud.scpPolyPath||ud.scpPolyPath.length<1||
-     ud.scpPolyPath[0]?.key!==current.key){
+  // Keep the active portal corridor while crossing a polygon boundary.
+  // nearest-centroid ownership can flip at the portal itself; rebuilding on
+  // that flip resets the waypoint and makes SCP oscillate at the opening.
+  if(ud.scpChaseGoalKey!==goal.key||!ud.scpPolyPath||ud.scpPolyPath.length<2){
    ud.scpChaseGoalKey=goal.key;
    ud.scpPolyPath=scpPolygonPath(current,goal);
    ud.scpPolyPathIndex=1;
