@@ -1286,33 +1286,34 @@ function scpPolygonPath(start,goal){
 }
 function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  if(!path||path.length<2)return false;
- // A new route always starts at its first portal. Keep an explicit phase so
- // being near a polygon centroid can never skip the portal on its boundary.
+ // Traverse the navmesh edge-to-edge: each waypoint is the midpoint of the
+ // shared portal on the next polygon. Never steer toward polygon centroids.
  if(ud.scpPolyPathActive!==path){
-  ud.scpPolyPathActive=path;ud.scpPolyPathIndex=1;ud.scpPolyPathPhase=0;
+  ud.scpPolyPathActive=path;ud.scpPolyPathIndex=1;
  }
  let i=ud.scpPolyPathIndex??1;
+ // Consume a portal only when SCP actually reaches its opening. The next
+ // portal then lies on the boundary of the polygon just entered.
+ while(i<path.length){
+  const portal=path[i].via;
+  if(!portal){
+   ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;
+   return false;
+  }
+  const pd=Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z);
+  if(pd>.20)break;
+  i++;
+  ud.scpPolyPathIndex=i;
+ }
  if(i>=path.length)return false;
- const n=path[i],via=n.via;
- // Phase 0: cross the actual shared opening. Phase 1: move into that
- // neighboring triangle. Repeat for every polygon in the corridor.
- if(ud.scpPolyPathPhase===0&&via){
-  const pd=Math.hypot(via.x-obj.position.x,via.z-obj.position.z);
-  if(pd<=.16)ud.scpPolyPathPhase=1;
- }
- if(ud.scpPolyPathPhase===1&&Math.hypot(n.x-obj.position.x,n.z-obj.position.z)<=.34){
-  ud.scpPolyPathIndex=++i;ud.scpPolyPathPhase=0;
-  if(i>=path.length)return false;
-  return moveSCPThroughPolygonPath(obj,path,speed,dt,ud);
- }
- const waypoint=ud.scpPolyPathPhase===0&&via?via:n;
+ const waypoint=path[i].via;
  const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);
  if(d<.001)return false;
- const step=Math.min(d,speed*dt),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
+ const step=Math.min(d,speed*Math.max(0,dt)),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
  if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.48)){
-  // Keep the agent from pushing into a carved boundary; force the caller
-  // to reacquire its current polygon and build a different portal corridor.
-  ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;ud.scpPolyPathPhase=0;
+  // Preserve the route cursor; the caller can rebuild from the current
+  // polygon without oscillating between a centroid and its incoming portal.
+  ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;
   ud.scpPolyBlockedAt=performance.now();
   return false;
  }
