@@ -504,7 +504,7 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  let best=null,bestScore=-Infinity;
  // Persistent wall-follow side: choose it once, don't flip sides every frame.
  if(!ud.wallSide)ud.wallSide=1;
- for(let deg=0;deg<360;deg+=1){
+ for(let deg=0;deg<360;deg+=5){
   const a=headings[deg],vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,reach=0;
   for(const d of samples){if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;reach=d}else blocked++}
   let edge=0,edgeToward=0,px=-vz,pz=vx;
@@ -538,16 +538,16 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   const previewX=p.x+vx*3.2,previewZ=p.z+vz*3.2;
   if(scpGroundScore(previewX,previewZ,r)===1&&!hit(previewX,previewZ,r)){
    let bestExit=-Infinity;
-   for(let turn=-180;turn<180;turn+=15){
+   for(let turn=-180;turn<180;turn+=30){
     const ta=a+turn*Math.PI/180,txd=Math.sin(ta),tzd=Math.cos(ta);
     let exitOpen=0;
-    for(const d of [1,2,3.5,5.5]){
+    for(const d of [1.5,3.5,5.5]){
      const qx=previewX+txd*d,qz=previewZ+tzd*d;
      if(scpGroundScore(qx,qz,r)===1&&!hit(qx,qz,r))exitOpen++;else break;
     }
     if(!exitOpen)continue;
-    const endX=previewX+txd*Math.min(5.5,exitOpen===4?5.5:exitOpen===3?3.5:exitOpen===2?2:1);
-    const endZ=previewZ+tzd*Math.min(5.5,exitOpen===4?5.5:exitOpen===3?3.5:exitOpen===2?2:1);
+    const endX=previewX+txd*(exitOpen===3?5.5:exitOpen===2?3.5:1.5);
+    const endZ=previewZ+tzd*(exitOpen===3?5.5:exitOpen===2?3.5:1.5);
     const gain=dist-Math.hypot(tx-endX,tz-endZ);
     const routeScore=gain*1.8+exitOpen*.55;
     if(routeScore>bestExit)bestExit=routeScore;
