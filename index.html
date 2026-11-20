@@ -498,6 +498,44 @@ function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
+ // Trace nearby solid-object bounds and turn their exposed perimeter into
+ // walkable steering samples. These samples let SCP follow the outline of a
+ // long obstacle instead of repeatedly probing only straight radial rays.
+ let boundTrace=null,boundTraceScore=-Infinity;
+ for(const o of solid){
+  const ox=o.x-p.x,oz=o.z-p.z;
+  if(Math.abs(ox)>14+o.w/2||Math.abs(oz)>14+o.d/2)continue;
+  const pad=r+.58,halfW=o.w/2+pad,halfD=o.d/2+pad;
+  const countX=Math.max(2,Math.ceil((halfW*2)/.8)),countZ=Math.max(2,Math.ceil((halfD*2)/.8));
+  for(let i=0;i<=countX;i++){
+   const t=i/countX;
+   for(const side of [-1,1]){
+    const sx=o.x-halfW+t*halfW*2,sz=o.z+side*halfD;
+    if(scpGroundScore(sx,sz,r)!==1||hit(sx,sz,r))continue;
+    const d=Math.hypot(sx-p.x,sz-p.z);if(d<.35||d>14)continue;
+    const toward=Math.hypot(tx-sx,tz-sz),gain=dist-toward;
+    const value=gain*1.7-d*.16;
+    if(value>boundTraceScore){boundTraceScore=value;boundTrace={x:sx,z:sz}}
+   }
+  }
+  for(let i=0;i<=countZ;i++){
+   const t=i/countZ;
+   for(const side of [-1,1]){
+    const sx=o.x+side*halfW,sz=o.z-halfD+t*halfD*2;
+    if(scpGroundScore(sx,sz,r)!==1||hit(sx,sz,r))continue;
+    const d=Math.hypot(sx-p.x,sz-p.z);if(d<.35||d>14)continue;
+    const toward=Math.hypot(tx-sx,tz-sz),gain=dist-toward;
+    const value=gain*1.7-d*.16;
+    if(value>boundTraceScore){boundTraceScore=value;boundTrace={x:sx,z:sz}}
+   }
+  }
+ }
+ let traceX=0,traceZ=0,traceWeight=0;
+ if(boundTrace){
+  const d=Math.hypot(boundTrace.x-p.x,boundTrace.z-p.z)||1;
+  traceX=(boundTrace.x-p.x)/d;traceZ=(boundTrace.z-p.z)/d;
+  traceWeight=Math.max(0,Math.min(1.8,boundTraceScore*.12+.35));
+ }
  let desiredX=dist>.08?dx/dist:0,desiredZ=dist>.08?dz/dist:0;
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
@@ -577,7 +615,7 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   // When the direct target lane is blocked, soften target pull and prioritize
   // clearance/contour instead of repeatedly pushing into the wall.
   // No direct target ray/chase: targetGain comes only from reachable open samples.
-  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*18+cornerRoute*13;
+  const boundTraceGain=(vx*traceX+vz*traceZ)*traceWeight*10;\n  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*18+cornerRoute*13+boundTraceGain;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
