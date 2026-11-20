@@ -167,44 +167,7 @@ function drawSCPRayChain(obj){drawSCPBreadcrumbs(obj)}
 const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 let scpBridgeGizmoAt=0;
-function drawSCPRayGizmos(obj){
- if(!scpRayGizmos){scpRayViz.visible=false;rayHUD.style.display='none';return}
- const now=performance.now();
- if(now-scpBridgeGizmoAt<650)return;
- scpBridgeGizmoAt=now;
- // Ensure the shared graph includes every currently generated facility chunk.
- buildSCPPolygonNavmesh(obj.position.x,obj.position.z,obj.position.x,obj.position.z);
- clearSCPRayViz();
- const polygonVerts=[],portalVerts=[];
- const seenEdges=new Set();
- for(const node of scpPolygonMesh.nodes){
-  const v=node.verts;
-  for(let i=0;i<3;i++){
-   const a=v[i],b=v[(i+1)%3];
-   polygonVerts.push(a.x,.13,a.z,b.x,.13,b.z);
-  }
-  // Draw each real shared portal once, using the graph's connected edges.
-  for(const edge of node.edges){
-   const other=scpPolygonMesh.byKey.get(edge.to);
-   if(!other)continue;
-   const pair=node.key<other.key?node.key+'|'+other.key:other.key+'|'+node.key;
-   if(seenEdges.has(pair))continue;
-   seenEdges.add(pair);
-   const mid=edge.midpoint;
-   portalVerts.push(mid.x,.19,mid.z,(node.x+other.x)*.5,.19,(node.z+other.z)*.5);
-  }
- }
- if(polygonVerts.length){
-  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(polygonVerts,3));
-  scpRayViz.add(new T.LineSegments(g,scpRayMatClear));
- }
- if(portalVerts.length){
-  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(portalVerts,3));
-  scpRayViz.add(new T.LineSegments(g,scpChainMat));
- }
- scpRayViz.visible=true;rayHUD.style.display='block';
- rayHUD.textContent='GLOBAL POLYGON NAVMESH · '+scpPolygonMesh.nodes.length+' TRIANGLES · '+seenEdges.size+' PORTALS · G TOGGLE';
-}
+function drawSCPRayGizmos(obj){scpRayViz.visible=false;rayHUD.style.display='none'}
 // Breadcrumb collision validation against every streamed facility solid.
 function breadcrumbClear(x,z,r=.48){
  for(const o of solid)if(Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)return false;
@@ -1498,68 +1461,11 @@ function scpVictimVisible(obj,target){
  return scpLOSRaycaster.intersectObjects(navMeshes,false).length===0;
 }
 function moveSCPPolygonAI(obj,target,speed,dt){
- const ud=obj.userData||(obj.userData={}),p=obj.position;
- ud.scpVictimLastSeen||(ud.scpVictimLastSeen=new WeakMap());
- const visible=!!target&&scpVictimVisible(obj,target);
- if(visible){
-  ud.scpVictimLastSeen.set(target,{x:target.position.x,z:target.position.z,at:performance.now()});
-  ud.scpLastSeenTarget=target;ud.scpLastSeenX=target.position.x;ud.scpLastSeenZ=target.position.z;
-  ud.scpSearching=false;ud.scpSearchingTarget=null;ud.scpExploreGoal=null;ud.scpRoamGoal=null;
-  // Chase through the global polygon graph on every pursuit, even when LOS is clear.
-  // The target polygon is the route destination; SCP advances portal-to-portal.
-  buildSCPPolygonNavmesh(p.x,p.z,target.position.x,target.position.z);
-  const current=nearestSCPPolygon(p.x,p.z),goal=nearestSCPPolygon(target.position.x,target.position.z);
-  if(!current||!goal){ud.velocity?.multiplyScalar(.2);return false}
-  // Keep the active portal corridor while crossing a polygon boundary.
-  // nearest-centroid ownership can flip at the portal itself; rebuilding on
-  // that flip resets the waypoint and makes SCP oscillate at the opening.
-  if(ud.scpChaseGoalKey!==goal.key||!ud.scpPolyPath||ud.scpPolyPath.length<2){
-   ud.scpChaseGoalKey=goal.key;
-   ud.scpPolyPath=scpPolygonPath(current,goal);
-   ud.scpPolyPathIndex=1;
-  }
-  if(ud.scpPolyPath?.length>1){
-   if(moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud))return true;
-   // If the route was blocked or its portal became stale, rebuild from the
-   // polygon SCP currently occupies rather than reverting to direct pursuit.
-   const refreshed=nearestSCPPolygon(p.x,p.z);
-   if(refreshed&&refreshed.key!==current.key){
-    ud.scpPolyPath=scpPolygonPath(refreshed,goal);ud.scpPolyPathIndex=1;
-    if(moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud))return true;
-   }
-   ud.scpPolyPath=null;ud.scpPolyPathIndex=0;
-   return false;
-  }
-  // Both actors occupy the same polygon: finish the chase inside that polygon.
-  const dx=target.position.x-p.x,dz=target.position.z-p.z,d=Math.hypot(dx,dz);
-  if(d<.001)return false;
-  const step=Math.min(d,speed*dt),nx=p.x+dx/d*step,nz=p.z+dz/d*step;
-  if(scpBridgeClear(p.x,p.z,nx,nz,.46)){
-   p.x=nx;p.z=nz;ud.velocity||(ud.velocity=new T.Vector3());
-   ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return true;
-  }
-  ud.scpPolyPath=null;ud.scpPolyPathIndex=0;return false;
- }
- if(target){
-  if(ud.scpLastSeenTarget!==target){
-   // Never reuse another victim's remembered location after target switching.
-   ud.scpLastSeenTarget=target;ud.scpLastSeenX=p.x;ud.scpLastSeenZ=p.z;ud.scpLastSeenAt=0;
-  }
-  const last=ud.scpVictimLastSeen.get(target);
-  if(last){ud.scpLastSeenX=last.x;ud.scpLastSeenZ=last.z;ud.scpLastSeenAt=last.at}
- }
- ud.scpSearching=true;
- const lx=ud.scpLastSeenX??p.x,lz=ud.scpLastSeenZ??p.z;
- buildSCPPolygonNavmesh(p.x,p.z,lx,lz);
- const here=nearestSCPPolygon(p.x,p.z),last=nearestSCPPolygon(lx,lz);
- if(last&&Math.hypot(lx-p.x,lz-p.z)>1.15){
-  const path=scpPolygonPath(here,last);
-  ud.scpPolyPath=path;ud.scpPolyPathIndex=1;
-  if(moveSCPThroughPolygonPath(obj,path,speed,dt,ud))return true;
- }
- // With no active moving target, SCP must not start an idle patrol.
- // While a moving target is hidden, continue polygon-by-polygon searching.
- return target?scpPolygonExplore(obj,speed,dt,ud):false;
+ // Polygon navigation is retired. SCP and the revived zombies use the shared
+ // global facility ground scores directly: 1=walkable, 0=blocked.
+ const ud=obj.userData||(obj.userData={});
+ if(!target){ud.velocity?.multiplyScalar(Math.exp(-8*dt));return false}
+ return scoreDirectionMove(obj,target.position.x,target.position.z,speed,dt,.46);
 }
 
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
