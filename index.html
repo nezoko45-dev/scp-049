@@ -1290,26 +1290,40 @@ function scpPolygonPath(start,goal){
 }
 function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  if(!path||path.length<2)return false;
- let i=ud.scpPolyPathIndex||1;
- while(i<path.length&&Math.hypot(path[i].x-obj.position.x,path[i].z-obj.position.z)<.42)i++;
- ud.scpPolyPathIndex=i;if(i>=path.length)return false;
- const n=path[i];
- // Approach the shared portal first, then enter the neighboring polygon's
- // center. This makes the route trace openings around carved object bounds.
- const via=n.via;
- const usePortal=!!via&&Math.hypot(via.x-obj.position.x,via.z-obj.position.z)>.28;
- const tx=usePortal?via.x:n.x,tz=usePortal?via.z:n.z;
- const dx=tx-obj.position.x,dz=tz-obj.position.z,d=Math.hypot(dx,dz);
+ // A new route always starts at its first portal. Keep an explicit phase so
+ // being near a polygon centroid can never skip the portal on its boundary.
+ if(ud.scpPolyPathActive!==path){
+  ud.scpPolyPathActive=path;ud.scpPolyPathIndex=1;ud.scpPolyPathPhase=0;
+ }
+ let i=ud.scpPolyPathIndex??1;
+ if(i>=path.length)return false;
+ const n=path[i],via=n.via;
+ // Phase 0: cross the actual shared opening. Phase 1: move into that
+ // neighboring triangle. Repeat for every polygon in the corridor.
+ if(ud.scpPolyPathPhase===0&&via){
+  const pd=Math.hypot(via.x-obj.position.x,via.z-obj.position.z);
+  if(pd<=.16)ud.scpPolyPathPhase=1;
+ }
+ if(ud.scpPolyPathPhase===1&&Math.hypot(n.x-obj.position.x,n.z-obj.position.z)<=.34){
+  ud.scpPolyPathIndex=++i;ud.scpPolyPathPhase=0;
+  if(i>=path.length)return false;
+  return moveSCPThroughPolygonPath(obj,path,speed,dt,ud);
+ }
+ const waypoint=ud.scpPolyPathPhase===0&&via?via:n;
+ const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);
  if(d<.001)return false;
  const step=Math.min(d,speed*dt),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
  if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.48)){
-  // Do not repeatedly push into the same blocked outline. Invalidate this
-  // route so the caller reacquires the nearest walkable polygon and A* can
-  // choose a different sequence of open portals around the bound.
-  ud.scpPolyPath=null;ud.scpPolyPathIndex=0;ud.scpPolyBlockedAt=performance.now();
+  // Keep the agent from pushing into a carved boundary; force the caller
+  // to reacquire its current polygon and build a different portal corridor.
+  ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;ud.scpPolyPathPhase=0;
+  ud.scpPolyBlockedAt=performance.now();
   return false;
  }
- obj.position.x=nx;obj.position.z=nz;ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return step>.0001;
+ obj.position.x=nx;obj.position.z=nz;
+ ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
+ obj.rotation.y=Math.atan2(dx,dz);
+ return step>.0001;
 }
 function scpPolygonRoam(obj,speed,dt,ud){
  const current=nearestSCPPolygon(obj.position.x,obj.position.z);
