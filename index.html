@@ -1324,6 +1324,30 @@ function scpPolygonRoam(obj,speed,dt,ud){
  }
  return moved;
 }
+function scpPolygonExplore(obj,speed,dt,ud){
+ const current=nearestSCPPolygon(obj.position.x,obj.position.z);
+ if(!current){ud.velocity?.multiplyScalar(.2);return false}
+ ud.scpPolygonVisits||(ud.scpPolygonVisits=new Map());
+ ud.scpPolygonVisits.set(current.key,(ud.scpPolygonVisits.get(current.key)||0)+1);
+ let goal=ud.scpExploreGoal?scpPolygonMesh.byKey.get(ud.scpExploreGoal):null;
+ // Keep walking the current portal route until its destination polygon is reached.
+ if(goal&&current.key===goal.key){ud.scpExploreGoal=null;ud.scpPolyPath=null;ud.scpPolyPathIndex=0;goal=null}
+ if(!goal){
+  const neighbors=current.edges.map(e=>scpPolygonMesh.byKey.get(e.to)).filter(Boolean);
+  if(!neighbors.length)return false;
+  // Prefer polygons never entered; otherwise choose the least-visited neighbor.
+  // This explores portal-to-portal without random long-distance roam waypoints.
+  neighbors.sort((a,b)=>(ud.scpPolygonVisits.get(a.key)||0)-(ud.scpPolygonVisits.get(b.key)||0));
+  const least=ud.scpPolygonVisits.get(neighbors[0].key)||0;
+  const choices=neighbors.filter(n=>(ud.scpPolygonVisits.get(n.key)||0)===least);
+  goal=choices[Math.floor(Math.random()*choices.length)];
+  ud.scpExploreGoal=goal.key;ud.scpPolyPath=scpPolygonPath(current,goal);ud.scpPolyPathIndex=1;
+ }
+ if(!ud.scpPolyPath||ud.scpPolyPath.length<2||ud.scpPolyPath[0]?.key!==current.key){
+  ud.scpPolyPath=scpPolygonPath(current,goal);ud.scpPolyPathIndex=1;
+ }
+ return moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud);
+}
 const scpVictimLastSeen=new WeakMap();
 const scpLOSRaycaster=new T.Raycaster(),scpLOSOrigin=new T.Vector3(),scpLOSDirection=new T.Vector3();
 function scpVictimVisible(obj,target){
