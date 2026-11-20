@@ -117,18 +117,25 @@ let globalObjectBoundRayCache=[],globalObjectBoundRayRevision=-1,globalObjectBou
 function getGlobalObjectBoundRays(){
  if(!navReady||!navData?.grid)return [];
  if(globalObjectBoundRayRevision===navData.revision&&globalObjectBoundRaySolidCount===solid.length)return globalObjectBoundRayCache;
- const rays=[],pad=.92,step=Math.PI/180*5;
- // Every solid gets a complete 360-degree fan. Each ray begins at the exact
- // AABB boundary and probes outward into the shared global ground-score map.
+ const rays=[],step=Math.PI/180*5,maxReach=12,rayStep=.35;
+ // Every solid emits a full 360-degree ray fan. Do not discard a ray just
+ // because its first point is still inside another carved bound: keep tracing
+ // outward until it reaches walkable ground, or exhaust its full reach.
  for(const o of solid){
   const hw=Math.max(.01,o.w/2),hd=Math.max(.01,o.d/2);
   for(let a=0;a<Math.PI*2-1e-6;a+=step){
    const dx=Math.cos(a),dz=Math.sin(a);
    const tx=hw/Math.max(1e-6,Math.abs(dx)),tz=hd/Math.max(1e-6,Math.abs(dz));
    const edge=Math.min(tx,tz),sx=o.x+dx*edge,sz=o.z+dz*edge;
-   const ex=sx+dx*pad,ez=sz+dz*pad;
-   const clear=scpGroundScore(ex,ez,.42)===1;
-   rays.push({x:sx,z:sz,ex,ez,clear,object:o});
+   let ex=sx,ez=sz,clear=false,reach=0;
+   for(let d=.25;d<=maxReach;d+=rayStep){
+    const qx=sx+dx*d,qz=sz+dz*d;
+    if(scpGroundScore(qx,qz,.42)===1&&!hit(qx,qz,.42)){
+     ex=qx;ez=qz;clear=true;reach=d;break;
+    }
+    ex=qx;ez=qz;reach=d;
+   }
+   rays.push({x:sx,z:sz,ex,ez,clear,reach,dx,dz,object:o});
   }
  }
  globalObjectBoundRayCache=rays;globalObjectBoundRayRevision=navData.revision;globalObjectBoundRaySolidCount=solid.length;
@@ -138,7 +145,7 @@ let objectRayGraphRevision=-1,objectRayGraph=[];
 function getObjectRayGraph(){
  const rays=getGlobalObjectBoundRays();
  if(objectRayGraphRevision===navData.revision&&objectRayGraph.length)return objectRayGraph;
- const nodes=rays.filter(q=>q.clear).map(q=>({x:q.ex,z:q.ez,links:[]}));
+ const nodes=rays.filter(q=>q.clear).map(q=>({x:q.ex,z:q.ez,links:[],rayX:q.dx,rayZ:q.dz,reach:q.reach,source:q.object}));
  const cell=2.6,buckets=new Map(),key=(x,z)=>Math.floor(x/cell)+','+Math.floor(z/cell);
  for(let i=0;i<nodes.length;i++){
   const n=nodes[i],cx=Math.floor(n.x/cell),cz=Math.floor(n.z/cell);
