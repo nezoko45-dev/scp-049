@@ -1389,48 +1389,43 @@ function frame(now){
   });
   if(now-lastVolley>900)lastVolley=now;
   zombies.forEach(z=>{
-   // Zombies select a victim on an 11-second interval and use SCP's exact
-   // sequential steering-route + persistent-velocity wall-sliding controller.
-   const nowZombie=now;
-   const existing=z.userData.targetObj||null;
-   // Target acquisition is global and independent of FOV/range. FOV is reserved
-   // exclusively for nearby obstacle sensing and directional clearance scoring.
-   if(!z.userData.targetObj||nowZombie>=z.userData.targetUntil||z.userData.targetObj.userData?.hp<=0||z.userData.targetObj.userData?.dead){
-    const pool=[{kind:'player',obj:ctl.getObject()},...allies.filter(a=>a.userData.hp>0&&!a.userData.dead).map(a=>({kind:'survivor',obj:a}))];
-    const previous=existing;
-    const choices=pool.filter(t=>t.obj!==previous);
-    const ranked=choices.map(t=>({...t,distance:Math.hypot(t.obj.position.x-z.position.x,t.obj.position.z-z.position.z)})).sort((a,b)=>a.distance-b.distance);
-    const pick=ranked[0]||pool.map(t=>({...t,distance:Math.hypot(t.obj.position.x-z.position.x,t.obj.position.z-z.position.z)})).sort((a,b)=>a.distance-b.distance)[0]||null;
-    z.userData.targetKind=pick?.kind||null;z.userData.targetObj=pick?.obj||null;z.userData.targetUntil=nowZombie+2200;
-    z.userData.steeringVector?.set(0,0,1);
+   // Match SCP-049: prioritize moving victims, score movement vs distance,
+   // and hold the selected victim for 11 seconds instead of frame-by-frame swaps.
+   const nowZombie=now,ud=z.userData,existing=ud.targetObj||null;
+   ud.targetMotion||(ud.targetMotion=new WeakMap());
+   const pool=[{kind:'player',obj:ctl.getObject(),index:-1},...allies.map((a,i)=>({kind:'survivor',obj:a,index:i}))].filter(t=>t.kind==='player'||(t.obj.userData.hp>0&&!t.obj.userData.dead));
+   const movingPool=pool.map(t=>{
+    const previous=ud.targetMotion.get(t.obj);
+    const elapsed=previous?Math.max(.001,(nowZombie-previous.at)/1000):0;
+    const moveSpeed=previous?Math.hypot(t.obj.position.x-previous.x,t.obj.position.z-previous.z)/elapsed:0;
+    ud.targetMotion.set(t.obj,{x:t.obj.position.x,z:t.obj.position.z,at:nowZombie});
+    return {...t,moveSpeed,distance:Math.hypot(t.obj.position.x-z.position.x,t.obj.position.z-z.position.z)};
+   }).filter(t=>t.moveSpeed>.32);
+   const currentInvalid=!!existing&&!pool.some(t=>t.obj===existing);
+   if(currentInvalid){ud.targetObj=null;ud.targetKind=null;ud.targetUntil=0}
+   if(!ud.targetObj||nowZombie>=ud.targetUntil){
+    const choices=movingPool.filter(t=>t.obj!==ud.targetObj);
+    const ranked=choices.sort((a,b)=>(b.moveSpeed*2-b.distance*.035)-(a.moveSpeed*2-a.distance*.035));
+    let pick=ranked[0]||null;
+    if(!pick&&ud.targetObj){
+     const held=pool.find(t=>t.obj===ud.targetObj);
+     if(held)pick={...held,distance:Math.hypot(held.obj.position.x-z.position.x,held.obj.position.z-z.position.z),moveSpeed:0};
+    }
+    if(!pick)pick=pool.map(t=>({...t,distance:Math.hypot(t.obj.position.x-z.position.x,t.obj.position.z-z.position.z),moveSpeed:0})).sort((a,b)=>a.distance-b.distance)[0]||null;
+    ud.targetKind=pick?.kind||null;ud.targetObj=pick?.obj||null;ud.targetUntil=nowZombie+11000;
    }
-   const target=z.userData.targetObj||null;
+   const target=ud.targetObj||null;
    const tp=target?.position,d=tp?Math.hypot(tp.x-z.position.x,tp.z-z.position.z):Infinity;
    let zombieMoved=false;
-   if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
-    // Zombies use the same global polygon navmesh, carved obstacles,
-    // portal pathfinding, LOS pursuit, and last-seen search as SCP-049.
-    zombieMoved=moveSCPPolygonAI(z,target,2.35,dt);
-   }else if(target&&d<=1.05){
-    z.userData.velocity?.multiplyScalar(Math.exp(-5.5*dt));
-   }else{
-    // No valid victim: continue ordinary random polygon roaming.
-    zombieMoved=moveSCPPolygonAI(z,null,1.35,dt);
-   }
-   // Imported GLB: exact AttackD clip while attacking, Walk while travelling, Idle at rest.
+   if(target&&d>1.05)zombieMoved=moveSCPPolygonAI(z,target,2.35,dt);
+   else if(target&&d<=1.05)ud.velocity?.multiplyScalar(Math.exp(-5.5*dt));
+   else zombieMoved=moveSCPPolygonAI(z,null,1.35,dt);
    const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
-   const next=z.userData.actions?.[wanted]||z.userData.actions?.idle||z.userData.actions?.walk;
-   if(next&&next!==z.userData.currentAction){
-    next.reset().fadeIn(.18).play();z.userData.currentAction?.fadeOut(.18);z.userData.currentAction=next;
-   }
-   z.userData.mixer?.update(dt);
-   // Nearby player/survivors wear zombies down for 1 HP per second.
-   const nearPlayer=Math.hypot(ctl.getObject().position.x-z.position.x,ctl.getObject().position.z-z.position.z)<2.6;
-   const nearSurvivor=allies.some(a=>a.userData.hp>0&&!a.userData.dead&&Math.hypot(a.position.x-z.position.x,a.position.z-z.position.z)<2.6);
-   if((nearPlayer||nearSurvivor)&&nowZombie-(z.userData.lastNearbyDamage||0)>=1000){
-    z.userData.lastNearbyDamage=nowZombie;z.userData.hp=Math.max(0,z.userData.hp-1);
-   }
-   if(d<=1){if(z.userData.attackT<=0)z.userData.attackT=.72;if(z.userData.targetKind==='player'){playerHP=Math.max(0,playerHP-18*dt);stam=Math.max(0,stam-10*dt)}else if(target)target.userData.hp=Math.max(0,target.userData.hp-18*dt)}
+   const next=ud.actions?.[wanted]||ud.actions?.idle||ud.actions?.walk;
+   if(next&&next!==ud.currentAction){next.reset().fadeIn(.18).play();ud.currentAction?.fadeOut(.18);ud.currentAction=next;}
+   const nearPlayer=Math.hypot(z.position.x-ctl.getObject().position.x,z.position.z-ctl.getObject().position.z)<1.8;
+   const nearSurvivor=allies.some(a=>a.userData.hp>0&&!a.userData.dead&&Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<1.8);
+   if((nearPlayer||nearSurvivor)&&nowZombie-(ud.lastNearbyDamage||0)>=1000){ud.lastNearbyDamage=nowZombie;ud.hp=Math.max(0,ud.hp-1);}
   });
   zombies=zombies.filter(z=>{if(z.userData.hp<=0){scene.remove(z);return false}return true});
   if(playerHP<=0)gameover('YOU WERE OVERRUN');
