@@ -1338,6 +1338,15 @@ function scpRaycastOpenBounds(x,z,tx,tz,r=.48,ud=null){
  }
  return best;
 }
+function turnSCPTowardMove(obj,dx,dz,dt,ud){
+ const desired=Math.atan2(dx,dz),current=obj.rotation.y||0;
+ let delta=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
+ // Portal-to-portal routes can alternate direction at triangle corners.
+ // Turn smoothly instead of snapping the model around on every waypoint.
+ const maxTurn=Math.max(.015,Math.max(0,dt)*2.8);
+ const turn=Math.max(-maxTurn,Math.min(maxTurn,delta));
+ obj.rotation.y=current+turn;
+}
 function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  if(!path||path.length<2)return false;
  // Traverse the navmesh edge-to-edge: each waypoint is the midpoint of the
@@ -1389,7 +1398,7 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
    if(ds>.0001&&scpBridgeClear(obj.position.x,obj.position.z,dnx,dnz,.48)){
     obj.position.x=dnx;obj.position.z=dnz;
     ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(ddx/(dd||1)*speed,0,ddz/(dd||1)*speed);
-    obj.rotation.y=Math.atan2(ddx,ddz);return true;
+    turnSCPTowardMove(obj,ddx,ddz,dt,ud);return true;
    }
    return false;
   }
@@ -1398,7 +1407,7 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  }
  obj.position.x=nx;obj.position.z=nz;
  ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
- obj.rotation.y=Math.atan2(dx,dz);
+ turnSCPTowardMove(obj,dx,dz,dt,ud);
  return step>.0001;
 }
 function scpPolygonRoam(obj,speed,dt,ud){
