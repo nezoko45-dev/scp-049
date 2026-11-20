@@ -1618,15 +1618,18 @@ function frame(now){
   }).filter(t=>t.moveSpeed>.015);
   const currentObj=scpTarget?.obj||null;
   const currentInvalid=!!scpTarget&&(!currentObj||(scpTarget.kind==='survivor'&&(currentObj.userData.hp<=0||currentObj.userData.dead)));
-  const currentMoving=!!currentObj&&movingPool.some(t=>t.obj===currentObj);
-  if(currentInvalid|| (scpTarget&&!currentMoving)){scpTarget=null;scpTargetUntil=0}
-  // Pursue any target showing real movement, with no minimum walking-speed
-  // requirement. Keep a moving target for up to 11 seconds to prevent flicker.
+  if(currentInvalid){scpTarget=null;scpTargetUntil=0}
+  // SCP pursues a living target even while it stands completely still.
+  // Moving targets receive priority when selecting a new target, but movement
+  // is never a prerequisite for keeping or chasing the selected target.
   if(!scpTarget||now>=scpTargetUntil){
    const choices=movingPool.filter(t=>t.obj!==scpTarget?.obj);
    const ranked=choices.sort((a,b)=>(b.moveSpeed*2-b.distance*.035)-(a.moveSpeed*2-a.distance*.035));
-   const held=movingPool.find(t=>t.obj===scpTarget?.obj)||null;
-   const pick=ranked[0]||held;
+   const held=livingPool.find(t=>t.obj===scpTarget?.obj)||null;
+   const nearest=livingPool.filter(t=>t.obj!==scpTarget?.obj)
+    .map(t=>({...t,distance:Math.hypot(t.obj.position.x-bad.position.x,t.obj.position.z-bad.position.z),moveSpeed:0}))
+    .sort((a,b)=>a.distance-b.distance)[0]||null;
+   const pick=ranked[0]||held||nearest;
    if(pick){scpTarget={kind:pick.kind,obj:pick.obj,index:pick.index};scpTargetUntil=now+11000}
    else{scpTarget=null;scpTargetUntil=0}
   }
@@ -1639,11 +1642,9 @@ function frame(now){
   let scpMoved=false;
   if(targetValid)scpMoved=moveSCPPolygonAI(bad,targetObj,3.2,dt);
   else{
-   // No moving targets: stand still instead of resuming an idle patrol.
+   // Only decelerate when there is genuinely no valid living target.
    bad.userData.velocity||(bad.userData.velocity=new T.Vector3());
-   bad.userData.velocity.multiplyScalar(Math.exp(-8*dt));
-   bad.userData.scpPolyPath=null;bad.userData.scpPolyPathIndex=0;
-   bad.userData.scpChaseGoalKey=null;bad.userData.scpExploreGoal=null;
+   bad.userData.velocity.multiplyScalar(Math.exp(-2.8*dt));
   }
   if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos()}
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
