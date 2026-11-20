@@ -117,15 +117,29 @@ let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
 const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),scpRayMatHit=new T.LineBasicMaterial({color:0xff2222,depthTest:false});
 const scpGroundRayViz=new T.Group();scene.add(scpGroundRayViz);scpGroundRayViz.visible=false;
-const scpGroundRayClearMat=new T.LineBasicMaterial({color:0x28eaff,depthTest:false,transparent:true,opacity:.72}),scpGroundRayBlockedMat=new T.LineBasicMaterial({color:0xff3030,depthTest:false,transparent:true,opacity:.95});
-function drawSCPGroundRayGizmos(obj){
- if(!scpRayGizmos){scpGroundRayViz.visible=false;return}
- const data=obj?.userData?.groundRayGizmoData||[],clear=[],blocked=[];
- for(const ray of data){const out=ray.blocked?blocked:clear;for(let i=1;i<ray.points.length;i++){const a=ray.points[i-1],b=ray.points[i];out.push(a.x,1.12,a.z,b.x,1.12,b.z)}}
+const scpGroundRayClearMat=new T.LineBasicMaterial({color:0x28eaff,depthTest:false,transparent:true,opacity:.68}),scpGroundRayBlockedMat=new T.LineBasicMaterial({color:0xff3030,depthTest:false,transparent:true,opacity:.95});
+let scpGlobalRayRevision=-1,scpGlobalRayWidth=0,scpGlobalRayHeight=0;
+function drawSCPGroundRayGizmos(){
+ if(!scpRayGizmos||!navReady||!navData?.grid){scpGroundRayViz.visible=false;return}
+ if(scpGlobalRayRevision===navData.revision&&scpGlobalRayWidth===navData.width&&scpGlobalRayHeight===navData.height){scpGroundRayViz.visible=true;return}
+ const grid=navData.grid,W=navData.width,H=navData.height,cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,clear=[],blocked=[];
+ // Build the ray overlay from EVERY global score-map cell, not from SCP's position.
+ // Each cell casts four cardinal ground rays to its neighboring cell.
+ const dirs=[[1,0],[0,1],[-1,0],[0,-1]];
+ for(let z=0;z<H;z++)for(let x=0;x<W;x++){
+  if(grid[z]?.[x]!==1)continue;
+  const ax=ox+(x+.5)*cs,az=oz+(z+.5)*cs;
+  for(const [dx,dz] of dirs){
+   const nx=x+dx,nz=z+dz,walkable=nx>=0&&nz>=0&&nx<W&&nz<H&&grid[nz]?.[nx]===1;
+   const bx=ax+dx*cs*.92,bz=az+dz*cs*.92,out=walkable?clear:blocked;
+   out.push(ax,1.12,az,bx,1.12,bz);
+  }
+ }
  for(const child of [...scpGroundRayViz.children]){scpGroundRayViz.remove(child);child.geometry?.dispose()}
  if(clear.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(clear,3));scpGroundRayViz.add(new T.LineSegments(g,scpGroundRayClearMat))}
  if(blocked.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(blocked,3));scpGroundRayViz.add(new T.LineSegments(g,scpGroundRayBlockedMat))}
- scpGroundRayViz.visible=true;rayHUD.textContent='GROUND RAYS · CYAN = CLEAR · RED = BLOCKED (G)';rayHUD.style.display='block';
+ scpGlobalRayRevision=navData.revision;scpGlobalRayWidth=W;scpGlobalRayHeight=H;
+ scpGroundRayViz.visible=true;rayHUD.textContent='GLOBAL GROUND RAYS · CYAN = WALKABLE CONNECTION · RED = BLOCKED EDGE (G)';rayHUD.style.display='block';
 }
 const zombieRayViz=new T.Group();scene.add(zombieRayViz);zombieRayViz.visible=false;
 const zombieRayMatClear=new T.LineBasicMaterial({color:0xffb000,depthTest:false}),zombieRayMatHit=new T.LineBasicMaterial({color:0xff3355,depthTest:false});
@@ -551,7 +565,6 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
- if(scpRayGizmos)ud.groundRayGizmoData=[];
  // Persistent wall-follow side: choose it once, don't flip sides every frame.
  if(!ud.wallSide)ud.wallSide=1;
  for(let deg=0;deg<360;deg+=5){
@@ -560,13 +573,10 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   // invalidates the whole ray, so SCP chooses a neighboring clear direction
   // rather than steering through an obstacle that lies between coarse samples.
   let groundRayClear=true,groundRayEnd=Math.min(10,Math.max(3.5,dist));
-  const groundRayRecord={blocked:false,points:[{x:p.x,z:p.z}]};
   for(let rayD=.3;rayD<=groundRayEnd;rayD+=.3){
    const rx=p.x+vx*rayD,rz=p.z+vz*rayD,walkable=scpGroundScore(rx,rz,r)===1,collision=hit(rx,rz,r);
-   groundRayRecord.points.push({x:rx,z:rz});
-   if(!walkable||collision){groundRayClear=false;groundRayRecord.blocked=true;break}
+   if(!walkable||collision){groundRayClear=false;break}
   }
-  (ud.groundRayGizmoData||(ud.groundRayGizmoData=[])).push(groundRayRecord);
   if(!groundRayClear)continue;
   for(const d of samples){if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;reach=d}else blocked++}
   let edge=0,edgeToward=0,px=-vz,pz=vx;
@@ -645,7 +655,7 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
  }
- if(scpRayGizmos&&performance.now()-(ud.groundRayGizmoAt||0)>100){ud.groundRayGizmoAt=performance.now();drawSCPGroundRayGizmos(obj)}
+ if(scpRayGizmos)drawSCPGroundRayGizmos()
  if(!best){
   let escape=null,escapeScore=-Infinity;
   for(let deg=0;deg<360;deg++){
@@ -859,7 +869,7 @@ function bossDamage(amount){if(bossHP<=0)return;bossHP=Math.max(0,bossHP-amount)
  if(bossHP===0){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>SCP-049 DEFEATED</h1><p>Bossfight restarting…</p><button onclick="location.reload()">RESTART BOSSFIGHT</button>';document.querySelector('#menu').style.display='grid';setTimeout(()=>location.reload(),2500)}}
 
 let mixer,acts={},idle,walk,loaded=false;new GLTFLoader().load('./enhanced_scp-049_v1.glb',g=>{let m=g.scene;m.scale.setScalar(3/Math.max(new T.Box3().setFromObject(m).getSize(new T.Vector3()).y,.01));m.updateMatrixWorld(true);let bb=new T.Box3().setFromObject(m);m.position.y-=bb.min.y;bad.add(m);mixer=new T.AnimationMixer(m);g.animations.forEach(a=>acts[a.name.toLowerCase()]=mixer.clipAction(a));idle=acts[Object.keys(acts).find(n=>/idle|stand/i.test(n))||Object.keys(acts)[0]];walk=acts[Object.keys(acts).find(n=>/walk|run/i.test(n))||''];idle?.play();loaded=true});
-let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;zombieRayViz.visible=scpRayGizmos;scpGroundRayViz.visible=scpRayGizmos;rayHUD.style.display=scpRayGizmos?'block':'none';scpBridgeGizmoAt=0;zombieBridgeGizmoAt=0;}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
+let keys={},active=false,dead=false,time=Infinity,stam=100,noise=0,last=performance.now(),fOn=true,heatNumbersVisible=false;onkeydown=e=>{keys[e.code]=true;if(e.code==='KeyG'){scpRayGizmos=!scpRayGizmos;scpRayViz.visible=scpRayGizmos;zombieRayViz.visible=scpRayGizmos;scpGroundRayViz.visible=scpRayGizmos;if(scpRayGizmos){scpGlobalRayRevision=-1;drawSCPGroundRayGizmos()}rayHUD.style.display=scpRayGizmos?'block':'none';scpBridgeGizmoAt=0;zombieBridgeGizmoAt=0;}if(e.code==='KeyF'){fOn=!fOn;flash.intensity=fOn?90:0}};let lastPlayerAttack=0;onmousedown=e=>{if(!active||dead||e.button!==0||performance.now()-lastPlayerAttack<550)return;lastPlayerAttack=performance.now();let p=ctl.getObject().position;if(Math.hypot(p.x-bad.position.x,p.z-bad.position.z)<3.4)bossDamage(45);zombies.forEach(z=>{if(z.userData.hp>0&&Math.hypot(p.x-z.position.x,p.z-z.position.z)<3.2)z.userData.hp=Math.max(0,z.userData.hp-1)});noise=1.2;};onkeyup=e=>keys[e.code]=false;window.beginShift=()=>{if(!navReady){document.querySelector('#msg').textContent='Facility scoring not ready';return}active=true;document.querySelector('#menu').style.display='none';try{ctl.lock()}catch(e){console.warn('Pointer lock unavailable; game started anyway',e)}};document.querySelector('#start').addEventListener('click',()=>window.beginShift());ctl.addEventListener('unlock',()=>{if(active&&!dead)document.querySelector('#menu').style.display='grid'});
 // Full-facility collider scanning: every navigation sample checks every generated solid.
 function nearbySolid(x,z,r=1){return solid;}
 function hit(x,z,r=.5){return nearbySolid(x,z,r+2).some(o=>Math.abs(x-o.x)<o.w/2+r&&Math.abs(z-o.z)<o.d/2+r)}
