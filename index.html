@@ -113,6 +113,27 @@ function scpGroundScore(x,z,r=.42){
  }
  return 1;
 }
+let globalObjectBoundRayCache=[],globalObjectBoundRayRevision=-1,globalObjectBoundRaySolidCount=-1;
+function getGlobalObjectBoundRays(){
+ if(!navReady||!navData?.grid)return [];
+ if(globalObjectBoundRayRevision===navData.revision&&globalObjectBoundRaySolidCount===solid.length)return globalObjectBoundRayCache;
+ const rays=[],pad=.92,step=Math.PI/180*5;
+ // Every solid gets a complete 360-degree fan. Each ray begins at the exact
+ // AABB boundary and probes outward into the shared global ground-score map.
+ for(const o of solid){
+  const hw=Math.max(.01,o.w/2),hd=Math.max(.01,o.d/2);
+  for(let a=0;a<Math.PI*2-1e-6;a+=step){
+   const dx=Math.cos(a),dz=Math.sin(a);
+   const tx=hw/Math.max(1e-6,Math.abs(dx)),tz=hd/Math.max(1e-6,Math.abs(dz));
+   const edge=Math.min(tx,tz),sx=o.x+dx*edge,sz=o.z+dz*edge;
+   const ex=sx+dx*pad,ez=sz+dz*pad;
+   const clear=scpGroundScore(ex,ez,.42)===1;
+   rays.push({x:sx,z:sz,ex,ez,clear,object:o});
+  }
+ }
+ globalObjectBoundRayCache=rays;globalObjectBoundRayRevision=navData.revision;globalObjectBoundRaySolidCount=solid.length;
+ return rays;
+}
 let scpRayGizmos=false;
 const scpRayViz=new T.Group();scene.add(scpRayViz);scpRayViz.visible=false;
 const scpRayMatClear=new T.LineBasicMaterial({color:0x00ffff,depthTest:false}),scpRayMatHit=new T.LineBasicMaterial({color:0xff2222,depthTest:false});
@@ -121,25 +142,13 @@ const scpGroundRayClearMat=new T.LineBasicMaterial({color:0x28eaff,depthTest:fal
 let scpGlobalRayRevision=-1,scpGlobalRayWidth=0,scpGlobalRayHeight=0;
 function drawSCPGroundRayGizmos(){
  if(!scpRayGizmos||!navReady||!navData?.grid){scpGroundRayViz.visible=false;return}
- if(scpGlobalRayRevision===navData.revision&&scpGlobalRayWidth===navData.width&&scpGlobalRayHeight===navData.height){scpGroundRayViz.visible=true;return}
- const grid=navData.grid,W=navData.width,H=navData.height,cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,clear=[],blocked=[];
- // Build the ray overlay from EVERY global score-map cell, not from SCP's position.
- // Each cell casts four cardinal ground rays to its neighboring cell.
- const dirs=[[1,0],[0,1],[-1,0],[0,-1]];
- for(let z=0;z<H;z++)for(let x=0;x<W;x++){
-  if(grid[z]?.[x]!==1)continue;
-  const ax=ox+(x+.5)*cs,az=oz+(z+.5)*cs;
-  for(const [dx,dz] of dirs){
-   const nx=x+dx,nz=z+dz,walkable=nx>=0&&nz>=0&&nx<W&&nz<H&&grid[nz]?.[nx]===1;
-   const bx=ax+dx*cs*.92,bz=az+dz*cs*.92,out=walkable?clear:blocked;
-   out.push(ax,1.12,az,bx,1.12,bz);
-  }
- }
+ const rays=getGlobalObjectBoundRays(),clear=[],blocked=[];
+ for(const ray of rays){const out=ray.clear?clear:blocked;out.push(ray.x,1.12,ray.z,ray.ex,1.12,ray.ez)}
  for(const child of [...scpGroundRayViz.children]){scpGroundRayViz.remove(child);child.geometry?.dispose()}
  if(clear.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(clear,3));scpGroundRayViz.add(new T.LineSegments(g,scpGroundRayClearMat))}
  if(blocked.length){const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(blocked,3));scpGroundRayViz.add(new T.LineSegments(g,scpGroundRayBlockedMat))}
- scpGlobalRayRevision=navData.revision;scpGlobalRayWidth=W;scpGlobalRayHeight=H;
- scpGroundRayViz.visible=true;rayHUD.textContent='GLOBAL GROUND RAYS · CYAN = WALKABLE CONNECTION · RED = BLOCKED EDGE (G)';rayHUD.style.display='block';
+ scpGlobalRayRevision=navData.revision;scpGlobalRayWidth=navData.width;scpGlobalRayHeight=navData.height;
+ scpGroundRayViz.visible=true;rayHUD.textContent='360° OBJECT-BOUND RAYS · CYAN = WALKABLE OUTWARD SAMPLE · RED = BLOCKED (G)';rayHUD.style.display='block';
 }
 const zombieRayViz=new T.Group();scene.add(zombieRayViz);zombieRayViz.visible=false;
 const zombieRayMatClear=new T.LineBasicMaterial({color:0xffb000,depthTest:false}),zombieRayMatHit=new T.LineBasicMaterial({color:0xff3355,depthTest:false});
@@ -523,37 +532,17 @@ function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- // Trace nearby solid-object bounds and turn their exposed perimeter into
- // walkable steering samples. These samples let SCP follow the outline of a
- // long obstacle instead of repeatedly probing only straight radial rays.
+ // Use the global 360-degree object-bound ray fan. Every solid contributes
+ // outward walkable samples; SCP selects the nearby perimeter sample that
+ // makes the most progress toward its target, then follows that contour.
  let boundTrace=null,boundTraceScore=-Infinity;
- for(const o of solid){
-  const ox=o.x-p.x,oz=o.z-p.z;
-  if(Math.abs(ox)>14+o.w/2||Math.abs(oz)>14+o.d/2)continue;
-  const pad=r+.58,halfW=o.w/2+pad,halfD=o.d/2+pad;
-  const countX=Math.max(2,Math.ceil((halfW*2)/.8)),countZ=Math.max(2,Math.ceil((halfD*2)/.8));
-  for(let i=0;i<=countX;i++){
-   const t=i/countX;
-   for(const side of [-1,1]){
-    const sx=o.x-halfW+t*halfW*2,sz=o.z+side*halfD;
-    if(scpGroundScore(sx,sz,r)!==1||hit(sx,sz,r))continue;
-    const d=Math.hypot(sx-p.x,sz-p.z);if(d<.35||d>14)continue;
-    const toward=Math.hypot(tx-sx,tz-sz),gain=dist-toward;
-    const value=gain*1.7-d*.16;
-    if(value>boundTraceScore){boundTraceScore=value;boundTrace={x:sx,z:sz}}
-   }
-  }
-  for(let i=0;i<=countZ;i++){
-   const t=i/countZ;
-   for(const side of [-1,1]){
-    const sx=o.x+side*halfW,sz=o.z-halfD+t*halfD*2;
-    if(scpGroundScore(sx,sz,r)!==1||hit(sx,sz,r))continue;
-    const d=Math.hypot(sx-p.x,sz-p.z);if(d<.35||d>14)continue;
-    const toward=Math.hypot(tx-sx,tz-sz),gain=dist-toward;
-    const value=gain*1.7-d*.16;
-    if(value>boundTraceScore){boundTraceScore=value;boundTrace={x:sx,z:sz}}
-   }
-  }
+ for(const ray of getGlobalObjectBoundRays()){
+  if(!ray.clear)continue;
+  const sx=ray.ex,sz=ray.ez,d=Math.hypot(sx-p.x,sz-p.z);
+  if(d<.35||d>14)continue;
+  const toward=Math.hypot(tx-sx,tz-sz),gain=dist-toward;
+  const value=gain*1.7-d*.16;
+  if(value>boundTraceScore){boundTraceScore=value;boundTrace={x:sx,z:sz}}
  }
  let traceX=0,traceZ=0,traceWeight=0;
  if(boundTrace){
