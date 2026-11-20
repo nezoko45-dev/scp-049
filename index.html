@@ -551,6 +551,7 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
  const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
  let best=null,bestScore=-Infinity;
+ if(scpRayGizmos)ud.groundRayGizmoData=[];
  // Persistent wall-follow side: choose it once, don't flip sides every frame.
  if(!ud.wallSide)ud.wallSide=1;
  for(let deg=0;deg<360;deg+=5){
