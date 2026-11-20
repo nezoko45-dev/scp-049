@@ -1364,15 +1364,39 @@ function moveSCPPolygonAI(obj,target,speed,dt){
  if(visible){
   ud.scpVictimLastSeen.set(target,{x:target.position.x,z:target.position.z,at:performance.now()});
   ud.scpLastSeenTarget=target;ud.scpLastSeenX=target.position.x;ud.scpLastSeenZ=target.position.z;
-  ud.scpSearching=false;ud.scpPolyPath=null;ud.scpPolyPathIndex=0;
+  ud.scpSearching=false;ud.scpSearchingTarget=null;ud.scpExploreGoal=null;ud.scpRoamGoal=null;
+  // Chase through the global polygon graph on every pursuit, even when LOS is clear.
+  // The target polygon is the route destination; SCP advances portal-to-portal.
+  buildSCPPolygonNavmesh(p.x,p.z,target.position.x,target.position.z);
+  const current=nearestSCPPolygon(p.x,p.z),goal=nearestSCPPolygon(target.position.x,target.position.z);
+  if(!current||!goal){ud.velocity?.multiplyScalar(.2);return false}
+  if(ud.scpChaseGoalKey!==goal.key||!ud.scpPolyPath||ud.scpPolyPath.length<1||
+     ud.scpPolyPath[0]?.key!==current.key){
+   ud.scpChaseGoalKey=goal.key;
+   ud.scpPolyPath=scpPolygonPath(current,goal);
+   ud.scpPolyPathIndex=1;
+  }
+  if(ud.scpPolyPath?.length>1){
+   if(moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud))return true;
+   // If the route was blocked or its portal became stale, rebuild from the
+   // polygon SCP currently occupies rather than reverting to direct pursuit.
+   const refreshed=nearestSCPPolygon(p.x,p.z);
+   if(refreshed&&refreshed.key!==current.key){
+    ud.scpPolyPath=scpPolygonPath(refreshed,goal);ud.scpPolyPathIndex=1;
+    if(moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud))return true;
+   }
+   ud.scpPolyPath=null;ud.scpPolyPathIndex=0;
+   return false;
+  }
+  // Both actors occupy the same polygon: finish the chase inside that polygon.
   const dx=target.position.x-p.x,dz=target.position.z-p.z,d=Math.hypot(dx,dz);
   if(d<.001)return false;
   const step=Math.min(d,speed*dt),nx=p.x+dx/d*step,nz=p.z+dz/d*step;
-  if(scpBridgeClear(p.x,p.z,nx,nz,.46)){p.x=nx;p.z=nz;ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return true}
-  // Visible target behind a low/partial obstruction: use polygon portals, not a straight-line shove.
-  const mesh=buildSCPPolygonNavmesh(p.x,p.z,target.position.x,target.position.z);
-  const path=scpPolygonPath(nearestSCPPolygon(p.x,p.z),nearestSCPPolygon(target.position.x,target.position.z));
-  ud.scpPolyPath=path;ud.scpPolyPathIndex=1;return moveSCPThroughPolygonPath(obj,path,speed,dt,ud);
+  if(scpBridgeClear(p.x,p.z,nx,nz,.46)){
+   p.x=nx;p.z=nz;ud.velocity||(ud.velocity=new T.Vector3());
+   ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return true;
+  }
+  ud.scpPolyPath=null;ud.scpPolyPathIndex=0;return false;
  }
  if(target){
   if(ud.scpLastSeenTarget!==target){
