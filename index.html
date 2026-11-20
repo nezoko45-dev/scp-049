@@ -615,7 +615,8 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
   // When the direct target lane is blocked, soften target pull and prioritize
   // clearance/contour instead of repeatedly pushing into the wall.
   // No direct target ray/chase: targetGain comes only from reachable open samples.
-  const boundTraceGain=(vx*traceX+vz*traceZ)*traceWeight*10;\n  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*18+cornerRoute*13+boundTraceGain;
+  const boundTraceGain=(vx*traceX+vz*traceZ)*traceWeight*10;
+  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*18+cornerRoute*13+boundTraceGain;
   if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
   let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
   if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
