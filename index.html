@@ -357,18 +357,20 @@ function breadcrumbSegmentClear(ax,az,bx,bz,r=.48){
 // until an object's expanded bounds block the corridor, then places one
 // breadcrumb just outside a reachable corner and continues toward the target.
 function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
- const p=obj.position,spacing=.85,route=[{x:p.x,z:p.z}],cornersVisited=[];
+ const p=obj.position,spacing=.58,route=[{x:p.x,z:p.z}],visitedBlockers=new Set();
  let x=p.x,z=p.z,complete=false;
- for(let n=0;n<80;n++){
+ const appendLeg=(ax,az,bx,bz)=>{
+  const length=Math.hypot(bx-ax,bz-az),steps=Math.max(1,Math.ceil(length/spacing));
+  for(let k=1;k<=steps;k++){const t=k/steps;route.push({x:ax+(bx-ax)*t,z:az+(bz-az)*t})}
+ };
+ for(let pass=0;pass<24;pass++){
+  if(breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(x,z,tx,tz,r)){complete=true;break}
   const dx=tx-x,dz=tz-z,distance=Math.hypot(dx,dz);
   if(distance<.2){complete=true;break}
-  if(breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(x,z,tx,tz,r)){
-   complete=true;break;
-  }
-  // Find the first AABB intersected by the straight corridor to the target.
+  // Identify the first object intersecting the current chase corridor.
   let blocker=null,blockDistance=Infinity;
-  const samples=Math.max(2,Math.ceil(distance/.12));
-  for(let k=1;k<=samples;k++){
+  const samples=Math.max(2,Math.ceil(distance/.10));
+  for(let k=1;k<=samples&&!blocker;k++){
    const t=k/samples,sx=x+dx*t,sz=z+dz*t;
    for(const o of solid){
     if(Math.abs(sx-o.x)<o.w/2+r&&Math.abs(sz-o.z)<o.d/2+r){
@@ -376,51 +378,60 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
      if(along<blockDistance){blockDistance=along;blocker=o}
     }
    }
-   if(blocker)break;
   }
   if(!blocker)break;
-  const pad=r+.18,halfW=blocker.w/2+pad,halfD=blocker.d/2+pad,particleSpacing=.68;
-  // Emit actual navigation particles around all four expanded AABB sides.
-  // The particle is usable only when SCP can stand there and reach it safely.
-  const options=[],addSide=(ax,az,bx,bz)=>{
-   const length=Math.hypot(bx-ax,bz-az),count=Math.max(1,Math.ceil(length/particleSpacing));
-   for(let j=0;j<=count;j++){const t=j/count;options.push({x:ax+(bx-ax)*t,z:az+(bz-az)*t})}
+  const blockerKey=[blocker.x,blocker.z,blocker.w,blocker.d].join(',');
+  if(visitedBlockers.has(blockerKey))break;
+  visitedBlockers.add(blockerKey);
+  const pad=r+.20,hw=blocker.w/2+pad,hd=blocker.d/2+pad,step=.58;
+  // Ordered particles form a closed loop around the expanded object bounds.
+  const particles=[],side=(ax,az,bx,bz)=>{
+   const len=Math.hypot(bx-ax,bz-az),count=Math.max(1,Math.ceil(len/step));
+   for(let i=0;i<count;i++){const t=i/count;particles.push({x:ax+(bx-ax)*t,z:az+(bz-az)*t})}
   };
-  addSide(blocker.x-halfW,blocker.z-halfD,blocker.x+halfW,blocker.z-halfD);
-  addSide(blocker.x+halfW,blocker.z-halfD,blocker.x+halfW,blocker.z+halfD);
-  addSide(blocker.x+halfW,blocker.z+halfD,blocker.x-halfW,blocker.z+halfD);
-  addSide(blocker.x-halfW,blocker.z+halfD,blocker.x-halfW,blocker.z-halfD);
-  let best=null,bestScore=Infinity;
-  for(const q of options){
-   if(!breadcrumbClear(q.x,q.z,r)||!breadcrumbSegmentClear(x,z,q.x,q.z,r))continue;
-   if(cornersVisited.some(v=>Math.hypot(v.x-q.x,v.z-q.z)<.42))continue;
-   const toTarget=Math.hypot(tx-q.x,tz-q.z),fromHere=Math.hypot(q.x-x,q.z-z);
-   const directAfter=breadcrumbSegmentClear(q.x,q.z,tx,tz,r);
-   // Prefer particles that expose a clear exit toward the target, while
-   // retaining a small distance penalty so the route doesn't jump sides.
-   const score=fromHere+toTarget+(directAfter?-Math.min(8,toTarget)*.35:0);
-   if(score<bestScore){bestScore=score;best=q}
+  side(blocker.x-hw,blocker.z-hd,blocker.x+hw,blocker.z-hd);
+  side(blocker.x+hw,blocker.z-hd,blocker.x+hw,blocker.z+hd);
+  side(blocker.x+hw,blocker.z+hd,blocker.x-hw,blocker.z+hd);
+  side(blocker.x-hw,blocker.z+hd,blocker.x-hw,blocker.z-hd);
+  const n=particles.length;
+  // Pick reachable entry and exit particles, then choose the shorter clockwise
+  // or counter-clockwise particle chain. This prevents jumping through the box.
+  let best=null,bestCost=Infinity;
+  for(let a=0;a<n;a++){
+   const entry=particles[a];
+   if(!breadcrumbClear(entry.x,entry.z,r)||!breadcrumbSegmentClear(x,z,entry.x,entry.z,r))continue;
+   for(let b=0;b<n;b++){
+    if(a===b)continue;
+    const exit=particles[b];
+    if(!breadcrumbClear(exit.x,exit.z,r)||!breadcrumbSegmentClear(exit.x,exit.z,tx,tz,r))continue;
+    const cw=(b-a+n)%n,ccw=(a-b+n)%n,dir=cw<=ccw?1:-1,count=Math.min(cw,ccw);
+    let chainClear=true,chainCost=0,idx=a;
+    for(let q=0;q<count;q++){
+     const next=(idx+dir+n)%n,one=particles[idx],two=particles[next];
+     if(!breadcrumbSegmentClear(one.x,one.z,two.x,two.z,r)){chainClear=false;break}
+     chainCost+=Math.hypot(two.x-one.x,two.z-one.z);idx=next;
+    }
+    if(!chainClear)continue;
+    const cost=Math.hypot(entry.x-x,entry.z-z)+chainCost+Math.hypot(tx-exit.x,tz-exit.z);
+    if(cost<bestCost){bestCost=cost;best={a,b,dir,count}}
+   }
   }
   if(!best)break;
-  const leg=Math.hypot(best.x-x,best.z-z),steps=Math.max(1,Math.ceil(leg/spacing));
-  for(let k=1;k<=steps;k++){
-   const t=k/steps;route.push({x:x+(best.x-x)*t,z:z+(best.z-z)*t});
+  const entry=particles[best.a];
+  appendLeg(x,z,entry.x,entry.z);
+  let idx=best.a;
+  for(let q=0;q<best.count;q++){
+   idx=(idx+best.dir+n)%n;
+   const particle=particles[idx],last=route[route.length-1];
+   if(Math.hypot(particle.x-last.x,particle.z-last.z)>.08)route.push({x:particle.x,z:particle.z});
   }
-  x=best.x;z=best.z;cornersVisited.push(best);
+  x=particles[best.b].x;z=particles[best.b].z;
  }
- // Finish with short, evenly spaced breadcrumbs along the final clear leg.
- if(breadcrumbClear(tx,tz,r)&&breadcrumbSegmentClear(x,z,tx,tz,r)){
-  const leg=Math.hypot(tx-x,tz-z),steps=Math.max(1,Math.ceil(leg/spacing));
-  if(leg>.05)for(let k=1;k<=steps;k++){
-   const t=k/steps;route.push({x:x+(tx-x)*t,z:z+(tz-z)*t});
-  }
- }else if(route.length===1){
-  // Keep a single safe start point if no corner can be reached.
-  route.push({x:p.x,z:p.z});
- }
+ if(complete&&breadcrumbSegmentClear(x,z,tx,tz,r))appendLeg(x,z,tx,tz);
  const ud=obj.userData||(obj.userData={});
- ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();ud.breadcrumbRouteBlocked=!complete&&route.length<2;
- return route;
+ ud.breadcrumbRoute=route;ud.breadcrumbIndex=1;ud.particleIndex=1;
+ ud.breadcrumbTargetX=tx;ud.breadcrumbTargetZ=tz;ud.breadcrumbRouteAt=performance.now();
+ ud.breadcrumbRouteBlocked=!complete;return route;
 }
 // Grid-bridge pursuit: adjacent grid nodes are connected only when a
 // Three.js raycast can travel between them without crossing facility geometry.
