@@ -680,8 +680,10 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  if(!directClear){
   const targetKey=Math.floor(tx/2)+','+Math.floor(tz/2),now=performance.now();
   const route=ud.breadcrumbRoute;
+  const targetShift=Math.hypot(tx-(ud.breadcrumbTargetX??tx),tz-(ud.breadcrumbTargetZ??tz));
   const routeStale=!Array.isArray(route)||route.length<2||ud.breadcrumbTargetKey!==targetKey||
-   now-(ud.breadcrumbRouteAt||0)>420||ud.breadcrumbRevision!==navData.revision;
+   targetShift>1.35||ud.breadcrumbRevision!==navData.revision||
+   (Number.isFinite(ud.particleIndex)&&ud.particleIndex>=route.length);
   if(routeStale){
    buildSCPBreadcrumbRoute(obj,tx,tz,.48);
    ud.breadcrumbTargetKey=targetKey;ud.breadcrumbRevision=navData.revision;
