@@ -1323,9 +1323,10 @@ function scpVictimVisible(obj,target){
 }
 function moveSCPPolygonAI(obj,target,speed,dt){
  const ud=obj.userData||(obj.userData={}),p=obj.position;
+ ud.scpVictimLastSeen||(ud.scpVictimLastSeen=new WeakMap());
  const visible=!!target&&scpVictimVisible(obj,target);
  if(visible){
-  scpVictimLastSeen.set(target,{x:target.position.x,z:target.position.z,at:performance.now()});
+  ud.scpVictimLastSeen.set(target,{x:target.position.x,z:target.position.z,at:performance.now()});
   ud.scpLastSeenTarget=target;ud.scpLastSeenX=target.position.x;ud.scpLastSeenZ=target.position.z;
   ud.scpSearching=false;ud.scpPolyPath=null;ud.scpPolyPathIndex=0;
   const dx=target.position.x-p.x,dz=target.position.z-p.z,d=Math.hypot(dx,dz);
@@ -1342,7 +1343,7 @@ function moveSCPPolygonAI(obj,target,speed,dt){
    // Never reuse another victim's remembered location after target switching.
    ud.scpLastSeenTarget=target;ud.scpLastSeenX=p.x;ud.scpLastSeenZ=p.z;ud.scpLastSeenAt=0;
   }
-  const last=scpVictimLastSeen.get(target);
+  const last=ud.scpVictimLastSeen.get(target);
   if(last){ud.scpLastSeenX=last.x;ud.scpLastSeenZ=last.z;ud.scpLastSeenAt=last.at}
  }
  ud.scpSearching=true;
@@ -1394,18 +1395,14 @@ function frame(now){
    const tp=target?.position,d=tp?Math.hypot(tp.x-z.position.x,tp.z-z.position.z):Infinity;
    let zombieMoved=false;
    if(target&&target.userData?.hp!==0&&!target.userData?.dead&&d>1.05){
-    // Keep pursuing the globally acquired target; local FOV scanning in the
-    // shared velocity controller handles obstacle avoidance only.
-    zombieMoved=zombieLocalGridMove(z,tp.x,tp.z,2.35,dt);
-    if(z.userData.moveDir?.lengthSq()>.001)z.rotation.y=Math.atan2(z.userData.moveDir.x,z.userData.moveDir.z);
+    // Zombies use the same global polygon navmesh, carved obstacles,
+    // portal pathfinding, LOS pursuit, and last-seen search as SCP-049.
+    zombieMoved=moveSCPPolygonAI(z,target,2.35,dt);
    }else if(target&&d<=1.05){
     z.userData.velocity?.multiplyScalar(Math.exp(-5.5*dt));
    }else{
-    // No valid victim: retain heading and keep patrolling instead of freezing.
-    const v=z.userData.velocity||(z.userData.velocity=new T.Vector3());
-    const h=z.userData.steeringVector||(z.userData.steeringVector=new T.Vector3(0,0,1));
-    if(v.length()<.45)v.set(h.x*1.1,0,h.z*1.1);
-    zombieMoved=zombieLocalGridMove(z,z.position.x+h.x*8,z.position.z+h.z*8,1.35,dt);
+    // No valid victim: continue ordinary random polygon roaming.
+    zombieMoved=moveSCPPolygonAI(z,null,1.35,dt);
    }
    // Imported GLB: exact AttackD clip while attacking, Walk while travelling, Idle at rest.
    const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
