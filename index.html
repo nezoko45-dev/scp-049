@@ -715,27 +715,6 @@ function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
  if(velocity.lengthSq()>.001)obj.rotation.y=Math.atan2(velocity.x,velocity.z);
  return moved||velocity.lengthSq()>.0025;
 }
-function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
- // SCP navigation now comes exclusively from the facility JSON occupancy map.
- // Generated solid-object bounds are rasterized into blocked cells; A* follows
- // connected open cells and switches back to direct pursuit when the corridor
- // is open. No breadcrumb or particle trail is generated or followed.
- if(!navReady||!navData?.grid)return false;
- const p=obj.position,ud=obj.userData||(obj.userData={});
- const directClear=breadcrumbSegmentClear(p.x,p.z,tx,tz,r);
- if(directClear){
-  ud.gridRoute=[];ud.gridRouteKey='';
-  ud.velocity||(ud.velocity=new T.Vector3());
-  const dx=tx-p.x,dz=tz-p.z,d=Math.hypot(dx,dz);
-  if(d<.01){ud.velocity.multiplyScalar(Math.exp(-8*dt));return false}
-  const step=Math.min(d,speed*dt),nx=p.x+dx/d*step,nz=p.z+dz/d*step;
-  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){
-   p.x=nx;p.z=nz;ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return step>.0001;
-  }
- }
- return liveGridAvoidStep(obj,tx,tz,speed);
-}
-
 // JSON-map steering: no A*, graph search, path queue, raycasts, or collider
 // queries. Each frame samples directions against the facility's 0/1 grid and
 // chooses the safest direction that makes useful progress toward the target.
