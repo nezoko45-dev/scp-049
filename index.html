@@ -1430,12 +1430,22 @@ function nearestSCPPolygon(x,z){
 }
 function scpPolygonPath(start,goal){
  if(!start||!goal)return [];
- // Dijkstra over connected walkable triangles: no A* heuristic or BFS queue.
- const open=[start],distance=new Map([[start.key,0]]),parent=new Map(),via=new Map(),visited=new Set();
- while(open.length){
-  open.sort((a,b)=>(distance.get(a.key)||0)-(distance.get(b.key)||0));
-  const cur=open.shift();
-  if(visited.has(cur.key))continue;
+ // Dijkstra over connected walkable triangles, using a binary min-heap.
+ const heap=[],distance=new Map([[start.key,0]]),parent=new Map(),via=new Map(),visited=new Set();
+ const push=(node,cost)=>{
+  const item={node,cost};heap.push(item);let i=heap.length-1;
+  while(i>0){const p=(i-1)>>1;if(heap[p].cost<=cost)break;heap[i]=heap[p];i=p}
+  heap[i]=item;
+ };
+ const pop=()=>{
+  const first=heap[0],last=heap.pop();
+  if(heap.length){let i=0;while(true){let child=i*2+1;if(child>=heap.length)break;if(child+1<heap.length&&heap[child+1].cost<heap[child].cost)child++;if(heap[child].cost>=last.cost)break;heap[i]=heap[child];i=child}heap[i]=last}
+  return first;
+ };
+ push(start,0);
+ while(heap.length){
+  const item=pop(),cur=item.node;
+  if(visited.has(cur.key)||item.cost!==(distance.get(cur.key)??Infinity))continue;
   visited.add(cur.key);
   if(cur.key===goal.key){
    const chain=[];let key=goal.key;
@@ -1447,14 +1457,12 @@ function scpPolygonPath(start,goal){
    chain.push({node:start,via:null});chain.reverse();
    return chain.map(entry=>Object.assign({},entry.node,{via:entry.via}));
   }
-  const base=distance.get(cur.key)||0;
   for(const edge of cur.edges){
    const next=scpPolygonMesh.byKey.get(edge.to);
    if(!next||visited.has(next.key))continue;
-   const cost=base+Math.hypot(next.x-cur.x,next.z-cur.z);
+   const cost=item.cost+Math.hypot(next.x-cur.x,next.z-cur.z);
    if(cost>=(distance.get(next.key)??Infinity))continue;
-   distance.set(next.key,cost);parent.set(next.key,cur.key);via.set(next.key,edge.midpoint);
-   open.push(next);
+   distance.set(next.key,cost);parent.set(next.key,cur.key);via.set(next.key,edge.midpoint);push(next,cost);
   }
  }
  return [];
