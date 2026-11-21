@@ -340,6 +340,32 @@ const drawRayChain=drawSCPRayChain;
 function clearSCPRayViz(){while(scpRayViz.children.length){const o=scpRayViz.children[0];scpRayViz.remove(o);o.geometry.dispose()}}
 let scpBridgeGizmoAt=0;
 function drawSCPRayGizmos(obj){scpRayViz.visible=false;rayHUD.style.display='none'}
+// Global object-bound particle field. Every streamed solid gets its own
+// perimeter chain; SCP does not generate particles around its own position.
+let scpObjectBoundParticleField=new Map(),scpObjectBoundParticleSignature='';
+function rebuildSCPObjectBoundParticleField(r=.48,step=.58){
+ const signature=solid.map(o=>[o.x,o.z,o.w,o.d].join(',')).join('|');
+ if(signature===scpObjectBoundParticleSignature)return scpObjectBoundParticleField;
+ scpObjectBoundParticleSignature=signature;
+ const field=new Map(),pad=r+.20;
+ for(const o of solid){
+  const key=[o.x,o.z,o.w,o.d].join(',');
+  if(field.has(key))continue;
+  const hw=o.w/2+pad,hd=o.d/2+pad,particles=[];
+  const side=(ax,az,bx,bz)=>{
+   const len=Math.hypot(bx-ax,bz-az),count=Math.max(1,Math.ceil(len/step));
+   for(let i=0;i<count;i++){const t=i/count;particles.push({x:ax+(bx-ax)*t,z:az+(bz-az)*t,objectKey:key})}
+  };
+  // Four connected sides make one ordered loop around this object's AABB.
+  side(o.x-hw,o.z-hd,o.x+hw,o.z-hd);
+  side(o.x+hw,o.z-hd,o.x+hw,o.z+hd);
+  side(o.x+hw,o.z+hd,o.x-hw,o.z+hd);
+  side(o.x-hw,o.z+hd,o.x-hw,o.z-hd);
+  field.set(key,particles);
+ }
+ scpObjectBoundParticleField=field;
+ return field;
+}
 // Breadcrumb collision validation against every streamed facility solid.
 function breadcrumbClear(x,z,r=.48){
  // A particle is valid only when BOTH the live score map and swept AABB
@@ -386,16 +412,11 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
   const blockerKey=[blocker.x,blocker.z,blocker.w,blocker.d].join(',');
   if(visitedBlockers.has(blockerKey))break;
   visitedBlockers.add(blockerKey);
-  const pad=r+.20,hw=blocker.w/2+pad,hd=blocker.d/2+pad,step=.58;
-  // Ordered particles form a closed loop around the expanded object bounds.
-  const particles=[],side=(ax,az,bx,bz)=>{
-   const len=Math.hypot(bx-ax,bz-az),count=Math.max(1,Math.ceil(len/step));
-   for(let i=0;i<count;i++){const t=i/count;particles.push({x:ax+(bx-ax)*t,z:az+(bz-az)*t})}
-  };
-  side(blocker.x-hw,blocker.z-hd,blocker.x+hw,blocker.z-hd);
-  side(blocker.x+hw,blocker.z-hd,blocker.x+hw,blocker.z+hd);
-  side(blocker.x+hw,blocker.z+hd,blocker.x-hw,blocker.z+hd);
-  side(blocker.x-hw,blocker.z+hd,blocker.x-hw,blocker.z-hd);
+  // Use this object's already-generated perimeter particles from the global
+  // field, rather than creating a private particle loop around SCP or its target.
+  const particleField=rebuildSCPObjectBoundParticleField(r,.58);
+  const blockerKey=[blocker.x,blocker.z,blocker.w,blocker.d].join(',');
+  const particles=particleField.get(blockerKey)||[];
   const n=particles.length;
   // Pick reachable entry and exit particles, then choose the shorter clockwise
   // or counter-clockwise particle chain. This prevents jumping through the box.
