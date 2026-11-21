@@ -736,89 +736,58 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  return liveGridAvoidStep(obj,tx,tz,speed);
 }
 
-// A* searches the facility JSON occupancy grid. It does not query scene
-// colliders, raycasts, or object meshes to decide which direction to take.
-function findFacilityJSONPath(sx,sz,tx,tz){
- if(!navReady||!navData?.grid)return [];
- const W=navData.width,H=navData.height,g=navData.grid;
- const nearest=(x,z)=>{
-  const c=cellOf(x,z);
-  for(let radius=0;radius<Math.max(W,H);radius++){
-   let best=null,bestD=Infinity;
-   for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
-    if(Math.max(Math.abs(dx),Math.abs(dz))!==radius)continue;
-    const ix=c.x+dx,iz=c.z+dz;
-    if(ix<0||iz<0||ix>=W||iz>=H||g[iz]?.[ix]!==1)continue;
-    const d=dx*dx+dz*dz;if(d<bestD){bestD=d;best={x:ix,z:iz}}
-   }
-   if(best)return best;
-  }
-  return null;
- };
- const a=nearest(sx,sz),b=nearest(tx,tz);if(!a||!b)return [];
- const key=(x,z)=>z*W+x,startKey=key(a.x,a.z),goalKey=key(b.x,b.z);
- if(startKey===goalKey)return [{x:tx,z:tz}];
- const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,1,Math.SQRT2],[-1,-1,Math.SQRT2]];
- const gScore=new Map([[startKey,0]]),came=new Map(),closed=new Set();
- const heap=[];
- const push=(n)=>{heap.push(n);let i=heap.length-1;while(i){const p=(i-1)>>1;if(heap[p].f<=n.f)break;heap[i]=heap[p];i=p}heap[i]=n};
- const pop=()=>{const root=heap[0],last=heap.pop();if(heap.length){let i=0;while(true){let l=i*2+1,r=l+1;if(l>=heap.length)break;let c=r<heap.length&&heap[r].f<heap[l].f?r:l;if(heap[c].f>=last.f)break;heap[i]=heap[c];i=c}heap[i]=last}return root};
- const h=(x,z)=>Math.hypot(b.x-x,b.z-z);
- push({x:a.x,z:a.z,k:startKey,f:h(a.x,a.z)});
- let found=false,iterations=0;
- while(heap.length&&iterations++<W*H){
-  const cur=pop();if(closed.has(cur.k))continue;if(cur.k===goalKey){found=true;break}closed.add(cur.k);
-  for(const [dx,dz,cost] of dirs){
-   const x=cur.x+dx,z=cur.z+dz,k=key(x,z);
-   if(x<0||z<0||x>=W||z>=H||g[z]?.[x]!==1||closed.has(k))continue;
-   // No diagonal corner cutting: both orthogonal neighbor cells must be open.
-   if(dx&&dz&&(g[cur.z]?.[x]!==1||g[z]?.[cur.x]!==1))continue;
-   const next=gScore.get(cur.k)+cost;
-   if(next>=(gScore.get(k)??Infinity))continue;
-   gScore.set(k,next);came.set(k,cur.k);push({x,z,k,f:next+h(x,z)});
-  }
- }
- if(!found)return [];
- const cells=[];let k=goalKey;
- while(k!==startKey){cells.push({x:k%W,z:Math.floor(k/W)});k=came.get(k);if(k===undefined)return []}
- cells.reverse();
- // Convert grid cells to world-space centers and simplify using only JSON cells.
- const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z;
- const world=cells.map(c=>({x:ox+(c.x+.5)*cs,z:oz+(c.z+.5)*cs}));
- const clearGridLine=(p,q)=>{
-  const d=Math.hypot(q.x-p.x,q.z-p.z),n=Math.max(1,Math.ceil(d/(cs*.25)));
-  for(let i=0;i<=n;i++){const t=i/n,c=cellOf(p.x+(q.x-p.x)*t,p.z+(q.z-p.z)*t);if(g[c.z]?.[c.x]!==1)return false}
-  return true;
- };
- const compact=[];let at=0;
- while(at<world.length){let far=at;for(let j=at+1;j<world.length;j++){if(clearGridLine(world[at],world[j]))far=j;else break}compact.push(world[far]);at=far+1}
- compact.push({x:tx,z:tz});return compact;
+// JSON-map steering: no A*, graph search, path queue, raycasts, or collider
+// queries. Each frame samples directions against the facility's 0/1 grid and
+// chooses the safest direction that makes useful progress toward the target.
+function facilityJSONScore(x,z){
+ if(!navReady||!navData?.grid)return 0;
+ const c=cellOf(x,z);
+ return navData.grid[c.z]?.[c.x]===1?1:0;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  if(!navReady||!navData?.grid)return false;
- const p=obj.position,ud=obj.userData||(obj.userData={}),now=performance.now();
- const targetKey=Math.floor(tx/2)+','+Math.floor(tz/2);
- const shifted=Math.hypot(tx-(ud.jsonRouteTargetX??tx),tz-(ud.jsonRouteTargetZ??tz))>1.1;
- if(!Array.isArray(ud.jsonRoute)||!ud.jsonRoute.length||ud.jsonRouteRevision!==navData.revision||
-    ud.jsonRouteTargetKey!==targetKey||shifted||now-(ud.jsonRouteAt||0)>650){
-  ud.jsonRoute=findFacilityJSONPath(p.x,p.z,tx,tz);
-  ud.jsonRouteIndex=0;ud.jsonRouteRevision=navData.revision;ud.jsonRouteTargetKey=targetKey;
-  ud.jsonRouteTargetX=tx;ud.jsonRouteTargetZ=tz;ud.jsonRouteAt=now;
+ const p=obj.position,ud=obj.userData||(obj.userData={});
+ const dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
+ if(dist<.08)return false;
+ const headings=ud.jsonHeadings||(ud.jsonHeadings=Array.from({length:72},(_,i)=>i*Math.PI/36));
+ const previous=ud.jsonHeading??Math.atan2(dx,dz);
+ let best=null,bestScore=-Infinity;
+ // Candidate headings are scored exclusively from JSON map cells.
+ for(let i=0;i<headings.length;i++){
+  const a=headings[i],vx=Math.sin(a),vz=Math.cos(a);
+  let clear=0,blocked=false,progress=0,clearance=0;
+  for(const d of [.35,.7,1.1,1.6,2.2,3,4,5.5,7,9]){
+   const x=p.x+vx*d,z=p.z+vz*d;
+   if(facilityJSONScore(x,z)!==1){blocked=true;break}
+   clear++;
+   const remaining=Math.hypot(tx-x,tz-z);
+   progress=Math.max(progress,dist-remaining);
+   // Reward directions with more open JSON cells beyond the immediate step.
+   clearance+=1/(.35+d*.18);
+  }
+  if(blocked&&clear<1)continue;
+  const turn=Math.atan2(Math.sin(a-previous),Math.cos(a-previous));
+  const headingToTarget=(vx*dx+vz*dz)/(dist||1);
+  const score=progress*3.2+clear*1.1+clearance*.8+headingToTarget*1.4-Math.abs(turn)*.48;
+  if(score>bestScore){bestScore=score;best={vx,vz,a,clear}}
  }
- const route=ud.jsonRoute||[];
- if(!route.length)return false;
- let i=ud.jsonRouteIndex||0;
- while(i<route.length-1&&Math.hypot(route[i].x-p.x,route[i].z-p.z)<.42)i++;
- ud.jsonRouteIndex=i;
- const wp=route[i],dx=wp.x-p.x,dz=wp.z-p.z,d=Math.hypot(dx,dz);
- if(d<.06)return false;
- const step=Math.min(d,speed*dt),nx=p.x+dx/d*step,nz=p.z+dz/d*step;
- const cell=cellOf(nx,nz);
- // The JSON map is authoritative for both route choice and walkability.
- if(navData.grid[cell.z]?.[cell.x]!==1)return false;
- p.x=nx;p.z=nz;obj.rotation.y=Math.atan2(dx,dz);
- ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
- return step>.0001;
+ if(!best)return false;
+ // Preserve heading through small score fluctuations to prevent left/right jitter.
+ ud.jsonHeading=best.a;
+ const step=Math.min(speed*dt,Math.max(.04,best.clear?best.clear*.22:.04));
+ const steps=Math.max(1,Math.ceil(step/.12));
+ let moved=false;
+ for(let i=0;i<steps;i++){
+  const nx=p.x+best.vx*(step/steps),nz=p.z+best.vz*(step/steps);
+  if(facilityJSONScore(nx,nz)!==1)break;
+  p.x=nx;p.z=nz;moved=true;
+ }
+ if(moved){
+  obj.rotation.y=Math.atan2(best.vx,best.vz);
+  ud.velocity||(ud.velocity=new T.Vector3());
+  ud.velocity.set(best.vx*speed,0,best.vz*speed);
+ }
+ return moved;
 }
 document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
 // Infinite facility streaming: add 40m corridor chunks ahead and extend the A* grid.
