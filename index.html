@@ -1759,9 +1759,16 @@ function frame(now){
    const wanted=d<=1.15?'attack':(zombieMoved?'walk':'idle');
    const next=ud.actions?.[wanted]||ud.actions?.idle||ud.actions?.walk;
    if(next&&next!==ud.currentAction){next.reset().fadeIn(.18).play();ud.currentAction?.fadeOut(.18);ud.currentAction=next;}
-   const nearPlayer=Math.hypot(z.position.x-ctl.getObject().position.x,z.position.z-ctl.getObject().position.z)<1.8;
-   const nearSurvivor=allies.some(a=>a.userData.hp>0&&!a.userData.dead&&Math.hypot(z.position.x-a.position.x,z.position.z-a.position.z)<1.8);
-   if((nearPlayer||nearSurvivor)&&nowZombie-(ud.lastNearbyDamage||0)>=1000){ud.lastNearbyDamage=nowZombie;ud.hp=Math.max(0,ud.hp-1);}
+   // Damage the currently selected victim, not the zombie itself.
+   // Keep the attack on a one-second cooldown and require actual melee range.
+   const victim=target;
+   const victimDistance=victim?Math.hypot(z.position.x-victim.position.x,z.position.z-victim.position.z):Infinity;
+   const victimAlive=victim&&(ud.targetKind==='player'?!dead:(victim.userData.hp>0&&!victim.userData.dead));
+   if(victimAlive&&victimDistance<=1.8&&nowZombie-(ud.lastNearbyDamage||0)>=1000){
+    ud.lastNearbyDamage=nowZombie;
+    if(ud.targetKind==='player')playerHP=Math.max(0,playerHP-8);
+    else victim.userData.hp=Math.max(0,victim.userData.hp-12);
+   }
   });
   zombies=zombies.filter(z=>{if(z.userData.hp<=0){scene.remove(z);return false}return true});
   if(playerHP<=0)gameover('YOU WERE OVERRUN');
