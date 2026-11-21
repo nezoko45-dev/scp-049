@@ -45,8 +45,8 @@ let scoreMemorySaveTimer=0,scoreMemoryDirty=false;function saveSCPScoreMemory(){
 function restoreSCPScoreMemory(){try{const m=JSON.parse(localStorage.getItem(SCP_SCORE_MEMORY)||'null');if(m&&m.grid&&m.width===navData.width&&m.height===navData.height&&m.cellSize===navData.cellSize&&m.origin?.x===navData.origin.x&&m.origin?.z===navData.origin.z&&m.grid.length===navData.height)navData.grid=m.grid.map(row=>row.slice());}catch(e){console.warn('SCP score memory restore failed',e)}}
 function buildNavigation(){
  const size=400,cellSize=1,origin=-200;
- navData={format:'facility-score-map-v1',cellSize:facilityJSON?.cellSize||cellSize,width:facilityJSON?.width||size,height:facilityJSON?.height||size,origin:facilityJSON?.origin||{x:origin,z:origin},grid:facilityJSON?.scores?.map(row=>row.slice())||Array.from({length:size},()=>Array(size).fill(1)),revision:0};
- restoreSCPScoreMemory();rebuildFacilityScoreMap();saveSCPScoreMemory();
+ navData={format:'facility-score-map-v1',cellSize:facilityJSON?.cellSize||cellSize,width:facilityJSON?.width||size,height:facilityJSON?.height||size,origin:facilityJSON?.origin||{x:origin,z:origin},grid:facilityJSON?.scores?.map(row=>row.slice())||Array.from({length:size},()=>Array(size).fill(1)),baseGrid:facilityJSON?.scores?.map(row=>row.slice())||Array.from({length:size},()=>Array(size).fill(1)),objectBounds:[],revision:0};
+ rebuildFacilityScoreMap();saveSCPScoreMemory();
  navReady=true;document.querySelector('#start').disabled=false;document.querySelector('#start').textContent='START SHIFT';
  console.info('Facility JSON score map initialized: 1=unblocked, 0=blocked');
 }
@@ -55,15 +55,25 @@ function buildNavigation(){
 let facilityScoreSolidCount=-1;
 function rebuildFacilityScoreMap(){
  if(!navData?.grid)return;
- const g=navData.grid,cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,W=navData.width,H=navData.height;
- // Preserve remembered JSON scores; only newly generated geometry adds blocked cells.
- // Existing 0 cells stay blocked even when their chunk is no longer in view.
+ const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z,W=navData.width,H=navData.height;
+ // Rebuild the occupancy JSON from its authored base map, then rasterize the
+ // actual generated collider positions. Inflating bounds reserves clearance
+ // for SCP's body, rather than marking only the object's center footprint.
+ const base=navData.baseGrid||facilityJSON?.scores||null;
+ const g=base?base.map(row=>row.slice()):Array.from({length:H},()=>Array(W).fill(1));
+ const clearance=.58,objects=[];
  for(const o of solid){
-  const minX=Math.max(0,Math.floor((o.x-o.w/2)/cs-ox/cs)),maxX=Math.min(W-1,Math.floor((o.x+o.w/2)/cs-ox/cs));
-  const minZ=Math.max(0,Math.floor((o.z-o.d/2)/cs-oz/cs)),maxZ=Math.min(H-1,Math.floor((o.z+o.d/2)/cs-oz/cs));
-  for(let z=minZ;z<=maxZ;z++)for(let x=minX;x<=maxX;x++)g[z][x]=0;
+  objects.push({x:o.x,z:o.z,w:o.w,d:o.d});
+  const minX=Math.max(0,Math.floor((o.x-o.w/2-clearance-ox)/cs));
+  const maxX=Math.min(W-1,Math.floor((o.x+o.w/2+clearance-ox)/cs));
+  const minZ=Math.max(0,Math.floor((o.z-o.d/2-clearance-oz)/cs));
+  const maxZ=Math.min(H-1,Math.floor((o.z+o.d/2+clearance-oz)/cs));
+  for(let iz=minZ;iz<=maxZ;iz++)for(let ix=minX;ix<=maxX;ix++)g[iz][ix]=0;
  }
- navData.revision=(navData.revision||0)+1;facilityScoreSolidCount=solid.length;
+ navData.grid=g;
+ navData.objectBounds=objects;
+ navData.revision=(navData.revision||0)+1;
+ facilityScoreSolidCount=solid.length;
 }
 // Facility and AI share one persistent-in-session score map. Generation writes
 // its wall/prop scores into navData.grid; SCP's route planner reads that exact grid.
@@ -706,6 +716,27 @@ function persistentAABBSteerMove(obj,tx,tz,speed,dt,r=.48){
  return moved||velocity.lengthSq()>.0025;
 }
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
+ // SCP navigation now comes exclusively from the facility JSON occupancy map.
+ // Generated solid-object bounds are rasterized into blocked cells; A* follows
+ // connected open cells and switches back to direct pursuit when the corridor
+ // is open. No breadcrumb or particle trail is generated or followed.
+ if(!navReady||!navData?.grid)return false;
+ const p=obj.position,ud=obj.userData||(obj.userData={});
+ const directClear=breadcrumbSegmentClear(p.x,p.z,tx,tz,r);
+ if(directClear){
+  ud.gridRoute=[];ud.gridRouteKey='';
+  ud.velocity||(ud.velocity=new T.Vector3());
+  const dx=tx-p.x,dz=tz-p.z,d=Math.hypot(dx,dz);
+  if(d<.01){ud.velocity.multiplyScalar(Math.exp(-8*dt));return false}
+  const step=Math.min(d,speed*dt),nx=p.x+dx/d*step,nz=p.z+dz/d*step;
+  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){
+   p.x=nx;p.z=nz;ud.velocity.set(dx/d*speed,0,dz/d*speed);obj.rotation.y=Math.atan2(dx,dz);return step>.0001;
+  }
+ }
+ return liveGridAvoidStep(obj,tx,tz,speed);
+}
+
+function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
  // When the target corridor is blocked, SCP switches to a real particle chain
  // emitted around the blocking AABBs. The particle follower owns movement until
@@ -1098,35 +1129,51 @@ function liveGridAvoidStep(obj,tx,tz,speed){
  if(!navReady||!navData?.grid||!frameDelta)return false;
  const cs=navData.cellSize||1,W=navData.width,H=navData.height,g=navData.grid;
  const center=(ix,iz)=>({x:navData.origin.x+(ix+.5)*cs,z:navData.origin.z+(iz+.5)*cs});
- const open=(ix,iz)=>ix>=0&&iz>=0&&ix<W&&iz<H&&!!g[iz]?.[ix];
- const rayOpen=(x,z,p)=>{const dx=p.x-x,dz=p.z-z,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.2)));for(let i=1;i<=steps;i++){let t=i/steps,q=cellOf(x+dx*t,z+dz*t);if(!open(q.x,q.z)||hit(x+dx*t,z+dz*t,.18))return false}return true};
+ const open=(ix,iz)=>ix>=0&&iz>=0&&ix<W&&iz<H&&g[iz]?.[ix]===1;
+ const rayOpen=(x,z,p)=>{
+  const dx=p.x-x,dz=p.z-z,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/(cs*.16)));
+  for(let i=1;i<=steps;i++){const t=i/steps,px=x+dx*t,pz=z+dz*t,q=cellOf(px,pz);
+   if(!open(q.x,q.z)||hit(px,pz,.44))return false;
+  }
+  return true;
+ };
  let c=cellOf(obj.position.x,obj.position.z),target=cellOf(tx,tz),ud=obj.userData||(obj.userData={});
- if(!open(c.x,c.z)){let q=nearestOpen(obj.position.x,obj.position.z);if(!q)return false;let p=center(q.x,q.z);obj.position.x=p.x;obj.position.z=p.z;c=q;ud.gridRouteKey=''}
- if(!open(target.x,target.z)){let q=nearestOpen(tx,tz);if(!q)return false;target=q}
- const stamp=c.x+','+c.z+'>'+target.x+','+target.z;
- if(ud.gridRouteKey!==stamp||!ud.gridRoute?.length||performance.now()-(ud.gridRouteAt||0)>350){
-  ud.gridRoute=gridRoute(c,target);ud.gridRouteKey=stamp;ud.gridRouteAt=performance.now();ud.gridRouteIndex=1
+ if(!open(c.x,c.z)){
+  const q=nearestOpen(obj.position.x,obj.position.z);if(!q)return false;
+  const p=center(q.x,q.z);obj.position.x=p.x;obj.position.z=p.z;c=q;ud.gridRouteKey='';
  }
- let path=ud.gridRoute,index=ud.gridRouteIndex||1;
- // Advance waypoint only after reaching it; never attempt to raycast straight through a wall.
- while(index<path.length){let p=center(path[index].x,path[index].z);if(Math.hypot(p.x-obj.position.x,p.z-obj.position.z)>.16)break;index++}
+ if(!open(target.x,target.z)){const q=nearestOpen(tx,tz);if(!q)return false;target=q}
+ const stamp=c.x+','+c.z+'>'+target.x+','+target.z+'@'+navData.revision;
+ if(ud.gridRouteKey!==stamp||!ud.gridRoute?.length){
+  ud.gridRoute=gridRoute(c,target);ud.gridRouteKey=stamp;ud.gridRouteAt=performance.now();ud.gridRouteIndex=1;
+ }
+ const path=ud.gridRoute;let index=ud.gridRouteIndex??1;
+ while(index<path.length){
+  const q=center(path[index].x,path[index].z);
+  if(Math.hypot(q.x-obj.position.x,q.z-obj.position.z)>.20)break;
+  index++;
+ }
  ud.gridRouteIndex=index;
  if(index>=path.length)return false;
- const p=center(path[index].x,path[index].z),x=obj.position.x,z=obj.position.z,vx=p.x-x,vz=p.z-z,d=Math.hypot(vx,vz);
+ const waypoint=center(path[index].x,path[index].z),x=obj.position.x,z=obj.position.z;
+ const dx=waypoint.x-x,dz=waypoint.z-z,d=Math.hypot(dx,dz);
  if(d<.01)return false;
- const n=Math.min(speed*frameDelta,d),nx=x+vx/d*n,nz=z+vz/d*n;
- // If the next cell is blocked by a wall/object, look ahead along the route
- // and jump to the first open waypoint on the far side with a clear straight shot.
+ const step=Math.min(speed*frameDelta,d),nx=x+dx/d*step,nz=z+dz/d*step;
  if(!rayOpen(x,z,{x:nx,z:nz})){
-   let skip=-1;
-   for(let j=index+1;j<path.length;j++){
-     const q=center(path[j].x,path[j].z);
-     if(rayOpen(x,z,q)){skip=j;break}
-   }
-   if(skip>=0){ud.gridRouteIndex=skip;const q=center(path[skip].x,path[skip].z),qx=q.x-x,qz=q.z-z,qd=Math.hypot(qx,qz),step=Math.min(speed*frameDelta,qd);if(qd>.01){obj.position.x=x+qx/qd*step;obj.position.z=z+qz/qd*step;return true}}
-   ud.gridRouteKey='';ud.gridRouteAt=0;return false
+  // Keep the JSON route and try the next reachable cell-center waypoint;
+  // never invent a detour particle or steer toward the target through a wall.
+  let skip=-1;
+  for(let j=index+1;j<path.length;j++){const q=center(path[j].x,path[j].z);if(rayOpen(x,z,q)){skip=j;break}}
+  if(skip<0){ud.gridRouteKey='';ud.gridRoute=[];return false}
+  ud.gridRouteIndex=skip;
+  const q=center(path[skip].x,path[skip].z),qx=q.x-x,qz=q.z-z,qd=Math.hypot(qx,qz),n=Math.min(speed*frameDelta,qd);
+  if(qd<.01)return false;
+  obj.position.x=x+qx/qd*n;obj.position.z=z+qz/qd*n;return true;
  }
- obj.position.x=nx;obj.position.z=nz;return true
+ obj.position.x=nx;obj.position.z=nz;
+ const v=ud.velocity||(ud.velocity=new T.Vector3());v.set(dx/d*speed,0,dz/d*speed);
+ obj.rotation.y=Math.atan2(dx,dz);
+ return step>.0001;
 }
 function liveGridCellOpen(x,z){if(!backendGridOnline||!navData?.grid)return false;const c=cellOf(x,z);return c.x>=0&&c.z>=0&&c.x<navData.width&&c.z<navData.height&&!!navData.grid[c.z]?.[c.x]}
 function nearestLiveOpen(x,z,around=7){if(!backendGridOnline||!navData?.grid)return null;const c=cellOf(x,z);let best=null,score=Infinity;for(let dz=-around;dz<=around;dz++)for(let dx=-around;dx<=around;dx++){const ix=c.x+dx,iz=c.z+dz;if(ix<0||iz<0||ix>=navData.width||iz>=navData.height||!navData.grid[iz]?.[ix])continue;const d=dx*dx+dz*dz;if(d<score){score=d;best={x:navData.origin.x+(ix+.5)*navData.cellSize,z:navData.origin.z+(iz+.5)*navData.cellSize}}}return best}
@@ -1851,10 +1898,8 @@ function frame(now){
   }
   const targetObj=scpTarget?.obj||null;
   const targetValid=!!(targetObj&&(targetObj===playerObj||(targetObj.userData.hp>0&&!targetObj.userData.dead)));
-  // Persistent steering replaces the breadcrumb generator and particle chain.
-  bad.userData.particleRoute=null;bad.userData.particleRouteGoal=null;
-  bad.userData.particleRouteTargetObj=targetObj;
-  scpParticleTrail.visible=false;
+  // Facility JSON occupancy-map routing owns all blocked-corridor navigation.
+  scpParticleTrail.visible=false;scpParticleGeometry.setDrawRange(0,0);
   let scpMoved=false;
   if(targetValid)scpMoved=moveSCPPolygonAI(bad,targetObj,3.2,dt);
   else{
