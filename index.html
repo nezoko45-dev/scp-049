@@ -736,180 +736,89 @@ function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
  return liveGridAvoidStep(obj,tx,tz,speed);
 }
 
+// A* searches the facility JSON occupancy grid. It does not query scene
+// colliders, raycasts, or object meshes to decide which direction to take.
+function findFacilityJSONPath(sx,sz,tx,tz){
+ if(!navReady||!navData?.grid)return [];
+ const W=navData.width,H=navData.height,g=navData.grid;
+ const nearest=(x,z)=>{
+  const c=cellOf(x,z);
+  for(let radius=0;radius<Math.max(W,H);radius++){
+   let best=null,bestD=Infinity;
+   for(let dz=-radius;dz<=radius;dz++)for(let dx=-radius;dx<=radius;dx++){
+    if(Math.max(Math.abs(dx),Math.abs(dz))!==radius)continue;
+    const ix=c.x+dx,iz=c.z+dz;
+    if(ix<0||iz<0||ix>=W||iz>=H||g[iz]?.[ix]!==1)continue;
+    const d=dx*dx+dz*dz;if(d<bestD){bestD=d;best={x:ix,z:iz}}
+   }
+   if(best)return best;
+  }
+  return null;
+ };
+ const a=nearest(sx,sz),b=nearest(tx,tz);if(!a||!b)return [];
+ const key=(x,z)=>z*W+x,startKey=key(a.x,a.z),goalKey=key(b.x,b.z);
+ if(startKey===goalKey)return [{x:tx,z:tz}];
+ const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,1,Math.SQRT2],[-1,-1,Math.SQRT2]];
+ const gScore=new Map([[startKey,0]]),came=new Map(),closed=new Set();
+ const heap=[];
+ const push=(n)=>{heap.push(n);let i=heap.length-1;while(i){const p=(i-1)>>1;if(heap[p].f<=n.f)break;heap[i]=heap[p];i=p}heap[i]=n};
+ const pop=()=>{const root=heap[0],last=heap.pop();if(heap.length){let i=0;while(true){let l=i*2+1,r=l+1;if(l>=heap.length)break;let c=r<heap.length&&heap[r].f<heap[l].f?r:l;if(heap[c].f>=last.f)break;heap[i]=heap[c];i=c}heap[i]=last}return root};
+ const h=(x,z)=>Math.hypot(b.x-x,b.z-z);
+ push({x:a.x,z:a.z,k:startKey,f:h(a.x,a.z)});
+ let found=false,iterations=0;
+ while(heap.length&&iterations++<W*H){
+  const cur=pop();if(closed.has(cur.k))continue;if(cur.k===goalKey){found=true;break}closed.add(cur.k);
+  for(const [dx,dz,cost] of dirs){
+   const x=cur.x+dx,z=cur.z+dz,k=key(x,z);
+   if(x<0||z<0||x>=W||z>=H||g[z]?.[x]!==1||closed.has(k))continue;
+   // No diagonal corner cutting: both orthogonal neighbor cells must be open.
+   if(dx&&dz&&(g[cur.z]?.[x]!==1||g[z]?.[cur.x]!==1))continue;
+   const next=gScore.get(cur.k)+cost;
+   if(next>=(gScore.get(k)??Infinity))continue;
+   gScore.set(k,next);came.set(k,cur.k);push({x,z,k,f:next+h(x,z)});
+  }
+ }
+ if(!found)return [];
+ const cells=[];let k=goalKey;
+ while(k!==startKey){cells.push({x:k%W,z:Math.floor(k/W)});k=came.get(k);if(k===undefined)return []}
+ cells.reverse();
+ // Convert grid cells to world-space centers and simplify using only JSON cells.
+ const cs=navData.cellSize||1,ox=navData.origin.x,oz=navData.origin.z;
+ const world=cells.map(c=>({x:ox+(c.x+.5)*cs,z:oz+(c.z+.5)*cs}));
+ const clearGridLine=(p,q)=>{
+  const d=Math.hypot(q.x-p.x,q.z-p.z),n=Math.max(1,Math.ceil(d/(cs*.25)));
+  for(let i=0;i<=n;i++){const t=i/n,c=cellOf(p.x+(q.x-p.x)*t,p.z+(q.z-p.z)*t);if(g[c.z]?.[c.x]!==1)return false}
+  return true;
+ };
+ const compact=[];let at=0;
+ while(at<world.length){let far=at;for(let j=at+1;j<world.length;j++){if(clearGridLine(world[at],world[j]))far=j;else break}compact.push(world[far]);at=far+1}
+ compact.push({x:tx,z:tz});return compact;
+}
 function scoreDirectionMove(obj,tx,tz,speed,dt,r=.42){
- const p=obj.position,ud=obj.userData,dx=tx-p.x,dz=tz-p.z,dist=Math.hypot(dx,dz);
- // When the target corridor is blocked, SCP switches to a real particle chain
- // emitted around the blocking AABBs. The particle follower owns movement until
- // the corridor opens again; ordinary direct steering then resumes immediately.
- const directClear=breadcrumbSegmentClear(p.x,p.z,tx,tz,.48);
- if(!directClear){
-  const targetKey=Math.floor(tx/2)+','+Math.floor(tz/2),now=performance.now();
-  const route=ud.breadcrumbRoute;
-  const targetShift=Math.hypot(tx-(ud.breadcrumbTargetX??tx),tz-(ud.breadcrumbTargetZ??tz));
-  const routeStale=!Array.isArray(route)||route.length<2||ud.breadcrumbTargetKey!==targetKey||
-   targetShift>1.35||ud.breadcrumbRevision!==navData.revision||
-   (Number.isFinite(ud.particleIndex)&&ud.particleIndex>=route.length);
-  if(routeStale){
-   buildSCPBreadcrumbRoute(obj,tx,tz,.48);
-   ud.breadcrumbTargetKey=targetKey;ud.breadcrumbRevision=navData.revision;
-   ud.particleIndex=1;
-  }
-  const particleRoute=ud.breadcrumbRoute;
-  if(particleRoute&&particleRoute.length>1){
-   // Render the exact particles SCP is following so the route is inspectable.
-   updateSCPParticleTrail(particleRoute);scpParticleTrail.visible=true;
-   followSCPParticleChain(obj,particleRoute,speed,dt);
-   if(scpRayGizmos)drawSCPBreadcrumbs(obj);
-   return true;
-  }
+ if(!navReady||!navData?.grid)return false;
+ const p=obj.position,ud=obj.userData||(obj.userData={}),now=performance.now();
+ const targetKey=Math.floor(tx/2)+','+Math.floor(tz/2);
+ const shifted=Math.hypot(tx-(ud.jsonRouteTargetX??tx),tz-(ud.jsonRouteTargetZ??tz))>1.1;
+ if(!Array.isArray(ud.jsonRoute)||!ud.jsonRoute.length||ud.jsonRouteRevision!==navData.revision||
+    ud.jsonRouteTargetKey!==targetKey||shifted||now-(ud.jsonRouteAt||0)>650){
+  ud.jsonRoute=findFacilityJSONPath(p.x,p.z,tx,tz);
+  ud.jsonRouteIndex=0;ud.jsonRouteRevision=navData.revision;ud.jsonRouteTargetKey=targetKey;
+  ud.jsonRouteTargetX=tx;ud.jsonRouteTargetZ=tz;ud.jsonRouteAt=now;
  }
- // Clear target corridor: discard the particle chain and return to direct pursuit.
- scpParticleTrail.visible=false;scpParticleGeometry.setDrawRange(0,0);
- ud.breadcrumbRoute=[];ud.particleIndex=1;
- // Legacy global ray graph remains available as a fallback for normal scoring.
- // Target coordinates select the route endpoint; movement itself follows ray nodes.
- const rayWaypoint=getSCPObjectRayWaypoint(obj,tx,tz);
- const routeDX=rayWaypoint?rayWaypoint.x-p.x:0,routeDZ=rayWaypoint?rayWaypoint.z-p.z:0;
- const routeDist=Math.hypot(routeDX,routeDZ);
- let desiredX=routeDist>.08?routeDX/routeDist:0,desiredZ=routeDist>.08?routeDZ/routeDist:0;
- const samples=[.35,.7,1.1,1.7,2.5,3.5,4.8,6.2,8,10,12];
- const headings=ud.scoreHeadings||(ud.scoreHeadings=Array.from({length:360},(_,i)=>i*Math.PI/180));
- let best=null,bestScore=-Infinity;
- // Persistent wall-follow side: choose it once, don't flip sides every frame.
- if(!ud.wallSide)ud.wallSide=1;
- for(let deg=0;deg<360;deg+=5){
-  const a=headings[deg],vx=Math.sin(a),vz=Math.cos(a);let open=0,blocked=0,reach=0;
-  // Cast a continuous ground-score ray along this heading. Any blocked sample
-  // invalidates the whole ray, so SCP chooses a neighboring clear direction
-  // rather than steering through an obstacle that lies between coarse samples.
-  let groundRayClear=true,groundRayEnd=Math.min(10,Math.max(3.5,dist));
-  for(let rayD=.3;rayD<=groundRayEnd;rayD+=.3){
-   const rx=p.x+vx*rayD,rz=p.z+vz*rayD,walkable=scpGroundScore(rx,rz,r)===1,collision=hit(rx,rz,r);
-   if(!walkable||collision){groundRayClear=false;break}
-  }
-  if(!groundRayClear)continue;
-  for(const d of samples){if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1){open++;reach=d}else blocked++}
-  let edge=0,edgeToward=0,px=-vz,pz=vx;
-  for(const d of [1.2,2.5,4,6,8]){
-   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)!==1)continue;
-   const sideA=scpGroundScore(p.x+vx*d+px*r*2.1,p.z+vz*d+pz*r*2.1,r);
-   const sideB=scpGroundScore(p.x+vx*d-px*r*2.1,p.z+vz*d-pz*r*2.1,r);
-   // A score-0 side marks a wall edge; score-1 center is the lane to follow.
-   if(sideA===0||sideB===0){
-    edge++;
-    // Favor wall-parallel travel whose tangent points toward the target.
-    const tangentProgress=Math.max(0,vx*desiredX+vz*desiredZ);
-    edgeToward+=tangentProgress;
-   }
-  }
-  // Reward forward target progress, and strongly reward open wall-edge lanes
-  // that carry SCP along the obstacle toward its target.
-  // Target following is field-based: evaluate how much each open score-1
-  // sample reduces target distance, rather than steering along a direct chase ray.
-  let targetGain=0;
-  // Once the direct lane is blocked, only the ray endpoint route may pull SCP.
-  // Do not let the target's position inside the wall influence heading scores.
-  if(!ud.objectRayBlocked)for(const d of [.7,1.4,2.5,4,6,8,10]){
-   if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)!==1)continue;
-   const before=dist,after=Math.hypot(tx-(p.x+vx*d),tz-(p.z+vz*d));
-   targetGain+=Math.max(-1.5,Math.min(1.5,before-after))/(.5+d*.12);
-  }
-  // Two-leg lookahead: a useful cornering heading may initially move sideways
-  // or slightly away from the target while it follows a long wall. Preview a
-  // second turn from a point down this lane so those routes beat dead-end
-  // headings that only look good over a straight-line target pull.
-  let cornerRoute=0;
-  const previewX=p.x+vx*3.2,previewZ=p.z+vz*3.2;
-  if(!ud.objectRayBlocked&&scpGroundScore(previewX,previewZ,r)===1&&!hit(previewX,previewZ,r)){
-   let bestExit=-Infinity;
-   for(let turn=-180;turn<180;turn+=30){
-    const ta=a+turn*Math.PI/180,txd=Math.sin(ta),tzd=Math.cos(ta);
-    let exitOpen=0;
-    for(const d of [1.5,3.5,5.5]){
-     const qx=previewX+txd*d,qz=previewZ+tzd*d;
-     if(scpGroundScore(qx,qz,r)===1&&!hit(qx,qz,r))exitOpen++;else break;
-    }
-    if(!exitOpen)continue;
-    const endX=previewX+txd*(exitOpen===3?5.5:exitOpen===2?3.5:1.5);
-    const endZ=previewZ+tzd*(exitOpen===3?5.5:exitOpen===2?3.5:1.5);
-    const gain=dist-Math.hypot(tx-endX,tz-endZ);
-    const routeScore=gain*1.8+exitOpen*.55;
-    if(routeScore>bestExit)bestExit=routeScore;
-   }
-   if(bestExit>-Infinity)cornerRoute=bestExit;
-  }
-  const progress=vx*desiredX+vz*desiredZ;
-  // Repulsion/attraction field: every score-1 sample pulls this heading
-  // forward; every score-0 sample pushes it away. Near samples weigh most.
-  let attraction=0,repulsion=0;
-  for(const d of [.45,.9,1.5,2.4,3.6,5.2,7.5,10]){
-   const ground=scpGroundScore(p.x+vx*d,p.z+vz*d,r);
-   const weight=1/(.35+d*.22);
-   if(ground===1)attraction+=weight;
-   else repulsion+=weight;
-  }
-  // Wall contour steering: score open lanes that run alongside a nearby
-  // score-0 boundary, and bias the contour side consistently (no wall ping-pong).
-  let contour=0;
-  for(const d of [.7,1.4,2.2,3.2]){
-   const lx=p.x+vx*d-pz*r*2.4,lz=p.z+vz*d+px*r*2.4;
-   const rx=p.x+vx*d+pz*r*2.4,rz=p.z+vz*d-px*r*2.4;
-   const left=scpGroundScore(lx,lz,r),right=scpGroundScore(rx,rz,r);
-   if(left===0&&right===1)contour+=ud.wallSide*1.8;
-   if(right===0&&left===1)contour-=ud.wallSide*1.8;
-  }
-  // When the direct target lane is blocked, soften target pull and prioritize
-  // clearance/contour instead of repeatedly pushing into the wall.
-  // No direct target ray/chase: targetGain comes only from reachable open samples.
-  const boundTraceGain=(vx*desiredX+vz*desiredZ)*14;
-  const score=attraction*5.5-repulsion*8.5+open*1.2+reach*.18-blocked*6+edge*2.8+edgeToward*9+contour*5+targetGain*18+cornerRoute*13+boundTraceGain;
-  if(scpGroundScore(p.x+vx*.25,p.z+vz*.25,r)!==1)continue;
-  let safe=true;for(let k=1;k<=5;k++){const q=speed*dt*k/5;if(scpGroundScore(p.x+vx*q,p.z+vz*q,r)===0||hit(p.x+vx*q,p.z+vz*q,r)){safe=false;break}}
-  if(safe&&score>bestScore){bestScore=score;best={vx,vz,angle:a,progress}}
- }
- if(scpRayGizmos)drawSCPGroundRayGizmos()
- if(!best){
-  let escape=null,escapeScore=-Infinity;
-  for(let deg=0;deg<360;deg++){
-   const a=headings[deg],vx=Math.sin(a),vz=Math.cos(a);
-   if(scpGroundScore(p.x+vx*.32,p.z+vz*.32,r)!==1||hit(p.x+vx*.32,p.z+vz*.32,r))continue;
-   let clear=0;for(const d of [.5,1,1.5,2,3,4])if(scpGroundScore(p.x+vx*d,p.z+vz*d,r)===1&&!hit(p.x+vx*d,p.z+vz*d,r))clear++;
-   const momentum=ud.velocity?.lengthSq()>.0001?(vx*ud.velocity.x+vz*ud.velocity.z)/(ud.velocity.length()||1):0;
-   const toward=vx*desiredX+vz*desiredZ;
-   const value=clear*12+toward*12+momentum*5;
-   if(value>escapeScore){escapeScore=value;escape={vx,vz}}
-  }
-  best=escape;
- }
- const velocity=ud.velocity||(ud.velocity=new T.Vector3());
- if(best){
-  const desiredVX=best.vx*speed,desiredVZ=best.vz*speed,accel=(best.progress===undefined?5.5:8.5)*dt;
-  let ax=desiredVX-velocity.x,az=desiredVZ-velocity.z,change=Math.hypot(ax,az);
-  if(change>accel&&change>0){ax*=accel/change;az*=accel/change}
-  velocity.x+=ax;velocity.z+=az;
- }else velocity.multiplyScalar(Math.exp(-2.8*dt));
- const velocityLength=Math.hypot(velocity.x,velocity.z);
- if(velocityLength>speed&&velocityLength>0){velocity.x=velocity.x/velocityLength*speed;velocity.z=velocity.z/velocityLength*speed}
- const mx=velocity.x*dt,mz=velocity.z*dt,travel=Math.hypot(mx,mz),steps=Math.max(1,Math.ceil(travel/.12));
- let moved=false;
- for(let i=0;i<steps;i++){
-  const sx=mx/steps,sz=mz/steps,nx=p.x+sx,nz=p.z+sz;
-  if(scpGroundScore(nx,nz,r)===1&&!hit(nx,nz,r)){p.x=nx;p.z=nz;moved=true;continue}
-  let slid=false;
-  if(Math.abs(sx)>.00001&&scpGroundScore(p.x+sx,p.z,r)===1&&!hit(p.x+sx,p.z,r)){p.x+=sx;slid=true}else if(Math.abs(sx)>.00001)velocity.x=0;
-  if(Math.abs(sz)>.00001&&scpGroundScore(p.x,p.z+sz,r)===1&&!hit(p.x,p.z+sz,r)){p.z+=sz;slid=true}else if(Math.abs(sz)>.00001)velocity.z=0;
-  moved=moved||slid;
- }
- const movedDistance=Math.hypot(p.x-(ud.steerLastX??p.x),p.z-(ud.steerLastZ??p.z));
- ud.steerLastX=p.x;ud.steerLastZ=p.z;
- ud.steerStuck=movedDistance<.012?(ud.steerStuck||0)+dt:0;
- if(ud.steerStuck>1.1){ud.wallSide*=-1;ud.steerStuck=0;}
- if(velocity.lengthSq()>.0004){
-  const vl=Math.hypot(velocity.x,velocity.z)||1;
-  ud.scoreSteerX=velocity.x/vl;ud.scoreSteerZ=velocity.z/vl;
-  ud.moveDir?.set(velocity.x,0,velocity.z);obj.rotation.y=Math.atan2(velocity.x,velocity.z);
- }else ud.moveDir?.set(0,0,0);
- return moved||velocity.lengthSq()>.0025;
+ const route=ud.jsonRoute||[];
+ if(!route.length)return false;
+ let i=ud.jsonRouteIndex||0;
+ while(i<route.length-1&&Math.hypot(route[i].x-p.x,route[i].z-p.z)<.42)i++;
+ ud.jsonRouteIndex=i;
+ const wp=route[i],dx=wp.x-p.x,dz=wp.z-p.z,d=Math.hypot(dx,dz);
+ if(d<.06)return false;
+ const step=Math.min(d,speed*dt),nx=p.x+dx/d*step,nz=p.z+dz/d*step;
+ const cell=cellOf(nx,nz);
+ // The JSON map is authoritative for both route choice and walkability.
+ if(navData.grid[cell.z]?.[cell.x]!==1)return false;
+ p.x=nx;p.z=nz;obj.rotation.y=Math.atan2(dx,dz);
+ ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
+ return step>.0001;
 }
 document.querySelector('#start').disabled=true;document.querySelector('#start').textContent='LOADING FACILITY JSON…';buildNavigation();
 // Infinite facility streaming: add 40m corridor chunks ahead and extend the A* grid.
