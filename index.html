@@ -1531,7 +1531,10 @@ function turnSCPTowardMove(obj,dx,dz,dt,ud){
  obj.rotation.y=current+turn;
 }
 function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
- if(!path||path.length<2)return false;
+ if(!path||path.length<2||speed<=0)return false;
+ // Frame-rate-independent travel budget: speed multiplied by elapsed frame time.
+ const frameDistance=speed*Math.max(0,Math.min(dt,.05));
+ if(frameDistance<=0)return false;
  // Traverse the navmesh edge-to-edge: each waypoint is the midpoint of the
  // shared portal on the next polygon. Never steer toward polygon centroids.
  if(ud.scpPolyPathActive!==path){
@@ -1545,7 +1548,7 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
    return false;
   }
   const pd=Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z);
-  if(pd>.20)break;
+  if(pd>.07)break;
   i++;ud.scpPolyPathIndex=i;ud.scpBoundsDetour=null;ud.scpBoundsVisited=[];
  }
  if(i>=path.length)return false;
@@ -1557,7 +1560,7 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  }
  if(!waypoint){
   waypoint=portal;
-  const probe=Math.min(Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z),Math.max(.12,speed*Math.max(0,dt)));
+  const probe=Math.min(Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z),Math.max(.04,frameDistance));
   const d=Math.hypot(portal.x-obj.position.x,portal.z-obj.position.z);
   const nx=obj.position.x+(portal.x-obj.position.x)/(d||1)*probe;
   const nz=obj.position.z+(portal.z-obj.position.z)/(d||1)*probe;
@@ -1569,7 +1572,7 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
  }
  const dx=waypoint.x-obj.position.x,dz=waypoint.z-obj.position.z,d=Math.hypot(dx,dz);
  if(d<.001)return false;
- const step=Math.min(d,speed*Math.max(0,dt)),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
+ const step=Math.min(d,frameDistance),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
  if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.48)){
   // Re-scan the currently blocking bounds outline instead of discarding the
   // polygon route; this can select the opposite corner if the first is closed.
@@ -1577,7 +1580,7 @@ function moveSCPThroughPolygonPath(obj,path,speed,dt,ud){
   if(detour){
    ud.scpBoundsDetour=detour;
    const ddx=detour.x-obj.position.x,ddz=detour.z-obj.position.z,dd=Math.hypot(ddx,ddz);
-   const ds=Math.min(dd,speed*Math.max(0,dt)),dnx=obj.position.x+ddx/(dd||1)*ds,dnz=obj.position.z+ddz/(dd||1)*ds;
+   const ds=Math.min(dd,frameDistance),dnx=obj.position.x+ddx/(dd||1)*ds,dnz=obj.position.z+ddz/(dd||1)*ds;
    if(ds>.0001&&scpBridgeClear(obj.position.x,obj.position.z,dnx,dnz,.48)){
     obj.position.x=dnx;obj.position.z=dnz;
     ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(ddx/(dd||1)*speed,0,ddz/(dd||1)*speed);
