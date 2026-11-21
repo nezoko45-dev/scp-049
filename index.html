@@ -415,7 +415,6 @@ function buildSCPBreadcrumbRoute(obj,tx,tz,r=.48){
   // Use this object's already-generated perimeter particles from the global
   // field, rather than creating a private particle loop around SCP or its target.
   const particleField=rebuildSCPObjectBoundParticleField(r,.58);
-  const blockerKey=[blocker.x,blocker.z,blocker.w,blocker.d].join(',');
   const particles=particleField.get(blockerKey)||[];
   const n=particles.length;
   // Pick reachable entry and exit particles, then choose the shorter clockwise
