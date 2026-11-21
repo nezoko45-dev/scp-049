@@ -1704,6 +1704,16 @@ function moveSCPPolygonAI(obj,target,speed,dt){
  return moved;
 }
 
+function respawnPlayer(now){
+ playerHP=playerMaxHP;
+ const p=ctl.getObject();
+ p.position.set(0,1.7,16);
+ p.userData||(p.userData={});
+ p.userData.velocity?.set?.(0,0,0);
+ window.playerLastSCPHit=now;
+ noise=0;
+ document.querySelector('#msg').textContent='PLAYER RESPAWNED';
+}
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
 function frame(now){
  requestAnimationFrame(frame);
@@ -1766,7 +1776,7 @@ function frame(now){
    const victimAlive=victim&&(ud.targetKind==='player'?!dead:(victim.userData.hp>0&&!victim.userData.dead));
    if(victimAlive&&victimDistance<=1.8&&nowZombie-(ud.lastNearbyDamage||0)>=1000){
     ud.lastNearbyDamage=nowZombie;
-    if(ud.targetKind==='player')playerHP=Math.max(0,playerHP-8);
+    if(ud.targetKind==='player'){playerHP=Math.max(0,playerHP-8);if(playerHP<=0)respawnPlayer(nowZombie);}
     else victim.userData.hp=Math.max(0,victim.userData.hp-12);
    }
   });
@@ -1822,7 +1832,7 @@ function frame(now){
   }
   if(scpRayGizmos){drawSCPRayGizmos(bad);drawZombieLocalGridGizmos()}
   if(mixer){mixer.update(dt);let action=scpMoved&&walk?walk:idle;if(action&&action!==bad.userData.a){action.reset().fadeIn(.2).play();bad.userData.a?.fadeOut(.2);bad.userData.a=action}}
-  if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0){playerHP=playerMaxHP;ctl.getObject().position.set(0,1.7,16);window.playerLastSCPHit=now;noise=0;document.querySelector('#msg').textContent='PLAYER RESPAWNED';}}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});if(playerHP<=0)gameover('SCP-049 CAUGHT YOU');
+  if(dist<1.8&&now-(window.playerLastSCPHit||0)>=3000){window.playerLastSCPHit=now;playerHP=Math.max(0,playerHP-25);if(playerHP<=0)respawnPlayer(now);}allies.forEach(a=>{if(a.userData.hp>0&&Math.hypot(a.position.x-bad.position.x,a.position.z-bad.position.z)<1.8&&now-a.userData.lastSCPHit>=3000){a.userData.lastSCPHit=now;a.userData.hp=Math.max(0,a.userData.hp-25);if(a.userData.hp<=0){a.userData.dead=true;a.visible=false;a.userData.respawnAt=now+6000;if(scpTarget?.kind==='survivor'&&scpTarget.index===allies.indexOf(a)){scpTarget=null;scpTargetUntil=0;navPath=[]}}}});
   document.querySelector('#stats').innerHTML='PLAYER HP '+Math.ceil(playerHP)+'%<br>SURVIVORS '+allies.filter(a=>a.userData.hp>0).map(a=>Math.ceil(a.userData.hp)).join('/')+' HP<br>BOSS '+Math.ceil(bossHP)+' / '+bossMax+' HP ('+Math.ceil(bossHP/bossMax*100)+'%)<br>ALLIES '+allies.length+' · ZOMBIES '+zombies.length+'<br>STAMINA '+Math.floor(stam)+'%';
   document.querySelector('#msg').textContent=dist<12?'Footsteps nearby…':bossHP<=0?'BOSS DEFEATED':'';
  }
