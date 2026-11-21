@@ -1430,23 +1430,31 @@ function nearestSCPPolygon(x,z){
 }
 function scpPolygonPath(start,goal){
  if(!start||!goal)return [];
- const open=[{node:start,g:0,f:Math.hypot(goal.x-start.x,goal.z-start.z),parent:null}],best=new Map([[start.key,0]]),closed=new Set();
+ // Dijkstra over connected walkable triangles: no A* heuristic or BFS queue.
+ const open=[start],distance=new Map([[start.key,0]]),parent=new Map(),via=new Map(),visited=new Set();
  while(open.length){
-  open.sort((a,b)=>a.f-b.f);const cur=open.shift();
-  if(closed.has(cur.node.key))continue;
-  if(cur.node.key===goal.key){
-   const chain=[];let q=cur;while(q){chain.push({node:q.node,via:q.via||null});q=q.parent}
-   chain.reverse();
-   // Preserve each connecting portal midpoint so movement traces the walkable
-   // opening between object bounds instead of cutting diagonally through them.
-   return chain.map((entry)=>Object.assign({},entry.node,{via:entry.via}));
+  open.sort((a,b)=>(distance.get(a.key)||0)-(distance.get(b.key)||0));
+  const cur=open.shift();
+  if(visited.has(cur.key))continue;
+  visited.add(cur.key);
+  if(cur.key===goal.key){
+   const chain=[];let key=goal.key;
+   while(key!==start.key){
+    const node=scpPolygonMesh.byKey.get(key);if(!node)return [];
+    chain.push({node,via:via.get(key)||null});
+    key=parent.get(key);if(!key)return [];
+   }
+   chain.push({node:start,via:null});chain.reverse();
+   return chain.map(entry=>Object.assign({},entry.node,{via:entry.via}));
   }
-  closed.add(cur.node.key);
-  for(const edge of cur.node.edges){
-   const next=scpPolygonMesh.byKey.get(edge.to);if(!next||closed.has(next.key))continue;
-   const g=cur.g+Math.hypot(next.x-cur.node.x,next.z-cur.node.z);
-   if(g>=(best.get(next.key)??Infinity))continue;
-   best.set(next.key,g);open.push({node:next,via:edge.midpoint,g,f:g+Math.hypot(goal.x-next.x,goal.z-next.z),parent:cur});
+  const base=distance.get(cur.key)||0;
+  for(const edge of cur.edges){
+   const next=scpPolygonMesh.byKey.get(edge.to);
+   if(!next||visited.has(next.key))continue;
+   const cost=base+Math.hypot(next.x-cur.x,next.z-cur.z);
+   if(cost>=(distance.get(next.key)??Infinity))continue;
+   distance.set(next.key,cost);parent.set(next.key,cur.key);via.set(next.key,edge.midpoint);
+   open.push(next);
   }
  }
  return [];
@@ -1648,11 +1656,41 @@ function scpVictimVisible(obj,target){
  return scpLOSRaycaster.intersectObjects(navMeshes,false).length===0;
 }
 function moveSCPPolygonAI(obj,target,speed,dt){
- // Polygon navigation is retired. SCP and the revived zombies use the shared
- // global facility ground scores directly: 1=walkable, 0=blocked.
  const ud=obj.userData||(obj.userData={});
  if(!target){ud.velocity?.multiplyScalar(Math.exp(-8*dt));return false}
- return scoreDirectionMove(obj,target.position.x,target.position.z,speed,dt,.46);
+ // Rebuild only when chunks have streamed in or on a slow refresh interval.
+ const now=performance.now();
+ if(!scpPolygonMesh.nodes.length||now-(ud.scpPolyBuildAt||0)>650){
+  buildSCPPolygonNavmesh(obj.position.x,obj.position.z,target.position.x,target.position.z);
+  ud.scpPolyBuildAt=now;
+ }
+ const current=nearestSCPPolygon(obj.position.x,obj.position.z);
+ const goal=nearestSCPPolygon(target.position.x,target.position.z);
+ if(!current||!goal){ud.velocity?.multiplyScalar(.25);return false}
+ const dx=target.position.x-obj.position.x,dz=target.position.z-obj.position.z,d=Math.hypot(dx,dz);
+ // When the target is in the same triangle or the corridor is open, resume
+ // direct pursuit. Otherwise travel through shared triangle-edge portals.
+ if(current.key===goal.key||scpBridgeClear(obj.position.x,obj.position.z,target.position.x,target.position.z,.48)){
+  ud.scpPolyPath=null;ud.scpPolyPathActive=null;ud.scpPolyPathIndex=0;ud.scpBoundsDetour=null;
+  if(d<.02){ud.velocity?.multiplyScalar(Math.exp(-7*dt));return false}
+  const step=Math.min(d,speed*Math.max(0,dt)),nx=obj.position.x+dx/d*step,nz=obj.position.z+dz/d*step;
+  if(!scpBridgeClear(obj.position.x,obj.position.z,nx,nz,.48))return false;
+  obj.position.x=nx;obj.position.z=nz;
+  ud.velocity||(ud.velocity=new T.Vector3());ud.velocity.set(dx/d*speed,0,dz/d*speed);
+  turnSCPTowardMove(obj,dx,dz,dt,ud);return step>.0001;
+ }
+ const routeKey=current.key+'>'+goal.key+'@'+(scpPolygonMesh.signature||'');
+ if(ud.scpPolyRouteKey!==routeKey||!ud.scpPolyPath?.length){
+  ud.scpPolyPath=scpPolygonPath(current,goal);
+  ud.scpPolyPathIndex=1;ud.scpPolyRouteKey=routeKey;ud.scpPolyPathActive=null;
+  ud.scpBoundsDetour=null;ud.scpBoundsVisited=[];
+ }
+ if(!ud.scpPolyPath||ud.scpPolyPath.length<2){ud.velocity?.multiplyScalar(.2);return false}
+ const moved=moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud);
+ if(!moved&&ud.scpPolyPathIndex>=ud.scpPolyPath.length){
+  ud.scpPolyPath=null;ud.scpPolyRouteKey='';ud.scpPolyPathIndex=0;
+ }
+ return moved;
 }
 
 function gameover(t){dead=true;active=false;ctl.unlock();document.querySelector('#card').innerHTML='<h1>'+t+'</h1><p>Bossfight ongoing</p><button onclick="location.reload()">RESTART</button>';document.querySelector('#menu').style.display='grid'}
