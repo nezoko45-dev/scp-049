@@ -1627,8 +1627,10 @@ function scpPolygonRoam(obj,speed,dt,ud){
  if(!ud.scpPolyPath||ud.scpPolyPath.length<2){
   ud.scpPolyPath=scpPolygonPath(current,goal);ud.scpPolyPathIndex=1;
  }
- const moved=moveSCPThroughPolygonPath(obj,ud.scpPolyPath,speed,dt,ud);
- if(!moved&&ud.scpPolyPathIndex>=ud.scpPolyPath.length){
+ const roamPath=ud.scpPolyPath;
+ const moved=moveSCPThroughPolygonPath(obj,roamPath,speed,dt,ud);
+ // The movement helper may invalidate the route when an obstacle blocks it.
+ if(!moved&&Array.isArray(ud.scpPolyPath)&&ud.scpPolyPathIndex>=ud.scpPolyPath.length){
   ud.scpRoamGoal=null;ud.scpPolyPath=null;ud.scpPolyPathIndex=0;
  }
  return moved;
